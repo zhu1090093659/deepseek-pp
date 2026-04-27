@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SystemPromptPreset } from '../../../core/types';
 import PresetCard from '../components/PresetCard';
 import PresetForm from '../components/PresetForm';
@@ -8,6 +8,7 @@ export default function PresetPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SystemPromptPreset | undefined>();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const [list, active] = await Promise.all([
@@ -24,6 +25,31 @@ export default function PresetPage() {
     await chrome.runtime.sendMessage({ type: 'SAVE_PRESET', payload: preset });
     setShowForm(false);
     setEditing(undefined);
+    load();
+  };
+
+  const handleImportFiles = async (files: FileList) => {
+    const entries = await Promise.all(
+      Array.from(files, async (file) => ({
+        name: file.name.replace(/\.(txt|md)$/i, '').trim(),
+        content: (await file.text()).trim(),
+      })),
+    );
+    for (const { name, content } of entries) {
+      if (!content) continue;
+      const now = Date.now();
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_PRESET',
+        payload: {
+          id: crypto.randomUUID(),
+          name,
+          content,
+          createdAt: now,
+          updatedAt: now,
+        } satisfies SystemPromptPreset,
+      });
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
     load();
   };
 
@@ -60,15 +86,34 @@ export default function PresetPage() {
         <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
           系统提示词预设
         </h2>
-        <button
-          onClick={() => { setEditing(undefined); setShowForm(!showForm); }}
-          className="ds-btn-primary px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150 flex items-center gap-1"
-        >
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          新建
-        </button>
+        <div className="flex items-center gap-1.5">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.md"
+            multiple
+            className="hidden"
+            onChange={(e) => e.target.files?.length && handleImportFiles(e.target.files)}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="ds-btn-cancel px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center gap-1"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+            </svg>
+            导入
+          </button>
+          <button
+            onClick={() => { setEditing(undefined); setShowForm(!showForm); }}
+            className="ds-btn-primary px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150 flex items-center gap-1"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            新建
+          </button>
+        </div>
       </div>
 
       {showForm && (
