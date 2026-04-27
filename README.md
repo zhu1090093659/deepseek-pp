@@ -14,12 +14,22 @@
 - **侧边栏管理** — 查看、编辑、置顶、删除记忆，支持按类型筛选和标签管理
 - **导入/导出** — JSON 格式批量备份和恢复
 
+<p align="center">
+  <img src="assets/screenshot-sidepanel-memory.png" width="300" alt="记忆管理侧边栏">
+</p>
+
 ### Skill 技能系统
 
 - **内置技能** — 预设 9 个开箱即用的技能：极致深度思考、前端设计、文档协作、品牌指南、算法艺术、PPT 设计等
 - **自定义技能** — 在侧边栏创建专属技能，定义系统指令和参数
 - **`/` 触发** — 在聊天框输入 `/` 弹出自动补全面板，选择技能后自动注入对应的 system prompt
 - **记忆联动** — 技能可选择是否同时注入记忆上下文
+
+<p align="center">
+  <img src="assets/screenshot-skill-popup.png" width="600" alt="技能自动补全弹窗">
+  <br>
+  <img src="assets/screenshot-sidepanel-skill.png" width="300" alt="技能管理侧边栏">
+</p>
 
 ### 工作原理
 
@@ -36,7 +46,7 @@
 ### 从源码构建
 
 ```bash
-git clone https://github.com/user/deepseek-pp.git
+git clone https://github.com/zhu1090093659/deepseek-pp.git
 cd deepseek-pp
 npm install
 npm run build
