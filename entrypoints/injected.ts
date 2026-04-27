@@ -1,8 +1,11 @@
 import { installFetchHook, updateHookState } from '../core/interceptor/fetch-hook';
+import { initSkillPopup, updatePopupSkills } from '../core/ui/skill-popup';
 import type { Memory, Skill, ToolCall } from '../core/types';
 
 export default defineUnlistedScript(() => {
   installFetchHook();
+
+  let popupInited = false;
 
   updateHookState({
     onToolCall(call: ToolCall) {
@@ -31,6 +34,12 @@ export default defineUnlistedScript(() => {
           skills: Skill[];
         };
         updateHookState({ memories, skills });
+        if (!popupInited) {
+          popupInited = true;
+          initSkillPopup(skills);
+        } else {
+          updatePopupSkills(skills);
+        }
         break;
       }
     }
