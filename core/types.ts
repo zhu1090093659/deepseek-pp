@@ -37,6 +37,14 @@ export interface ToolCall {
   raw: string;
 }
 
+export interface SystemPromptPreset {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface DeepSeekRequest {
   chat_session_id: string;
   model_type: string;
@@ -62,6 +70,11 @@ export type MessageAction =
   | { type: 'UPDATE_MEMORY'; payload: Memory }
   | { type: 'SAVE_SKILL'; payload: Skill }
   | { type: 'DELETE_SKILL'; payload: { name: string } }
+  | { type: 'GET_PRESETS' }
+  | { type: 'SAVE_PRESET'; payload: SystemPromptPreset }
+  | { type: 'DELETE_PRESET'; payload: { id: string } }
+  | { type: 'SET_ACTIVE_PRESET'; payload: { id: string | null } }
+  | { type: 'GET_ACTIVE_PRESET' }
   | { type: 'GET_CONFIG' }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
   | { type: 'MEMORIES_UPDATED' };

@@ -1,4 +1,4 @@
-import type { Memory, Skill, ToolCall } from '../core/types';
+import type { Memory, Skill, SystemPromptPreset, ToolCall } from '../core/types';
 import { stripToolCalls } from '../core/interceptor/tool-parser';
 
 export default defineContentScript({
@@ -11,10 +11,13 @@ export default defineContentScript({
       else document.addEventListener('DOMContentLoaded', () => r(undefined), { once: true });
     });
 
-    const memories: Memory[] = (await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' })) ?? [];
-    const skills: Skill[] = (await chrome.runtime.sendMessage({ type: 'GET_SKILLS' })) ?? [];
+    const [memories, skills, activePreset] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
+      chrome.runtime.sendMessage({ type: 'GET_SKILLS' }),
+      chrome.runtime.sendMessage({ type: 'GET_ACTIVE_PRESET' }),
+    ]);
 
-    syncToMainWorld(memories, skills);
+    syncToMainWorld(memories ?? [], skills ?? [], activePreset);
 
     window.addEventListener('message', async (event) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
@@ -39,7 +42,7 @@ export default defineContentScript({
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === 'STATE_UPDATED') {
-        syncToMainWorld(message.memories, message.skills);
+        syncToMainWorld(message.memories, message.skills, message.activePreset);
       }
     });
 
@@ -47,12 +50,13 @@ export default defineContentScript({
   },
 });
 
-function syncToMainWorld(memories: Memory[], skills: Skill[]) {
+function syncToMainWorld(memories: Memory[], skills: Skill[], activePreset: SystemPromptPreset | null) {
   window.postMessage({
     source: 'deepseek-pp-content',
     type: 'SYNC_STATE',
     memories,
     skills,
+    activePreset,
   });
 }
 
@@ -117,7 +121,7 @@ function setupDOMObserver() {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
           const el = node as HTMLElement;
-          if ((el.textContent || '').includes('<tool_call')) {
+          if ((el.textContent || '').includes('<｜DSML｜tool_calls')) {
             if (cleanTimer) clearTimeout(cleanTimer);
             cleanTimer = setTimeout(() => {
               cleanTimer = null;

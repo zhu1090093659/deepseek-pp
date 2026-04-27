@@ -1,5 +1,5 @@
 import { DEEPSEEK_API_URL } from '../constants';
-import type { Memory, ToolCall } from '../types';
+import type { Memory, SystemPromptPreset, ToolCall } from '../types';
 import { buildAugmentedPrompt } from '../memory/injector';
 import { parseSkillCommand } from '../skill/parser';
 import { extractTextFromParsed, isStreamFinishedFromParsed, parseSSEChunk, parseSSEData } from './sse-parser';
@@ -10,6 +10,7 @@ const API_PATH = new URL(DEEPSEEK_API_URL).pathname;
 interface HookState {
   memories: Memory[];
   skills: Array<{ name: string; instructions: string; memoryEnabled: boolean }>;
+  activePreset: SystemPromptPreset | null;
   onToolCall: (call: ToolCall) => void;
   onResponseComplete: (fullText: string) => void;
   onMemoriesUsed: (ids: number[]) => void;
@@ -18,6 +19,7 @@ interface HookState {
 let hookState: HookState = {
   memories: [],
   skills: [],
+  activePreset: null,
   onToolCall: () => {},
   onResponseComplete: () => {},
   onMemoriesUsed: () => {},
@@ -88,6 +90,12 @@ function modifyRequestBody(bodyStr: string): string | null {
   const originalPrompt = (body.prompt as string) || '';
   if (!originalPrompt) return null;
 
+  const isFirstMessage = body.parent_message_id === null || body.parent_message_id === undefined;
+  const presetPrefix =
+    isFirstMessage && hookState.activePreset
+      ? hookState.activePreset.content + '\n\n---\n\n'
+      : '';
+
   const invocation = parseSkillCommand(originalPrompt);
   if (invocation) {
     const skill = hookState.skills.find((s) => s.name === invocation.skillName);
@@ -99,13 +107,13 @@ function modifyRequestBody(bodyStr: string): string | null {
         const { augmented } = buildAugmentedPrompt(prompt, hookState.memories);
         prompt = augmented;
       }
-      body.prompt = prompt;
+      body.prompt = presetPrefix + prompt;
       return JSON.stringify(body);
     }
   }
 
   const { augmented, usedMemoryIds } = buildAugmentedPrompt(originalPrompt, hookState.memories);
-  body.prompt = augmented;
+  body.prompt = presetPrefix + augmented;
 
   if (usedMemoryIds.length > 0) {
     hookState.onMemoriesUsed(usedMemoryIds);

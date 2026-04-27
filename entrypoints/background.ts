@@ -6,7 +6,14 @@ import {
   touchMemories,
 } from '../core/memory/store';
 import { getAllSkills, saveSkill, deleteSkill } from '../core/skill/registry';
-import type { Memory, Skill } from '../core/types';
+import {
+  getAllPresets,
+  savePreset,
+  deletePreset,
+  getActivePreset,
+  setActivePresetId,
+} from '../core/preset/store';
+import type { Memory, Skill, SystemPromptPreset } from '../core/types';
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -70,6 +77,32 @@ async function handleMessage(
       return { ok: true };
     }
 
+    case 'GET_PRESETS':
+      return getAllPresets();
+
+    case 'SAVE_PRESET': {
+      await savePreset(message.payload as SystemPromptPreset);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'DELETE_PRESET': {
+      const { id: presetId } = message.payload as { id: string };
+      await deletePreset(presetId);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'SET_ACTIVE_PRESET': {
+      const { id: activeId } = message.payload as { id: string | null };
+      await setActivePresetId(activeId);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'GET_ACTIVE_PRESET':
+      return getActivePreset();
+
     case 'GET_CONFIG':
       return { version: '0.1.0' };
 
@@ -79,24 +112,22 @@ async function handleMessage(
 }
 
 async function broadcastStateUpdate(excludeTabId?: number) {
-  const [memories, skills] = await Promise.all([getAllMemories(), getAllSkills()]);
+  const [memories, skills, activePreset] = await Promise.all([
+    getAllMemories(),
+    getAllSkills(),
+    getActivePreset(),
+  ]);
   const tabs = await chrome.tabs.query({ url: '*://chat.deepseek.com/*' });
+
+  const payload = { type: 'STATE_UPDATED', memories, skills, activePreset };
 
   for (const tab of tabs) {
     if (tab.id && tab.id !== excludeTabId) {
-      chrome.tabs.sendMessage(tab.id, {
-        type: 'STATE_UPDATED',
-        memories,
-        skills,
-      }).catch(() => {});
+      chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
     }
   }
 
   if (excludeTabId) {
-    chrome.tabs.sendMessage(excludeTabId, {
-      type: 'STATE_UPDATED',
-      memories,
-      skills,
-    }).catch(() => {});
+    chrome.tabs.sendMessage(excludeTabId, payload).catch(() => {});
   }
 }

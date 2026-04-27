@@ -1,8 +1,8 @@
 # DeepSeek++
 
-为 [DeepSeek](https://chat.deepseek.com) 网页版注入 **Agentic 记忆系统** 和 **Skill 技能系统** 的 Chrome 扩展。
+为 [DeepSeek](https://chat.deepseek.com) 网页版注入 **Agentic 记忆系统**、**Skill 技能系统** 和 **系统提示词预设** 的 Chrome 扩展。
 
-让 DeepSeek 拥有跨对话的长期记忆，并通过 `/skill` 指令一键切换专家模式。
+让 DeepSeek 拥有跨对话的长期记忆，通过 `/skill` 指令一键切换专家模式，并支持自定义系统提示词全局生效。
 
 ## 核心功能
 
@@ -31,14 +31,21 @@
   <img src="assets/screenshot-sidepanel-skill.png" width="300" alt="技能管理侧边栏">
 </p>
 
+### 系统提示词预设
+
+- **自定义预设** — 在侧边栏创建多个系统提示词预设，定义全局角色设定或行为指令
+- **一键激活** — 同一时间只有一个预设处于激活状态，激活后自动生效
+- **首条注入** — 每次新对话的首条消息前自动注入激活预设的内容，后续消息不重复注入
+- **与技能/记忆共存** — 预设内容作为前缀注入，与 Skill 指令和记忆上下文叠加生效
+
 ### 工作原理
 
 扩展在 main world 中拦截 `fetch` 和 `XMLHttpRequest`，在请求发送到 DeepSeek API 前修改 prompt（注入记忆/技能指令），并解析 SSE 响应流以提取和处理 tool_call 指令。
 
 ```
-用户输入 → 拦截请求 → 注入记忆 + 技能指令 → DeepSeek API
-                                                    ↓
-侧边栏 ← IndexedDB ← 提取 tool_call ← 解析 SSE 响应
+用户输入 → 拦截请求 → 注入预设 + 记忆 + 技能指令 → DeepSeek API
+                                                        ↓
+侧边栏 ← IndexedDB/Storage ← 提取 tool_call ← 解析 SSE 响应
 ```
 
 ## 安装
@@ -84,6 +91,7 @@ core/
 ├── interceptor/          # 网络拦截（fetch hook、SSE 解析、tool_call 提取）
 ├── memory/               # 记忆系统（存储、评分筛选、prompt 注入）
 ├── skill/                # 技能系统（内置技能、解析器、注册表）
+├── preset/               # 系统提示词预设（存储、激活管理）
 └── ui/                   # 技能自动补全弹窗
 
 entrypoints/
