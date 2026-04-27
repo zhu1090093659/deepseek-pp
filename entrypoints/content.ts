@@ -85,8 +85,10 @@ function showMemoryBadge(name: string) {
   badge.textContent = `🧠 已记住: ${name}`;
   badge.style.cssText = `
     position: fixed; bottom: 20px; right: 20px; z-index: 99999;
-    background: #10b981; color: white; padding: 8px 16px;
-    border-radius: 8px; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    background: #4D6BFE; color: white; padding: 10px 18px;
+    border-radius: 10px; font-size: 13px; font-weight: 500;
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+    box-shadow: 0 4px 12px rgba(77, 107, 254, 0.3);
     animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s;
     opacity: 1; transition: opacity 0.3s;
   `;

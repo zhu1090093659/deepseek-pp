@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Memory } from '../../../core/types';
+import { SVG_PATHS } from '../constants';
 
 export default function SettingsPage() {
   const [memoryCount, setMemoryCount] = useState(0);
@@ -57,44 +58,71 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-4 space-y-6">
+    <div className="p-4 space-y-5">
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-300">数据管理</h2>
-        <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-slate-400">记忆总数</span>
-            <span className="text-white">{memoryCount}</span>
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          数据管理
+        </h2>
+
+        <div className="ds-surface-panel rounded-xl p-4">
+          <div className="flex justify-between items-center text-sm">
+            <span style={{ color: 'var(--ds-text-secondary)' }}>记忆总数</span>
+            <span className="text-lg font-semibold" style={{ color: 'var(--ds-blue)' }}>
+              {memoryCount}
+            </span>
           </div>
         </div>
 
         <div className="flex gap-2">
           <button
             onClick={handleExport}
-            className="flex-1 py-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+            className="ds-btn-secondary flex-1 py-2.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5"
           >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d={SVG_PATHS.download} />
+            </svg>
             导出记忆
           </button>
           <button
             onClick={handleImport}
-            className="flex-1 py-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+            className="ds-btn-secondary flex-1 py-2.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5"
           >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d={SVG_PATHS.upload} />
+            </svg>
             导入记忆
           </button>
         </div>
 
         <button
           onClick={handleClearAll}
-          className="w-full py-2 text-xs bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-lg transition-colors border border-red-900/30"
+          className="ds-btn-danger w-full py-2.5 text-xs font-medium rounded-lg transition-all duration-150"
         >
           清除所有记忆
         </button>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-300">关于</h2>
-        <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700 text-xs text-slate-400 space-y-1">
-          <div>DeepSeek++ v{version}</div>
-          <div>为 DeepSeek 提供 Agentic 记忆与 Skill 能力</div>
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          关于
+        </h2>
+        <div className="ds-surface-panel rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[11px] font-bold"
+              style={{ background: 'linear-gradient(135deg, var(--ds-blue), #7C8FFF)' }}
+            >
+              D+
+            </div>
+            <div>
+              <div className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>
+                DeepSeek++ v{version}
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
+                Agentic 记忆与 Skill 系统
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </div>

@@ -27,21 +27,26 @@ export default function SkillForm({ onSave, onCancel }: Props) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-slate-800 rounded-lg p-3 border border-slate-600 space-y-3">
+    <form onSubmit={handleSubmit} className="ds-form rounded-xl p-4 space-y-3">
       <div className="flex gap-2">
         <input
           type="text"
           placeholder="名称"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-lg text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+          className="ds-input flex-1 px-3 py-2 text-sm rounded-lg transition-all duration-150"
         />
         <input
           type="text"
           placeholder="/trigger"
           value={trigger}
           onChange={(e) => setTrigger(e.target.value)}
-          className="w-28 px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-lg text-emerald-400 font-mono placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+          className="w-28 px-3 py-2 text-sm font-mono rounded-lg transition-all duration-150"
+          style={{
+            background: 'var(--ds-blue-light)',
+            border: '1px solid rgba(77, 107, 254, 0.2)',
+            color: 'var(--ds-blue)',
+          }}
         />
       </div>
 
@@ -50,42 +55,43 @@ export default function SkillForm({ onSave, onCancel }: Props) {
         placeholder="描述"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-lg text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+        className="ds-input w-full px-3 py-2 text-sm rounded-lg transition-all duration-150"
       />
 
       <div>
-        <label className="text-[10px] text-slate-500 mb-1 block">
+        <label className="text-[11px] mb-1.5 block font-medium" style={{ color: 'var(--ds-text-tertiary)' }}>
           Prompt 模板（用 {'{{content}}'} 表示用户输入）
         </label>
         <textarea
           rows={4}
           value={promptTemplate}
           onChange={(e) => setPromptTemplate(e.target.value)}
-          className="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-lg text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 resize-none"
+          className="ds-input w-full px-3 py-2 text-sm font-mono rounded-lg resize-none transition-all duration-150"
         />
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+      <label className="flex items-center gap-2 text-sm cursor-pointer select-none" style={{ color: 'var(--ds-text-secondary)' }}>
         <input
           type="checkbox"
           checked={memoryEnabled}
           onChange={(e) => setMemoryEnabled(e.target.checked)}
-          className="accent-emerald-500"
+          className="w-4 h-4 rounded"
+          style={{ accentColor: 'var(--ds-blue)' }}
         />
         启用记忆注入
       </label>
 
-      <div className="flex gap-2 justify-end">
+      <div className="flex gap-2 justify-end pt-1">
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          className="ds-btn-cancel px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all duration-150"
         >
           取消
         </button>
         <button
           type="submit"
-          className="px-4 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+          className="ds-btn-primary px-4 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150"
         >
           保存
         </button>

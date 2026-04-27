@@ -1,13 +1,216 @@
 @import 'tailwindcss';
 
+:root {
+  --ds-blue: #4D6BFE;
+  --ds-blue-hover: #3B5BEE;
+  --ds-blue-light: #EEF1FF;
+  --ds-blue-glow: rgba(77, 107, 254, 0.12);
+  --ds-blue-shadow: 0 1px 3px rgba(77, 107, 254, 0.3);
+  --ds-bg: #FFFFFF;
+  --ds-surface: #F7F8FA;
+  --ds-border: #E5E7EB;
+  --ds-border-hover: #D1D5DB;
+  --ds-text: #1D1D1F;
+  --ds-text-secondary: #6B7280;
+  --ds-text-tertiary: #9CA3AF;
+  --ds-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ds-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --ds-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --ds-danger: #EF4444;
+  --ds-danger-bg: #FEF2F2;
+  --ds-danger-bg-hover: #FEE2E2;
+  --ds-danger-border: #FECACA;
+  --ds-danger-border-hover: #FCA5A5;
+  --ds-success: #10B981;
+  --ds-success-bg: #ECFDF5;
+  --ds-success-border: #A7F3D0;
+  --ds-warning: #F59E0B;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--ds-bg);
+  color: var(--ds-text);
   min-width: 320px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
   box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ds-border-hover);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ds-text-tertiary);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.25s ease-out;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--ds-blue) !important;
+  box-shadow: 0 0 0 3px var(--ds-blue-glow) !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--ds-text-tertiary);
+}
+
+/* Card */
+.ds-card {
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-border);
+  box-shadow: var(--ds-shadow-sm);
+  transition: all 0.15s;
+}
+.ds-card:hover {
+  box-shadow: var(--ds-shadow-md);
+  border-color: var(--ds-border-hover);
+}
+
+/* Form container */
+.ds-form {
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-blue);
+  box-shadow: 0 0 0 3px var(--ds-blue-glow);
+}
+
+/* Input / textarea */
+.ds-input {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  color: var(--ds-text);
+}
+
+/* Surface panel */
+.ds-surface-panel {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+}
+
+/* Buttons */
+.ds-btn-primary {
+  background: var(--ds-blue);
+  box-shadow: var(--ds-blue-shadow);
+}
+.ds-btn-primary:hover {
+  background: var(--ds-blue-hover);
+}
+
+.ds-btn-secondary {
+  background: var(--ds-surface);
+  color: var(--ds-text-secondary);
+  border: 1px solid var(--ds-border);
+}
+.ds-btn-secondary:hover {
+  border-color: var(--ds-border-hover);
+  color: var(--ds-text);
+}
+
+.ds-btn-cancel {
+  color: var(--ds-text-secondary);
+  border: 1px solid var(--ds-border);
+}
+.ds-btn-cancel:hover {
+  border-color: var(--ds-border-hover);
+  color: var(--ds-text);
+}
+
+.ds-btn-danger {
+  background: var(--ds-danger-bg);
+  color: var(--ds-danger);
+  border: 1px solid var(--ds-danger-border);
+}
+.ds-btn-danger:hover {
+  background: var(--ds-danger-bg-hover);
+  border-color: var(--ds-danger-border-hover);
+}
+
+/* Icon action buttons (in cards) */
+.ds-action-btn {
+  color: var(--ds-text-tertiary);
+  transition: all 0.1s;
+}
+.ds-action-btn:hover {
+  background: var(--ds-surface);
+}
+.ds-action-btn-pin:hover {
+  color: var(--ds-warning);
+}
+.ds-action-btn-edit:hover {
+  color: var(--ds-blue);
+}
+.ds-action-btn-delete:hover {
+  background: var(--ds-danger-bg);
+  color: var(--ds-danger);
+}
+
+/* Inline delete text button (in SkillCard) */
+.ds-text-btn-delete {
+  color: var(--ds-text-tertiary);
+}
+.ds-text-btn-delete:hover {
+  background: var(--ds-danger-bg);
+  color: var(--ds-danger);
+}
+
+/* Tags */
+.ds-tag {
+  color: var(--ds-text-tertiary);
+  background: var(--ds-surface);
+}
+
+/* Code inline */
+.ds-code {
+  color: var(--ds-blue);
+  background: var(--ds-blue-glow);
+}
+
+/* Success badge */
+.ds-badge-success {
+  color: var(--ds-success);
+  background: var(--ds-success-bg);
+  border: 1px solid var(--ds-success-border);
+}
+
+/* Trigger code */
+.ds-trigger {
+  color: var(--ds-blue);
+  background: var(--ds-blue-light);
+}
+
+/* Info panel */
+.ds-info-panel {
+  background: var(--ds-blue-light);
+  border: 1px solid rgba(77, 107, 254, 0.1);
 }

@@ -31,22 +31,31 @@ export default function SkillPage() {
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-300">可用 Skill</h2>
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          可用 Skill
+        </h2>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+          className="ds-btn-primary px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150 flex items-center gap-1"
         >
-          + 自定义
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          自定义
         </button>
       </div>
 
       {showForm && (
-        <SkillForm onSave={handleSave} onCancel={() => setShowForm(false)} />
+        <div className="animate-slide-down">
+          <SkillForm onSave={handleSave} onCancel={() => setShowForm(false)} />
+        </div>
       )}
 
       {builtIn.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs text-slate-500 uppercase tracking-wider">内置</h3>
+          <h3 className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--ds-text-tertiary)' }}>
+            内置
+          </h3>
           {builtIn.map((s) => (
             <SkillCard key={s.name} skill={s} />
           ))}
@@ -55,17 +64,25 @@ export default function SkillPage() {
 
       {custom.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs text-slate-500 uppercase tracking-wider">自定义</h3>
+          <h3 className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--ds-text-tertiary)' }}>
+            自定义
+          </h3>
           {custom.map((s) => (
             <SkillCard key={s.name} skill={s} onDelete={() => handleDelete(s.name)} />
           ))}
         </div>
       )}
 
-      <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
-        <p className="text-xs text-slate-400">
-          在 DeepSeek 输入框中输入 <code className="text-emerald-400">/skill名 参数</code> 触发。
-          例如：<code className="text-emerald-400">/translate 你好世界</code>
+      <div className="ds-info-panel rounded-xl p-3.5">
+        <p className="text-xs leading-relaxed" style={{ color: 'var(--ds-text-secondary)' }}>
+          在 DeepSeek 输入框中输入{' '}
+          <code className="ds-code font-mono text-[11px] px-1.5 py-0.5 rounded">
+            /skill名 参数
+          </code>{' '}
+          触发。例如：
+          <code className="ds-code font-mono text-[11px] px-1.5 py-0.5 rounded">
+            /translate 你好世界
+          </code>
         </p>
       </div>
     </div>
