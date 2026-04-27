@@ -1,0 +1,70 @@
+export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';
+
+export interface Memory {
+  id?: number;
+  type: MemoryType;
+  name: string;
+  content: string;
+  description: string;
+  tags: string[];
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+  accessCount: number;
+  lastAccessedAt: number;
+}
+
+export interface Skill {
+  name: string;
+  trigger: string;
+  description: string;
+  promptTemplate: string;
+  memoryEnabled: boolean;
+  builtIn: boolean;
+}
+
+export interface SkillInvocation {
+  skillName: string;
+  args: string;
+  rawInput: string;
+}
+
+export interface ToolCall {
+  name: string;
+  payload: Record<string, unknown>;
+  raw: string;
+}
+
+export interface DeepSeekRequest {
+  chat_session_id: string;
+  model_type: string;
+  parent_message_id: string | null;
+  preempt: boolean;
+  prompt: string;
+  ref_file_ids: string[];
+  search_enabled: boolean;
+  thinking_enabled: boolean;
+}
+
+export interface SSEEvent {
+  id?: string;
+  type: string;
+  data: string;
+}
+
+export type MessageAction =
+  | { type: 'GET_MEMORIES' }
+  | { type: 'GET_SKILLS' }
+  | { type: 'SAVE_MEMORY'; payload: Omit<Memory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'> }
+  | { type: 'DELETE_MEMORY'; payload: { id: number } }
+  | { type: 'UPDATE_MEMORY'; payload: Memory }
+  | { type: 'SAVE_SKILL'; payload: Skill }
+  | { type: 'DELETE_SKILL'; payload: { name: string } }
+  | { type: 'GET_CONFIG' }
+  | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
+  | { type: 'MEMORIES_UPDATED' };
+
+export interface PromptConfig {
+  memoryTokenBudget: number;
+  systemTemplate: string;
+}

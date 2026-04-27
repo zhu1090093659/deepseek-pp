@@ -1,0 +1,53 @@
+import Dexie, { type EntityTable } from 'dexie';
+import type { Memory } from '../types';
+
+const db = new Dexie('DeepSeekPP') as Dexie & {
+  memories: EntityTable<Memory, 'id'>;
+};
+
+db.version(1).stores({
+  memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt',
+});
+
+export async function getAllMemories(): Promise<Memory[]> {
+  return db.memories.toArray();
+}
+
+export async function getMemoryById(id: number): Promise<Memory | undefined> {
+  return db.memories.get(id);
+}
+
+export async function saveMemory(
+  mem: Omit<Memory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'>,
+): Promise<number> {
+  const now = Date.now();
+  return db.memories.add({
+    ...mem,
+    createdAt: now,
+    updatedAt: now,
+    accessCount: 0,
+    lastAccessedAt: now,
+  } as Memory);
+}
+
+export async function updateMemory(mem: Memory): Promise<void> {
+  if (mem.id == null) return;
+  await db.memories.update(mem.id, { ...mem, updatedAt: Date.now() });
+}
+
+export async function deleteMemory(id: number): Promise<void> {
+  await db.memories.delete(id);
+}
+
+export async function touchMemories(ids: number[]): Promise<void> {
+  const now = Date.now();
+  await db.memories
+    .where('id')
+    .anyOf(ids)
+    .modify((m) => {
+      m.accessCount++;
+      m.lastAccessedAt = now;
+    });
+}
+
+export { db };
