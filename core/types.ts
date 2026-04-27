@@ -14,13 +14,15 @@ export interface Memory {
   lastAccessedAt: number;
 }
 
+export type SkillSource = 'builtin' | 'custom';
+
 export interface Skill {
   name: string;
-  trigger: string;
   description: string;
-  promptTemplate: string;
+  instructions: string;
+  source: SkillSource;
   memoryEnabled: boolean;
-  builtIn: boolean;
+  metadata?: Record<string, string>;
 }
 
 export interface SkillInvocation {

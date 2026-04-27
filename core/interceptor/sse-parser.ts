@@ -32,35 +32,30 @@ export function parseSSEChunk(chunk: string): SSEEvent[] {
   return events;
 }
 
-export function extractTextFromSSEData(data: string): string | null {
+export function parseSSEData(data: string): unknown | null {
   try {
-    const parsed = JSON.parse(data);
-
-    if (typeof parsed.v === 'string') {
-      return parsed.v;
-    }
-
-    if (parsed.p && parsed.o === 'APPEND' && typeof parsed.v === 'string') {
-      return parsed.v;
-    }
-
-    return null;
+    return JSON.parse(data);
   } catch {
     return null;
   }
 }
 
-export function isStreamFinished(data: string): boolean {
-  try {
-    const parsed = JSON.parse(data);
-    if (parsed.p === 'response/status' && parsed.v === 'FINISHED') return true;
-    if (parsed.o === 'BATCH' && Array.isArray(parsed.v)) {
-      return parsed.v.some(
-        (item: { p: string; v: string }) => item.p === 'quasi_status' && item.v === 'FINISHED',
-      );
-    }
-    return false;
-  } catch {
-    return false;
+export function extractTextFromParsed(parsed: any): string | null {
+  if (typeof parsed.v === 'string') {
+    return parsed.v;
   }
+  if (parsed.p && parsed.o === 'APPEND' && typeof parsed.v === 'string') {
+    return parsed.v;
+  }
+  return null;
+}
+
+export function isStreamFinishedFromParsed(parsed: any): boolean {
+  if (parsed.p === 'response/status' && parsed.v === 'FINISHED') return true;
+  if (parsed.o === 'BATCH' && Array.isArray(parsed.v)) {
+    return parsed.v.some(
+      (item: { p: string; v: string }) => item.p === 'quasi_status' && item.v === 'FINISHED',
+    );
+  }
+  return false;
 }

@@ -6,17 +6,27 @@ interface Props {
   onDelete?: () => void;
 }
 
+const SOURCE_LABELS: Record<string, { text: string; className: string }> = {
+  builtin: { text: '内置', className: 'ds-badge-info' },
+  official: { text: '官方', className: 'ds-badge-success' },
+  custom: { text: '自定义', className: 'ds-badge-warning' },
+};
+
 export default function SkillCard({ skill, onDelete }: Props) {
+  const badge = SOURCE_LABELS[skill.source];
+
   return (
     <div className="ds-card rounded-xl p-3.5 group">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <code className="ds-trigger text-[12px] font-mono font-semibold px-1.5 py-0.5 rounded">
-            {skill.trigger}
+            /{skill.name}
           </code>
-          <span className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
-            {skill.name}
-          </span>
+          {badge && (
+            <span className={`${badge.className} inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full font-medium`}>
+              {badge.text}
+            </span>
+          )}
         </div>
         {onDelete && (
           <button

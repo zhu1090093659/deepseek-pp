@@ -1,10 +1,10 @@
 import type { Memory, Skill, ToolCall } from '../core/types';
+import { stripToolCalls } from '../core/interceptor/tool-parser';
 
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
   runAt: 'document_start',
   async main() {
-    injectMainWorldScript();
 
     await new Promise((r) => {
       if (document.readyState === 'complete' || document.readyState === 'interactive') r(undefined);
@@ -98,40 +98,32 @@ function showMemoryBadge(name: string) {
 
 function cleanToolCallsFromDOM() {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  const toRemove: { node: Text; start: number; end: number }[] = [];
 
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
     const text = node.textContent || '';
-    const regex = /<tool_call\s+name="[^"]*">[\s\S]*?<\/tool_call>/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      toRemove.push({ node, start: match.index, end: match.index + match[0].length });
+    const cleaned = stripToolCalls(text);
+    if (cleaned !== text) {
+      node.textContent = cleaned;
     }
   }
-
-  for (const { node, start, end } of toRemove.reverse()) {
-    const text = node.textContent || '';
-    node.textContent = text.slice(0, start) + text.slice(end);
-  }
-}
-
-function injectMainWorldScript() {
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('/injected.js');
-  script.onload = () => script.remove();
-  (document.head || document.documentElement).appendChild(script);
 }
 
 function setupDOMObserver() {
+  let cleanTimer: ReturnType<typeof setTimeout> | null = null;
+
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
           const el = node as HTMLElement;
-          const text = el.textContent || '';
-          if (text.includes('<tool_call')) {
-            setTimeout(cleanToolCallsFromDOM, 100);
+          if ((el.textContent || '').includes('<tool_call')) {
+            if (cleanTimer) clearTimeout(cleanTimer);
+            cleanTimer = setTimeout(() => {
+              cleanTimer = null;
+              cleanToolCallsFromDOM();
+            }, 100);
+            return;
           }
         }
       }

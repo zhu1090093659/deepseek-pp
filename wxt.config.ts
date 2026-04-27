@@ -13,12 +13,6 @@ export default defineConfig({
       default_path: 'sidepanel.html',
     },
     host_permissions: ['*://chat.deepseek.com/*'],
-    web_accessible_resources: [
-      {
-        resources: ['injected.js'],
-        matches: ['*://chat.deepseek.com/*'],
-      },
-    ],
   },
   vite: () => ({
     plugins: [tailwindcss()],

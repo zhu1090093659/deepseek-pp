@@ -6,16 +6,16 @@ let filtered: Skill[] = [];
 let activeIdx = 0;
 let textarea: HTMLTextAreaElement | null = null;
 
+let initialized = false;
+
 export function initSkillPopup(initialSkills: Skill[]) {
   skills = initialSkills;
+  if (initialized) return;
+  initialized = true;
   injectStyles();
   watchTextarea();
   document.addEventListener('keydown', onKeydown, true);
   document.addEventListener('mousedown', onClickOutside);
-}
-
-export function updatePopupSkills(newSkills: Skill[]) {
-  skills = newSkills;
 }
 
 function watchTextarea() {
@@ -45,10 +45,7 @@ function onInput() {
     const query = val.slice(1).toLowerCase();
     filtered = query === ''
       ? [...skills]
-      : skills.filter(s =>
-          s.name.toLowerCase().startsWith(query)
-          || s.trigger.slice(1).toLowerCase().startsWith(query)
-        );
+      : skills.filter(s => s.name.toLowerCase().startsWith(query));
     if (filtered.length > 0) {
       activeIdx = 0;
       showPopup();
@@ -98,7 +95,7 @@ function onClickOutside(e: MouseEvent) {
 function selectSkill(skill: Skill) {
   if (!textarea || !skill) return;
 
-  const newVal = skill.trigger + ' ';
+  const newVal = `/${skill.name} `;
 
   // Invalidate React's value tracker so it detects the change
   const tracker = (textarea as any)._valueTracker;
@@ -145,8 +142,7 @@ function buildItems() {
   popupEl.innerHTML = filtered.map((s, i) => `
     <div class="dpp-skill-item${i === activeIdx ? ' dpp-active' : ''}" data-i="${i}">
       <div class="dpp-skill-head">
-        <code class="dpp-skill-trigger">${escapeHtml(s.trigger)}</code>
-        <span class="dpp-skill-name">${escapeHtml(s.name)}</span>
+        <code class="dpp-skill-trigger">/${escapeHtml(s.name)}</code>
       </div>
       <div class="dpp-skill-desc">${escapeHtml(s.description)}</div>
     </div>
@@ -170,6 +166,7 @@ function highlightActive() {
   if (!popupEl) return;
   popupEl.querySelectorAll('.dpp-skill-item').forEach((el, i) => {
     el.classList.toggle('dpp-active', i === activeIdx);
+    if (i === activeIdx) el.scrollIntoView({ block: 'nearest' });
   });
 }
 
@@ -202,6 +199,9 @@ function injectStyles() {
   animation: dpp-slide-up .15s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
   backdrop-filter: blur(8px);
+  max-height: 50vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @keyframes dpp-slide-up {
   from { opacity: 0; transform: translateY(4px); }
@@ -229,11 +229,6 @@ function injectStyles() {
   background: #EEF1FF;
   padding: 1px 6px;
   border-radius: 4px;
-}
-.dpp-skill-name {
-  color: #1D1D1F;
-  font-size: 13px;
-  font-weight: 500;
 }
 .dpp-skill-desc {
   color: #9CA3AF;

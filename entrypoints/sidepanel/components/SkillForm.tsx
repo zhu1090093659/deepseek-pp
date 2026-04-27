@@ -8,51 +8,44 @@ interface Props {
 
 export default function SkillForm({ onSave, onCancel }: Props) {
   const [name, setName] = useState('');
-  const [trigger, setTrigger] = useState('/');
   const [description, setDescription] = useState('');
-  const [promptTemplate, setPromptTemplate] = useState('{{content}}');
-  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [instructions, setInstructions] = useState('');
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+
+  const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !trigger.trim() || !promptTemplate.trim()) return;
+    if (!normalizedName || !instructions.trim()) return;
     onSave({
-      name: name.trim(),
-      trigger: trigger.startsWith('/') ? trigger.trim() : `/${trigger.trim()}`,
+      name: normalizedName,
       description: description.trim(),
-      promptTemplate: promptTemplate.trim(),
+      instructions: instructions.trim(),
+      source: 'custom',
       memoryEnabled,
-      builtIn: false,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="ds-form rounded-xl p-4 space-y-3">
-      <div className="flex gap-2">
+      <div>
         <input
           type="text"
-          placeholder="名称"
+          placeholder="名称（如 my-skill）"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="ds-input flex-1 px-3 py-2 text-sm rounded-lg transition-all duration-150"
+          className="ds-input w-full px-3 py-2 text-sm rounded-lg transition-all duration-150"
         />
-        <input
-          type="text"
-          placeholder="/trigger"
-          value={trigger}
-          onChange={(e) => setTrigger(e.target.value)}
-          className="w-28 px-3 py-2 text-sm font-mono rounded-lg transition-all duration-150"
-          style={{
-            background: 'var(--ds-blue-light)',
-            border: '1px solid rgba(77, 107, 254, 0.2)',
-            color: 'var(--ds-blue)',
-          }}
-        />
+        {normalizedName && (
+          <p className="text-[11px] mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
+            触发命令：<code className="font-mono" style={{ color: 'var(--ds-blue)' }}>/{normalizedName}</code>
+          </p>
+        )}
       </div>
 
       <input
         type="text"
-        placeholder="描述"
+        placeholder="描述（何时使用这个 skill）"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         className="ds-input w-full px-3 py-2 text-sm rounded-lg transition-all duration-150"
@@ -60,12 +53,13 @@ export default function SkillForm({ onSave, onCancel }: Props) {
 
       <div>
         <label className="text-[11px] mb-1.5 block font-medium" style={{ color: 'var(--ds-text-tertiary)' }}>
-          Prompt 模板（用 {'{{content}}'} 表示用户输入）
+          指令（Markdown 格式，告诉 AI 如何执行）
         </label>
         <textarea
-          rows={4}
-          value={promptTemplate}
-          onChange={(e) => setPromptTemplate(e.target.value)}
+          rows={6}
+          placeholder="你是一位...&#10;&#10;## 核心原则&#10;- ..."
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
           className="ds-input w-full px-3 py-2 text-sm font-mono rounded-lg resize-none transition-all duration-150"
         />
       </div>

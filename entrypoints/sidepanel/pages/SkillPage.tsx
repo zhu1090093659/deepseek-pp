@@ -3,6 +3,20 @@ import type { Skill } from '../../../core/types';
 import SkillCard from '../components/SkillCard';
 import SkillForm from '../components/SkillForm';
 
+function SkillSection({ title, skills, onDelete }: { title: string; skills: Skill[]; onDelete?: (name: string) => void }) {
+  if (skills.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--ds-text-tertiary)' }}>
+        {title}
+      </h3>
+      {skills.map((s) => (
+        <SkillCard key={s.name} skill={s} onDelete={onDelete ? () => onDelete(s.name) : undefined} />
+      ))}
+    </div>
+  );
+}
+
 export default function SkillPage() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -25,8 +39,8 @@ export default function SkillPage() {
     load();
   };
 
-  const builtIn = skills.filter((s) => s.builtIn);
-  const custom = skills.filter((s) => !s.builtIn);
+  const builtin = skills.filter((s) => s.source === 'builtin');
+  const custom = skills.filter((s) => s.source === 'custom');
 
   return (
     <div className="p-4 space-y-4">
@@ -51,27 +65,8 @@ export default function SkillPage() {
         </div>
       )}
 
-      {builtIn.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--ds-text-tertiary)' }}>
-            内置
-          </h3>
-          {builtIn.map((s) => (
-            <SkillCard key={s.name} skill={s} />
-          ))}
-        </div>
-      )}
-
-      {custom.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--ds-text-tertiary)' }}>
-            自定义
-          </h3>
-          {custom.map((s) => (
-            <SkillCard key={s.name} skill={s} onDelete={() => handleDelete(s.name)} />
-          ))}
-        </div>
-      )}
+      <SkillSection title="内置" skills={builtin} />
+      <SkillSection title="自定义" skills={custom} onDelete={handleDelete} />
 
       <div className="ds-info-panel rounded-xl p-3.5">
         <p className="text-xs leading-relaxed" style={{ color: 'var(--ds-text-secondary)' }}>
@@ -81,7 +76,7 @@ export default function SkillPage() {
           </code>{' '}
           触发。例如：
           <code className="ds-code font-mono text-[11px] px-1.5 py-0.5 rounded">
-            /translate 你好世界
+            /frontend-design 做一个登录页
           </code>
         </p>
       </div>
