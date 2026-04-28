@@ -1,5 +1,7 @@
 export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';
 
+export type ModelType = 'expert' | null;
+
 export interface Memory {
   id?: number;
   syncId: string;
@@ -85,6 +87,8 @@ export type MessageAction =
   | { type: 'SET_ACTIVE_PRESET'; payload: { id: string | null } }
   | { type: 'GET_ACTIVE_PRESET' }
   | { type: 'GET_CONFIG' }
+  | { type: 'GET_MODEL_TYPE' }
+  | { type: 'SET_MODEL_TYPE'; payload: ModelType }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
   | { type: 'MEMORIES_UPDATED' }
   | { type: 'WEBDAV_TEST'; payload: Omit<SyncConfig, 'lastSyncAt'> }

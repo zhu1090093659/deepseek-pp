@@ -1,5 +1,5 @@
 import { DEEPSEEK_API_URL } from '../constants';
-import type { Memory, SystemPromptPreset, ToolCall } from '../types';
+import type { Memory, ModelType, SystemPromptPreset, ToolCall } from '../types';
 import { buildAugmentedPrompt } from '../memory/injector';
 import { parseSkillCommand } from '../skill/parser';
 import { extractTextFromParsed, isStreamFinishedFromParsed, parseSSEChunk, parseSSEData } from './sse-parser';
@@ -11,6 +11,7 @@ interface HookState {
   memories: Memory[];
   skills: Array<{ name: string; instructions: string; memoryEnabled: boolean }>;
   activePreset: SystemPromptPreset | null;
+  modelType: ModelType;
   onToolCall: (call: ToolCall) => void;
   onResponseComplete: (fullText: string) => void;
   onMemoriesUsed: (ids: number[]) => void;
@@ -20,6 +21,7 @@ let hookState: HookState = {
   memories: [],
   skills: [],
   activePreset: null,
+  modelType: null,
   onToolCall: () => {},
   onResponseComplete: () => {},
   onMemoriesUsed: () => {},
@@ -95,6 +97,10 @@ function modifyRequestBody(bodyStr: string): string | null {
     isFirstMessage && hookState.activePreset
       ? hookState.activePreset.content + '\n\n---\n\n'
       : '';
+
+  if (hookState.modelType) {
+    body.model_type = hookState.modelType;
+  }
 
   const invocation = parseSkillCommand(originalPrompt);
   if (invocation) {

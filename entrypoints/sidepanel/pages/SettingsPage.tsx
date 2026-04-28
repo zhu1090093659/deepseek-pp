@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [syncConfig, setSyncConfig] = useState<SyncConfig>(DEFAULT_SYNC_CONFIG);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [syncMessage, setSyncMessage] = useState('');
+  const [expertMode, setExpertMode] = useState(false);
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }).then((list: Memory[]) => {
@@ -29,7 +30,18 @@ export default function SettingsPage() {
     chrome.runtime.sendMessage({ type: 'GET_SYNC_CONFIG' }).then((cfg: SyncConfig | null) => {
       if (cfg) setSyncConfig(cfg);
     });
+    chrome.runtime.sendMessage({ type: 'GET_MODEL_TYPE' }).then((val: string | null) => {
+      setExpertMode(val === 'expert');
+    });
   }, []);
+
+  const handleExpertToggle = async (enabled: boolean) => {
+    setExpertMode(enabled);
+    await chrome.runtime.sendMessage({
+      type: 'SET_MODEL_TYPE',
+      payload: enabled ? 'expert' : null,
+    });
+  };
 
   const updateField = (field: keyof SyncConfig, value: string) => {
     setSyncConfig((prev) => ({ ...prev, [field]: value }));
@@ -152,6 +164,39 @@ export default function SettingsPage() {
 
   return (
     <div className="p-4 space-y-5">
+      <section className="space-y-3">
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          模型设置
+        </h2>
+
+        <div className="ds-surface-panel rounded-xl p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                Expert 模式
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                使用 DeepSeek Expert 模型进行对话
+              </div>
+            </div>
+            <button
+              onClick={() => handleExpertToggle(!expertMode)}
+              className="relative shrink-0 w-10 h-[22px] rounded-full transition-colors duration-200"
+              style={{
+                background: expertMode ? 'var(--ds-blue)' : 'var(--ds-border)',
+              }}
+            >
+              <span
+                className="absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                style={{
+                  transform: expertMode ? 'translateX(18px)' : 'translateX(0)',
+                }}
+              />
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
           云同步

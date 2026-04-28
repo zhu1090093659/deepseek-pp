@@ -1,4 +1,4 @@
-import type { Memory, Skill, SystemPromptPreset, ToolCall } from '../core/types';
+import type { Memory, ModelType, Skill, SystemPromptPreset, ToolCall } from '../core/types';
 import { stripToolCalls } from '../core/interceptor/tool-parser';
 
 export default defineContentScript({
@@ -11,13 +11,14 @@ export default defineContentScript({
       else document.addEventListener('DOMContentLoaded', () => r(undefined), { once: true });
     });
 
-    const [memories, skills, activePreset] = await Promise.all([
+    const [memories, skills, activePreset, modelType] = await Promise.all([
       chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
       chrome.runtime.sendMessage({ type: 'GET_SKILLS' }),
       chrome.runtime.sendMessage({ type: 'GET_ACTIVE_PRESET' }),
+      chrome.runtime.sendMessage({ type: 'GET_MODEL_TYPE' }),
     ]);
 
-    syncToMainWorld(memories ?? [], skills ?? [], activePreset);
+    syncToMainWorld(memories ?? [], skills ?? [], activePreset, modelType);
 
     window.addEventListener('message', async (event) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
@@ -42,7 +43,7 @@ export default defineContentScript({
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === 'STATE_UPDATED') {
-        syncToMainWorld(message.memories, message.skills, message.activePreset);
+        syncToMainWorld(message.memories, message.skills, message.activePreset, message.modelType);
       }
     });
 
@@ -50,13 +51,14 @@ export default defineContentScript({
   },
 });
 
-function syncToMainWorld(memories: Memory[], skills: Skill[], activePreset: SystemPromptPreset | null) {
+function syncToMainWorld(memories: Memory[], skills: Skill[], activePreset: SystemPromptPreset | null, modelType: ModelType) {
   window.postMessage({
     source: 'deepseek-pp-content',
     type: 'SYNC_STATE',
     memories,
     skills,
     activePreset,
+    modelType,
   });
 }
 

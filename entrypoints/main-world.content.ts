@@ -1,6 +1,6 @@
 import { installFetchHook, updateHookState } from '../core/interceptor/fetch-hook';
 import { initSkillPopup } from '../core/ui/skill-popup';
-import type { Memory, Skill, SystemPromptPreset, ToolCall } from '../core/types';
+import type { Memory, ModelType, Skill, SystemPromptPreset, ToolCall } from '../core/types';
 
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
@@ -38,12 +38,13 @@ export default defineContentScript({
 
       switch (event.data.type) {
         case 'SYNC_STATE': {
-          const { memories, skills, activePreset } = event.data as {
+          const { memories, skills, activePreset, modelType } = event.data as {
             memories: Memory[];
             skills: Skill[];
             activePreset: SystemPromptPreset | null;
+            modelType: ModelType;
           };
-          updateHookState({ memories, skills, activePreset });
+          updateHookState({ memories, skills, activePreset, modelType });
           initSkillPopup(skills);
           break;
         }

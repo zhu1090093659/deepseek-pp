@@ -15,10 +15,11 @@ import {
   setActivePresetId,
   replaceAllPresets,
 } from '../core/preset/store';
+import { getModelType, setModelType } from '../core/model/store';
 import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
 import { webdavTest, webdavMkcol, webdavGet, webdavPut } from '../core/sync/webdav-client';
 import { mergeMemories, mergeSkills, mergePresets } from '../core/sync/merge';
-import type { Memory, Skill, SyncConfig, SystemPromptPreset } from '../core/types';
+import type { Memory, ModelType, Skill, SyncConfig, SystemPromptPreset } from '../core/types';
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -111,6 +112,18 @@ async function handleMessage(
     case 'GET_CONFIG':
       return { version: '0.1.0' };
 
+    case 'GET_MODEL_TYPE':
+      return getModelType();
+
+    case 'SET_MODEL_TYPE': {
+      const newModelType = message.payload as ModelType;
+      const current = await getModelType();
+      if (newModelType === current) return { ok: true };
+      await setModelType(newModelType);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
     case 'GET_SYNC_CONFIG':
       return getSyncConfig();
 
@@ -175,14 +188,15 @@ async function handleMessage(
 }
 
 async function broadcastStateUpdate(excludeTabId?: number) {
-  const [memories, skills, activePreset] = await Promise.all([
+  const [memories, skills, activePreset, modelType] = await Promise.all([
     getAllMemories(),
     getAllSkills(),
     getActivePreset(),
+    getModelType(),
   ]);
   const tabs = await chrome.tabs.query({ url: '*://chat.deepseek.com/*' });
 
-  const payload = { type: 'STATE_UPDATED', memories, skills, activePreset };
+  const payload = { type: 'STATE_UPDATED', memories, skills, activePreset, modelType };
 
   for (const tab of tabs) {
     if (tab.id && tab.id !== excludeTabId) {
