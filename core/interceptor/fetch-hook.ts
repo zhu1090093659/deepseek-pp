@@ -154,6 +154,10 @@ interface ResolvedSkills {
   memoryEnabled: boolean;
 }
 
+function wrapUserInput(instructions: string, userInput: string): string {
+  return `${instructions}\n\n---\n\n以下是用户本次的输入，请根据上述指令处理：\n\n${userInput}`;
+}
+
 function resolveSkills(skillName: string, args: string): ResolvedSkills | null {
   const primarySkill = hookState.skills.find((s) => s.name === skillName);
   if (!primarySkill) return null;
@@ -166,7 +170,7 @@ function resolveSkills(skillName: string, args: string): ResolvedSkills | null {
       const combinedInstructions = primarySkill.instructions + '\n\n---\n\n' + secondSkill.instructions;
       return {
         combinedPrompt: userArgs
-          ? `${combinedInstructions}\n\n${userArgs}`
+          ? wrapUserInput(combinedInstructions, userArgs)
           : combinedInstructions,
         memoryEnabled: primarySkill.memoryEnabled || secondSkill.memoryEnabled,
       };
@@ -175,7 +179,7 @@ function resolveSkills(skillName: string, args: string): ResolvedSkills | null {
 
   return {
     combinedPrompt: args
-      ? `${primarySkill.instructions}\n\n${args}`
+      ? wrapUserInput(primarySkill.instructions, args)
       : primarySkill.instructions,
     memoryEnabled: primarySkill.memoryEnabled,
   };

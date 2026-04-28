@@ -17,6 +17,22 @@ const DSML_FORMAT_BLOCK = `<｜DSML｜tool_calls>
 </｜DSML｜invoke>
 </｜DSML｜tool_calls>`;
 
+export const DSML_UPDATE_BLOCK = `<｜DSML｜tool_calls>
+<｜DSML｜invoke name="memory_update">
+<｜DSML｜parameter name="id" string="false">记忆ID数字</｜DSML｜parameter>
+<｜DSML｜parameter name="type" string="true">user|feedback|topic|reference</｜DSML｜parameter>
+<｜DSML｜parameter name="name" string="true">更新后的标题</｜DSML｜parameter>
+<｜DSML｜parameter name="content" string="true">更新后的内容</｜DSML｜parameter>
+<｜DSML｜parameter name="tags" string="false">["标签1", "标签2"]</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>`;
+
+export const DSML_DELETE_BLOCK = `<｜DSML｜tool_calls>
+<｜DSML｜invoke name="memory_delete">
+<｜DSML｜parameter name="id" string="false">记忆ID数字</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>`;
+
 export const SYSTEM_TEMPLATE_CHAT = `## 角色
 你是用户的私人 AI 助手，具有跨对话长期记忆能力。你能记住用户的身份、偏好、技术栈和历史对话中的关键信息，在后续对话中提供个性化的帮助。
 

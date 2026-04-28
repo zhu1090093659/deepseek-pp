@@ -1,5 +1,6 @@
 import {
   getAllMemories,
+  getMemoryById,
   saveMemory,
   updateMemory,
   deleteMemory,
@@ -44,6 +45,11 @@ async function handleMessage(
   switch (message.type) {
     case 'GET_MEMORIES':
       return getAllMemories();
+
+    case 'GET_MEMORY_BY_ID': {
+      const { id: memId } = message.payload as { id: number };
+      return getMemoryById(memId) ?? null;
+    }
 
     case 'SAVE_MEMORY': {
       const id = await saveMemory(message.payload as Omit<Memory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'>);

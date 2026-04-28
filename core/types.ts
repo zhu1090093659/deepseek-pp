@@ -75,6 +75,7 @@ export interface SSEEvent {
 
 export type MessageAction =
   | { type: 'GET_MEMORIES' }
+  | { type: 'GET_MEMORY_BY_ID'; payload: { id: number } }
   | { type: 'GET_SKILLS' }
   | { type: 'SAVE_MEMORY'; payload: Omit<Memory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'> }
   | { type: 'DELETE_MEMORY'; payload: { id: number } }

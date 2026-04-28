@@ -1,16 +1,38 @@
+import { DSML_UPDATE_BLOCK, DSML_DELETE_BLOCK } from '../constants';
 import type { Skill } from '../types';
 
 export const BUILTIN_SKILLS: Skill[] = [
   {
     name: 'memory',
-    description: '记忆管理：/memory save <内容> | /memory list | /memory delete <id>',
-    instructions: `用户请求管理记忆。请根据以下指令操作。
+    description: '记忆管理：/memory save <内容> | /memory list | /memory update | /memory delete',
+    instructions: `用户请求管理记忆。每条记忆的格式为 "#ID [type] 标题: 内容"，ID 是唯一标识。
 
-如果是保存操作，分析用户提供的内容，确定合适的 type（user/feedback/topic/reference）和标签，然后在回复末尾输出记忆保存块。
+## 操作类型
 
-如果是列出操作，请列出"已有记忆"部分中的所有记忆条目。如果没有记忆，告知用户当前暂无保存的记忆。
+根据用户输入判断操作类型，然后在回复末尾输出对应的工具调用块。
 
-如果是删除操作，确认用户要删除的记忆目标。`,
+### 保存（用户想记住新内容）
+分析用户提供的内容，确定合适的 type 和标签，在回复末尾输出 memory_save 保存块。
+
+### 修改（用户想更新已有记忆）
+找到目标记忆的 ID，在回复末尾输出以下格式：
+
+${DSML_UPDATE_BLOCK}
+
+所有字段均为必填，未变更的字段保持原值。
+
+### 删除（用户想移除某条记忆）
+确认目标记忆的 ID，在回复末尾输出以下格式：
+
+${DSML_DELETE_BLOCK}
+
+### 列出
+列出"已有记忆"中的所有条目（含 ID），无需输出工具调用块。
+
+## 规则
+- 先正常回复用户，工具调用块附在回复最末尾
+- 支持一次操作多条记忆（输出多个 invoke 块）
+- 如果用户意图模糊，先确认再操作`,
     source: 'builtin',
     memoryEnabled: true,
   },

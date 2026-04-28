@@ -81,14 +81,45 @@ async function handleToolCall(call: ToolCall) {
         pinned: false,
       },
     });
-    showMemoryBadge(payload.name);
+    showMemoryBadge('save', payload.name);
+  } else if (call.name === 'memory_update') {
+    const payload = call.payload as {
+      id: number;
+      type?: string;
+      name?: string;
+      content?: string;
+      tags?: string[];
+    };
+    const id = Number(payload.id);
+    if (!id) return;
+    const existing = await chrome.runtime.sendMessage({ type: 'GET_MEMORY_BY_ID', payload: { id } });
+    if (!existing) return;
+    await chrome.runtime.sendMessage({
+      type: 'UPDATE_MEMORY',
+      payload: {
+        ...existing,
+        type: payload.type || existing.type,
+        name: payload.name || existing.name,
+        content: payload.content || existing.content,
+        description: payload.name || existing.description,
+        tags: payload.tags || existing.tags,
+      },
+    });
+    showMemoryBadge('update', payload.name || existing.name);
+  } else if (call.name === 'memory_delete') {
+    const payload = call.payload as { id: number };
+    const id = Number(payload.id);
+    if (!id) return;
+    await chrome.runtime.sendMessage({ type: 'DELETE_MEMORY', payload: { id } });
+    showMemoryBadge('delete', `#${id}`);
   }
 }
 
-function showMemoryBadge(name: string) {
+function showMemoryBadge(action: 'save' | 'update' | 'delete', name: string) {
+  const labels = { save: '已记住', update: '已更新', delete: '已删除' };
   const badge = document.createElement('div');
   badge.className = 'deepseek-pp-memory-badge';
-  badge.textContent = `🧠 已记住: ${name}`;
+  badge.textContent = `🧠 ${labels[action]}: ${name}`;
   badge.style.cssText = `
     position: fixed; bottom: 20px; right: 20px; z-index: 99999;
     background: #4D6BFE; color: white; padding: 10px 18px;

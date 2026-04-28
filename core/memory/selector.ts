@@ -118,7 +118,8 @@ function sanitizeContent(text: string): string {
 }
 
 export function formatMemoryLine(m: Memory): string {
-  return `- [${m.type}] ${sanitizeContent(m.name)}: ${sanitizeContent(m.content)}`;
+  const idPrefix = m.id != null ? `#${m.id} ` : '';
+  return `- ${idPrefix}[${m.type}] ${sanitizeContent(m.name)}: ${sanitizeContent(m.content)}`;
 }
 
 export function formatMemoriesBlock(memories: Memory[]): string {
