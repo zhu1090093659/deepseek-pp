@@ -104,6 +104,7 @@ entrypoints/
 ## 友情链接
 
 - [Awesome-Prompts 角色扮演](https://github.com/dongshuyan/Awesome-Prompts/tree/master/%E8%A7%92%E8%89%B2%E6%89%AE%E6%BC%94) — 精选角色扮演 Prompt 合集
+- [LINUX DO](https://linux.do) — 新一代开源技术社区
 
 ## License
 
