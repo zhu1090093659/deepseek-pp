@@ -130,7 +130,7 @@ function showPopup() {
     display: 'block',
     left: `${rect.left}px`,
     bottom: `${window.innerHeight - rect.top + 6}px`,
-    width: `${Math.min(rect.width, 420)}px`,
+    width: `${Math.min(rect.width, 560)}px`,
   });
 
   buildItems();
@@ -199,7 +199,7 @@ function injectStyles() {
   animation: dpp-slide-up .15s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
   backdrop-filter: blur(8px);
-  max-height: 50vh;
+  max-height: 340px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
