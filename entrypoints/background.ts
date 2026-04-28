@@ -5,6 +5,7 @@ import {
   deleteMemory,
   touchMemories,
   replaceAllMemories,
+  archiveStaleMemories,
 } from '../core/memory/store';
 import { getAllSkills, saveSkill, deleteSkill, replaceAllCustomSkills } from '../core/skill/registry';
 import {
@@ -25,6 +26,8 @@ export default defineBackground(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch(() => {});
+
+  archiveStaleMemories().catch(() => {});
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)

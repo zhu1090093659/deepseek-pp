@@ -71,4 +71,22 @@ export async function replaceAllMemories(memories: Omit<Memory, 'id'>[]): Promis
   });
 }
 
+const STALE_THRESHOLD_DAYS = 90;
+const MIN_ACCESS_FOR_RETENTION = 3;
+
+export async function archiveStaleMemories(): Promise<number> {
+  const threshold = Date.now() - STALE_THRESHOLD_DAYS * 86_400_000;
+  const stale = await db.memories
+    .where('lastAccessedAt')
+    .below(threshold)
+    .filter((m) => !m.pinned && m.accessCount < MIN_ACCESS_FOR_RETENTION)
+    .toArray();
+
+  if (stale.length === 0) return 0;
+
+  const ids = stale.map((m) => m.id!).filter(Boolean);
+  await db.memories.bulkDelete(ids);
+  return ids.length;
+}
+
 export { db };

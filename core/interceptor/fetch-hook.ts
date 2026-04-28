@@ -1,4 +1,4 @@
-import { DEEPSEEK_API_URL } from '../constants';
+import { DEEPSEEK_API_URL, PRESET_REINJECTION_INTERVAL } from '../constants';
 import type { Memory, ModelType, SystemPromptPreset, ToolCall } from '../types';
 import { buildAugmentedPrompt } from '../memory/injector';
 import { parseSkillCommand } from '../skill/parser';
@@ -12,6 +12,7 @@ interface HookState {
   skills: Array<{ name: string; instructions: string; memoryEnabled: boolean }>;
   activePreset: SystemPromptPreset | null;
   modelType: ModelType;
+  messageCount: number;
   onToolCall: (call: ToolCall) => void;
   onResponseComplete: (fullText: string) => void;
   onMemoriesUsed: (ids: number[]) => void;
@@ -22,6 +23,7 @@ let hookState: HookState = {
   skills: [],
   activePreset: null,
   modelType: null,
+  messageCount: 0,
   onToolCall: () => {},
   onResponseComplete: () => {},
   onMemoriesUsed: () => {},
@@ -92,11 +94,21 @@ function modifyRequestBody(bodyStr: string): string | null {
   const originalPrompt = (body.prompt as string) || '';
   if (!originalPrompt) return null;
 
+  const thinkingEnabled = body.thinking_enabled === true;
   const isFirstMessage = body.parent_message_id === null || body.parent_message_id === undefined;
-  const presetPrefix =
-    isFirstMessage && hookState.activePreset
-      ? hookState.activePreset.content + '\n\n---\n\n'
-      : '';
+
+  if (isFirstMessage) {
+    hookState.messageCount = 0;
+  }
+  hookState.messageCount++;
+
+  const shouldInjectPreset =
+    hookState.activePreset &&
+    (isFirstMessage || hookState.messageCount % PRESET_REINJECTION_INTERVAL === 0);
+
+  const presetPrefix = shouldInjectPreset
+    ? hookState.activePreset!.content + '\n\n---\n\n'
+    : '';
 
   if (hookState.modelType) {
     body.model_type = hookState.modelType;
@@ -104,21 +116,30 @@ function modifyRequestBody(bodyStr: string): string | null {
 
   const invocation = parseSkillCommand(originalPrompt);
   if (invocation) {
-    const skill = hookState.skills.find((s) => s.name === invocation.skillName);
-    if (skill) {
-      let prompt = invocation.args
-        ? `${skill.instructions}\n\n${invocation.args}`
-        : skill.instructions;
-      if (skill.memoryEnabled) {
-        const { augmented } = buildAugmentedPrompt(prompt, hookState.memories);
+    const resolved = resolveSkills(invocation.skillName, invocation.args);
+    if (resolved) {
+      let prompt = resolved.combinedPrompt;
+      const anyMemoryEnabled = resolved.memoryEnabled;
+
+      if (anyMemoryEnabled) {
+        const { augmented } = buildAugmentedPrompt(prompt, hookState.memories, { thinkingEnabled });
+        prompt = augmented;
+      } else if (hookState.memories.length > 0) {
+        const { augmented } = buildAugmentedPrompt(prompt, hookState.memories, {
+          thinkingEnabled,
+          identityOnly: true,
+        });
         prompt = augmented;
       }
+
       body.prompt = presetPrefix + prompt;
       return JSON.stringify(body);
     }
   }
 
-  const { augmented, usedMemoryIds } = buildAugmentedPrompt(originalPrompt, hookState.memories);
+  const { augmented, usedMemoryIds } = buildAugmentedPrompt(originalPrompt, hookState.memories, {
+    thinkingEnabled,
+  });
   body.prompt = presetPrefix + augmented;
 
   if (usedMemoryIds.length > 0) {
@@ -126,6 +147,38 @@ function modifyRequestBody(bodyStr: string): string | null {
   }
 
   return JSON.stringify(body);
+}
+
+interface ResolvedSkills {
+  combinedPrompt: string;
+  memoryEnabled: boolean;
+}
+
+function resolveSkills(skillName: string, args: string): ResolvedSkills | null {
+  const primarySkill = hookState.skills.find((s) => s.name === skillName);
+  if (!primarySkill) return null;
+
+  const secondInvocation = parseSkillCommand('/' + args);
+  if (secondInvocation) {
+    const secondSkill = hookState.skills.find((s) => s.name === secondInvocation.skillName);
+    if (secondSkill) {
+      const userArgs = secondInvocation.args;
+      const combinedInstructions = primarySkill.instructions + '\n\n---\n\n' + secondSkill.instructions;
+      return {
+        combinedPrompt: userArgs
+          ? `${combinedInstructions}\n\n${userArgs}`
+          : combinedInstructions,
+        memoryEnabled: primarySkill.memoryEnabled || secondSkill.memoryEnabled,
+      };
+    }
+  }
+
+  return {
+    combinedPrompt: args
+      ? `${primarySkill.instructions}\n\n${args}`
+      : primarySkill.instructions,
+    memoryEnabled: primarySkill.memoryEnabled,
+  };
 }
 
 function processResponseText(fullText: string) {
