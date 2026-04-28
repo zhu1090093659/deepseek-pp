@@ -4,8 +4,13 @@ export const BUILTIN_SKILLS: Skill[] = [
   {
     name: 'memory',
     description: '记忆管理：/memory save <内容> | /memory list | /memory delete <id>',
-    instructions:
-      '用户请求管理记忆。请根据以下指令操作。\n\n如果是保存操作，请分析内容并使用 memory_save 工具保存。如果是列出操作，请列出所有当前可用的记忆。如果是删除操作，确认删除目标。',
+    instructions: `用户请求管理记忆。请根据以下指令操作。
+
+如果是保存操作，分析用户提供的内容，确定合适的 type（user/feedback/topic/reference）和标签，然后在回复末尾输出记忆保存块。
+
+如果是列出操作，请列出"已有记忆"部分中的所有记忆条目。如果没有记忆，告知用户当前暂无保存的记忆。
+
+如果是删除操作，确认用户要删除的记忆目标。`,
     source: 'builtin',
     memoryEnabled: true,
   },
