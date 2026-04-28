@@ -9,6 +9,19 @@ db.version(1).stores({
   memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt',
 });
 
+db.version(2)
+  .stores({
+    memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId',
+  })
+  .upgrade((tx) => {
+    return tx
+      .table('memories')
+      .toCollection()
+      .modify((memory: Record<string, unknown>) => {
+        memory.syncId = crypto.randomUUID();
+      });
+  });
+
 export async function getAllMemories(): Promise<Memory[]> {
   return db.memories.toArray();
 }
@@ -23,6 +36,7 @@ export async function saveMemory(
   const now = Date.now();
   return db.memories.add({
     ...mem,
+    syncId: crypto.randomUUID(),
     createdAt: now,
     updatedAt: now,
     accessCount: 0,
@@ -48,6 +62,13 @@ export async function touchMemories(ids: number[]): Promise<void> {
       m.accessCount++;
       m.lastAccessedAt = now;
     });
+}
+
+export async function replaceAllMemories(memories: Omit<Memory, 'id'>[]): Promise<void> {
+  await db.transaction('rw', db.memories, async () => {
+    await db.memories.clear();
+    await db.memories.bulkAdd(memories as Memory[]);
+  });
 }
 
 export { db };

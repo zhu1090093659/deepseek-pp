@@ -9,6 +9,7 @@ export default defineConfig({
     description: 'Agentic memory & skill system for DeepSeek',
     version: '0.1.0',
     permissions: ['sidePanel', 'storage'],
+    optional_host_permissions: ['http://*/*', 'https://*/*'],
     side_panel: {
       default_path: 'sidepanel.html',
     },

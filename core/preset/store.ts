@@ -49,3 +49,7 @@ export async function getActivePreset(): Promise<SystemPromptPreset | null> {
   const presets = await getAllPresets();
   return presets.find((p) => p.id === activeId) ?? null;
 }
+
+export async function replaceAllPresets(presets: SystemPromptPreset[]): Promise<void> {
+  await chrome.storage.local.set({ [STORAGE_KEY]: presets });
+}

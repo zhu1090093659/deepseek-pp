@@ -2,6 +2,7 @@ export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';
 
 export interface Memory {
   id?: number;
+  syncId: string;
   type: MemoryType;
   name: string;
   content: string;
@@ -12,6 +13,14 @@ export interface Memory {
   updatedAt: number;
   accessCount: number;
   lastAccessedAt: number;
+}
+
+export interface SyncConfig {
+  url: string;
+  username: string;
+  password: string;
+  remotePath: string;
+  lastSyncAt: number | null;
 }
 
 export type SkillSource = 'builtin' | 'custom';
@@ -77,7 +86,11 @@ export type MessageAction =
   | { type: 'GET_ACTIVE_PRESET' }
   | { type: 'GET_CONFIG' }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
-  | { type: 'MEMORIES_UPDATED' };
+  | { type: 'MEMORIES_UPDATED' }
+  | { type: 'WEBDAV_TEST'; payload: Omit<SyncConfig, 'lastSyncAt'> }
+  | { type: 'WEBDAV_SYNC' }
+  | { type: 'GET_SYNC_CONFIG' }
+  | { type: 'SAVE_SYNC_CONFIG'; payload: SyncConfig };
 
 export interface PromptConfig {
   memoryTokenBudget: number;

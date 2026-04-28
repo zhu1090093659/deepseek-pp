@@ -32,3 +32,8 @@ export async function deleteSkill(name: string): Promise<void> {
   );
   await chrome.storage.local.set({ [STORAGE_KEY]: custom });
 }
+
+export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
+  const custom = skills.map((s) => ({ ...s, source: 'custom' as const }));
+  await chrome.storage.local.set({ [STORAGE_KEY]: custom });
+}

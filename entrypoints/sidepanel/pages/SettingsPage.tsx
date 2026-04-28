@@ -1,10 +1,23 @@
 import { useEffect, useState } from 'react';
-import type { Memory } from '../../../core/types';
+import type { Memory, SyncConfig } from '../../../core/types';
 import { SVG_PATHS } from '../constants';
+
+const DEFAULT_SYNC_CONFIG: SyncConfig = {
+  url: '',
+  username: '',
+  password: '',
+  remotePath: 'DeepSeekPP',
+  lastSyncAt: null,
+};
+
+type SyncStatus = 'idle' | 'testing' | 'syncing' | 'success' | 'error';
 
 export default function SettingsPage() {
   const [memoryCount, setMemoryCount] = useState(0);
   const [version, setVersion] = useState('');
+  const [syncConfig, setSyncConfig] = useState<SyncConfig>(DEFAULT_SYNC_CONFIG);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [syncMessage, setSyncMessage] = useState('');
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }).then((list: Memory[]) => {
@@ -13,7 +26,68 @@ export default function SettingsPage() {
     chrome.runtime.sendMessage({ type: 'GET_CONFIG' }).then((cfg: { version: string }) => {
       setVersion(cfg?.version ?? '');
     });
+    chrome.runtime.sendMessage({ type: 'GET_SYNC_CONFIG' }).then((cfg: SyncConfig | null) => {
+      if (cfg) setSyncConfig(cfg);
+    });
   }, []);
+
+  const updateField = (field: keyof SyncConfig, value: string) => {
+    setSyncConfig((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const requestPermission = async (url: string): Promise<boolean> => {
+    try {
+      const origin = new URL(url).origin + '/*';
+      return await chrome.permissions.request({ origins: [origin] });
+    } catch {
+      return false;
+    }
+  };
+
+  const runSyncAction = async (
+    status: 'testing' | 'syncing',
+    action: () => Promise<void>,
+  ) => {
+    if (!syncConfig.url) return;
+    setSyncStatus(status);
+    setSyncMessage('');
+
+    const granted = await requestPermission(syncConfig.url);
+    if (!granted) {
+      setSyncStatus('error');
+      setSyncMessage('需要访问权限才能连接 WebDAV 服务器');
+      return;
+    }
+
+    try {
+      await chrome.runtime.sendMessage({ type: 'SAVE_SYNC_CONFIG', payload: syncConfig });
+      await action();
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncMessage((e as Error).message || '操作失败');
+    }
+  };
+
+  const handleTest = () =>
+    runSyncAction('testing', async () => {
+      await chrome.runtime.sendMessage({ type: 'WEBDAV_TEST', payload: syncConfig });
+      setSyncStatus('success');
+      setSyncMessage('连接成功');
+    });
+
+  const handleSync = () =>
+    runSyncAction('syncing', async () => {
+      const result = await chrome.runtime.sendMessage({ type: 'WEBDAV_SYNC' });
+      if (result?.ok) {
+        setSyncConfig((prev) => ({ ...prev, lastSyncAt: result.lastSyncAt }));
+        setSyncStatus('success');
+        setSyncMessage('同步完成');
+        const list: Memory[] = await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' });
+        setMemoryCount(list?.length ?? 0);
+      } else {
+        throw new Error(result?.error || '同步失败');
+      }
+    });
 
   const handleExport = async () => {
     const memories: Memory[] = await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' });
@@ -57,8 +131,145 @@ export default function SettingsPage() {
     setMemoryCount(0);
   };
 
+  const formatTime = (ts: number | null) => {
+    if (!ts) return '从未同步';
+    return new Date(ts).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const inputClass =
+    'w-full px-3 py-2 text-xs rounded-lg border outline-none transition-colors focus:border-[var(--ds-blue)]';
+
+  const inputStyle = {
+    background: 'var(--ds-bg)',
+    borderColor: 'var(--ds-border)',
+    color: 'var(--ds-text)',
+  };
+
   return (
     <div className="p-4 space-y-5">
+      <section className="space-y-3">
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          云同步
+        </h2>
+
+        <div className="ds-surface-panel rounded-xl p-4 space-y-3">
+          <div>
+            <label className="block text-[11px] mb-1" style={{ color: 'var(--ds-text-secondary)' }}>
+              WebDAV 地址
+            </label>
+            <input
+              type="url"
+              placeholder="https://dav.example.com/dav/"
+              value={syncConfig.url}
+              onChange={(e) => updateField('url', e.target.value)}
+              className={inputClass}
+              style={inputStyle}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] mb-1" style={{ color: 'var(--ds-text-secondary)' }}>
+                用户名
+              </label>
+              <input
+                type="text"
+                value={syncConfig.username}
+                onChange={(e) => updateField('username', e.target.value)}
+                className={inputClass}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] mb-1" style={{ color: 'var(--ds-text-secondary)' }}>
+                密码
+              </label>
+              <input
+                type="password"
+                value={syncConfig.password}
+                onChange={(e) => updateField('password', e.target.value)}
+                className={inputClass}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] mb-1" style={{ color: 'var(--ds-text-secondary)' }}>
+              远程路径
+            </label>
+            <input
+              type="text"
+              value={syncConfig.remotePath}
+              onChange={(e) => updateField('remotePath', e.target.value)}
+              className={inputClass}
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleTest}
+            disabled={!syncConfig.url || syncStatus === 'testing' || syncStatus === 'syncing'}
+            className="ds-btn-secondary flex-1 py-2.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5 disabled:opacity-40"
+          >
+            {syncStatus === 'testing' ? (
+              <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            )}
+            测试连接
+          </button>
+          <button
+            onClick={handleSync}
+            disabled={!syncConfig.url || syncStatus === 'testing' || syncStatus === 'syncing'}
+            className="ds-btn-secondary flex-1 py-2.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5 disabled:opacity-40"
+            style={
+              syncConfig.url && syncStatus !== 'testing' && syncStatus !== 'syncing'
+                ? { background: 'var(--ds-blue)', color: '#fff', borderColor: 'var(--ds-blue)' }
+                : undefined
+            }
+          >
+            {syncStatus === 'syncing' ? (
+              <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            )}
+            立即同步
+          </button>
+        </div>
+
+        {syncMessage && (
+          <div
+            className="text-[11px] px-3 py-2 rounded-lg"
+            style={{
+              color: syncStatus === 'error' ? '#EF4444' : '#10B981',
+              background: syncStatus === 'error' ? '#FEF2F2' : '#ECFDF5',
+            }}
+          >
+            {syncMessage}
+          </div>
+        )}
+
+        <div className="text-[11px] text-center" style={{ color: 'var(--ds-text-tertiary)' }}>
+          上次同步: {formatTime(syncConfig.lastSyncAt)}
+        </div>
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
           数据管理

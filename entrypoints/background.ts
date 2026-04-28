@@ -4,16 +4,21 @@ import {
   updateMemory,
   deleteMemory,
   touchMemories,
+  replaceAllMemories,
 } from '../core/memory/store';
-import { getAllSkills, saveSkill, deleteSkill } from '../core/skill/registry';
+import { getAllSkills, saveSkill, deleteSkill, replaceAllCustomSkills } from '../core/skill/registry';
 import {
   getAllPresets,
   savePreset,
   deletePreset,
   getActivePreset,
   setActivePresetId,
+  replaceAllPresets,
 } from '../core/preset/store';
-import type { Memory, Skill, SystemPromptPreset } from '../core/types';
+import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
+import { webdavTest, webdavMkcol, webdavGet, webdavPut } from '../core/sync/webdav-client';
+import { mergeMemories, mergeSkills, mergePresets } from '../core/sync/merge';
+import type { Memory, Skill, SyncConfig, SystemPromptPreset } from '../core/types';
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -105,6 +110,64 @@ async function handleMessage(
 
     case 'GET_CONFIG':
       return { version: '0.1.0' };
+
+    case 'GET_SYNC_CONFIG':
+      return getSyncConfig();
+
+    case 'SAVE_SYNC_CONFIG': {
+      await saveSyncConfig(message.payload as SyncConfig);
+      return { ok: true };
+    }
+
+    case 'WEBDAV_TEST': {
+      await webdavTest(message.payload as SyncConfig);
+      return { ok: true };
+    }
+
+    case 'WEBDAV_SYNC': {
+      const config = await getSyncConfig();
+      if (!config) throw new Error('未配置 WebDAV');
+
+      await webdavMkcol(config);
+
+      const [localMemories, allSkills, localPresets] = await Promise.all([
+        getAllMemories(),
+        getAllSkills(),
+        getAllPresets(),
+      ]);
+      const localSkills = allSkills.filter((s) => s.source === 'custom');
+
+      const [remoteMemJson, remoteSkillJson, remotePresetJson] = await Promise.all([
+        webdavGet(config, 'memories.json'),
+        webdavGet(config, 'skills.json'),
+        webdavGet(config, 'presets.json'),
+      ]);
+
+      const remoteMemories: Memory[] = remoteMemJson ? JSON.parse(remoteMemJson) : [];
+      const remoteSkills: Skill[] = remoteSkillJson ? JSON.parse(remoteSkillJson) : [];
+      const remotePresets: SystemPromptPreset[] = remotePresetJson ? JSON.parse(remotePresetJson) : [];
+
+      const mergedMemories = mergeMemories(localMemories, remoteMemories);
+      const mergedSkills = mergeSkills(localSkills, remoteSkills);
+      const mergedPresets = mergePresets(localPresets, remotePresets);
+
+      await Promise.all([
+        replaceAllMemories(mergedMemories),
+        replaceAllCustomSkills(mergedSkills),
+        replaceAllPresets(mergedPresets),
+      ]);
+
+      await Promise.all([
+        webdavPut(config, 'memories.json', JSON.stringify(mergedMemories)),
+        webdavPut(config, 'skills.json', JSON.stringify(mergedSkills)),
+        webdavPut(config, 'presets.json', JSON.stringify(mergedPresets)),
+      ]);
+
+      const now = Date.now();
+      await saveSyncConfig({ ...config, lastSyncAt: now });
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true, lastSyncAt: now };
+    }
 
     default:
       return null;
