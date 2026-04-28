@@ -1,4 +1,4 @@
-import { DSML_UPDATE_BLOCK, DSML_DELETE_BLOCK } from '../constants';
+import { MEMORY_UPDATE_SCHEMA, MEMORY_DELETE_SCHEMA } from '../constants';
 import type { Skill } from '../types';
 
 export const BUILTIN_SKILLS: Skill[] = [
@@ -7,27 +7,28 @@ export const BUILTIN_SKILLS: Skill[] = [
     description: '记忆管理：/memory save <内容> | /memory list | /memory update | /memory delete',
     instructions: `用户请求管理记忆。每条记忆的格式为 "#ID [type] 标题: 内容"，ID 是唯一标识。
 
+### Additional Tool Schemas
+
+${MEMORY_UPDATE_SCHEMA}
+${MEMORY_DELETE_SCHEMA}
+
+You MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.
+
 ## 操作类型
 
-根据用户输入判断操作类型，然后在回复末尾输出对应的工具调用块。
+根据用户输入判断操作类型，然后在回复末尾调用对应的工具。
 
 ### 保存（用户想记住新内容）
-分析用户提供的内容，确定合适的 type 和标签，在回复末尾输出 memory_save 保存块。
+分析用户提供的内容，确定合适的 type 和标签，在回复末尾调用 memory_save 工具。
 
 ### 修改（用户想更新已有记忆）
-找到目标记忆的 ID，在回复末尾输出以下格式：
-
-${DSML_UPDATE_BLOCK}
-
-所有字段均为必填，未变更的字段保持原值。
+找到目标记忆的 ID，在回复末尾调用 memory_update 工具。所有字段均为必填，未变更的字段保持原值。
 
 ### 删除（用户想移除某条记忆）
-确认目标记忆的 ID，在回复末尾输出以下格式：
-
-${DSML_DELETE_BLOCK}
+确认目标记忆的 ID，在回复末尾调用 memory_delete 工具。
 
 ### 列出
-列出"已有记忆"中的所有条目（含 ID），无需输出工具调用块。
+列出"已有记忆"中的所有条目（含 ID），无需调用工具。
 
 ## 规则
 - 先正常回复用户，工具调用块附在回复最末尾
