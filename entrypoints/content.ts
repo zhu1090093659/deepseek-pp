@@ -180,6 +180,9 @@ function removeBackground() {
   document.getElementById('dpp-bg')?.remove();
   document.getElementById('dpp-bg-style')?.remove();
   document.body.classList.remove('dpp-bg-active');
+  document.body.style.removeProperty('--dpp-overlay-light');
+  document.body.style.removeProperty('--dpp-overlay-dark');
+  document.body.style.removeProperty('--dpp-blur');
 }
 
 function applyBackground(config: BackgroundConfig | null) {
@@ -197,6 +200,12 @@ function applyBackground(config: BackgroundConfig | null) {
 
   document.body.classList.add('dpp-bg-active');
 
+  const overlayAlpha = (1 - config.opacity).toFixed(3);
+  const blurPx = ((1 - config.opacity) * 8).toFixed(1);
+  document.body.style.setProperty('--dpp-overlay-light', `rgba(255, 255, 255, ${overlayAlpha})`);
+  document.body.style.setProperty('--dpp-overlay-dark', `rgba(30, 30, 30, ${overlayAlpha})`);
+  document.body.style.setProperty('--dpp-blur', `blur(${blurPx}px)`);
+
   const bgDiv = existingBg || document.createElement('div');
   bgDiv.id = 'dpp-bg';
   Object.assign(bgDiv.style, {
@@ -207,7 +216,6 @@ function applyBackground(config: BackgroundConfig | null) {
     backgroundSize: 'cover',
     backgroundPosition: 'center',
     backgroundRepeat: 'no-repeat',
-    opacity: String(config.opacity),
     pointerEvents: 'none',
   });
   if (!existingBg) document.body.prepend(bgDiv);
@@ -228,9 +236,9 @@ function applyBackground(config: BackgroundConfig | null) {
 
     body.dpp-bg-active #root > div > div,
     body.dpp-bg-active #__next > div > div {
-      background: rgba(255, 255, 255, 0.82) !important;
-      backdrop-filter: blur(16px) !important;
-      -webkit-backdrop-filter: blur(16px) !important;
+      background: var(--dpp-overlay-light) !important;
+      backdrop-filter: var(--dpp-blur) !important;
+      -webkit-backdrop-filter: var(--dpp-blur) !important;
     }
 
     body.dpp-bg-active .ds-icon-button,
@@ -242,7 +250,7 @@ function applyBackground(config: BackgroundConfig | null) {
     @media (prefers-color-scheme: dark) {
       body.dpp-bg-active #root > div > div,
       body.dpp-bg-active #__next > div > div {
-        background: rgba(30, 30, 30, 0.82) !important;
+        background: var(--dpp-overlay-dark) !important;
       }
     }
   `;

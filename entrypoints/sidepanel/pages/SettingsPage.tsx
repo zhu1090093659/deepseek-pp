@@ -374,15 +374,14 @@ export default function SettingsPage() {
                 src={bgPreview}
                 alt="背景预览"
                 className="w-full h-full object-cover"
-                style={{ opacity: bgOpacity }}
                 onError={() => { setBgUrl(''); setBgImageData(''); }}
               />
               <div
                 className="absolute inset-0 flex items-center justify-center text-[10px]"
                 style={{
-                  background: 'rgba(255,255,255,0.6)',
-                  backdropFilter: 'blur(8px)',
-                  WebkitBackdropFilter: 'blur(8px)',
+                  background: `rgba(255,255,255,${(1 - bgOpacity).toFixed(3)})`,
+                  backdropFilter: `blur(${((1 - bgOpacity) * 8).toFixed(1)}px)`,
+                  WebkitBackdropFilter: `blur(${((1 - bgOpacity) * 8).toFixed(1)}px)`,
                   color: 'var(--ds-text-secondary)',
                   pointerEvents: 'none',
                 }}
