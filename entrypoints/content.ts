@@ -176,6 +176,31 @@ function setupDOMObserver() {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
+function getToolbarBottom(): number {
+  const root = document.getElementById('root');
+  if (!root) return 0;
+
+  function walk(el: Element): number {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    if (
+      rect.top >= -2 && rect.top <= 5 &&
+      rect.height > 30 && rect.height <= 80 &&
+      rect.width > 300 &&
+      (style.position === 'absolute' || style.position === 'sticky' || style.position === 'fixed')
+    ) {
+      return rect.bottom;
+    }
+    for (const child of el.children) {
+      const result = walk(child);
+      if (result > 0) return result;
+    }
+    return 0;
+  }
+
+  return walk(root);
+}
+
 function removeBackground() {
   document.getElementById('dpp-bg')?.remove();
   document.getElementById('dpp-bg-style')?.remove();
@@ -206,11 +231,16 @@ function applyBackground(config: BackgroundConfig | null) {
   document.body.style.setProperty('--dpp-overlay-dark', `rgba(30, 30, 30, ${overlayAlpha})`);
   document.body.style.setProperty('--dpp-blur', `blur(${blurPx}px)`);
 
+  const topOffset = getToolbarBottom();
+
   const bgDiv = existingBg || document.createElement('div');
   bgDiv.id = 'dpp-bg';
   Object.assign(bgDiv.style, {
     position: 'fixed',
-    inset: '0',
+    top: `${topOffset}px`,
+    left: '0',
+    right: '0',
+    bottom: '0',
     zIndex: '-1',
     backgroundImage: `url("${imageUrl.replace(/[\\"]/g, '\\$&')}")`,
     backgroundSize: 'cover',
@@ -241,9 +271,7 @@ function applyBackground(config: BackgroundConfig | null) {
       -webkit-backdrop-filter: var(--dpp-blur) !important;
     }
 
-    body.dpp-bg-active .ds-icon-button,
-    body.dpp-bg-active header,
-    body.dpp-bg-active nav {
+    body.dpp-bg-active .ds-icon-button {
       background: transparent !important;
     }
 
