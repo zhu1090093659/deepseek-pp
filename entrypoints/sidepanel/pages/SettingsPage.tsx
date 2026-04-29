@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { Memory, SyncConfig } from '../../../core/types';
+import { useEffect, useRef, useState } from 'react';
+import type { BackgroundConfig, Memory, SyncConfig } from '../../../core/types';
 import { SVG_PATHS } from '../constants';
 
 const DEFAULT_SYNC_CONFIG: SyncConfig = {
@@ -19,6 +19,15 @@ export default function SettingsPage() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [syncMessage, setSyncMessage] = useState('');
   const [expertMode, setExpertMode] = useState(false);
+  const [bgEnabled, setBgEnabled] = useState(false);
+  const [bgType, setBgType] = useState<'upload' | 'url'>('upload');
+  const [bgUrl, setBgUrl] = useState('');
+  const [bgImageData, setBgImageData] = useState('');
+  const [bgOpacity, setBgOpacity] = useState(0.3);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const opacitySaveTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const bgPreview = bgType === 'url' ? bgUrl : bgImageData;
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }).then((list: Memory[]) => {
@@ -33,6 +42,14 @@ export default function SettingsPage() {
     chrome.runtime.sendMessage({ type: 'GET_MODEL_TYPE' }).then((val: string | null) => {
       setExpertMode(val === 'expert');
     });
+    chrome.runtime.sendMessage({ type: 'GET_BACKGROUND' }).then((cfg: BackgroundConfig | null) => {
+      if (!cfg) return;
+      setBgEnabled(cfg.enabled);
+      setBgType(cfg.type);
+      setBgUrl(cfg.url ?? '');
+      setBgImageData(cfg.imageData ?? '');
+      setBgOpacity(cfg.opacity);
+    });
   }, []);
 
   const handleExpertToggle = async (enabled: boolean) => {
@@ -41,6 +58,87 @@ export default function SettingsPage() {
       type: 'SET_MODEL_TYPE',
       payload: enabled ? 'expert' : null,
     });
+  };
+
+  const saveBgConfig = async (patch: Partial<BackgroundConfig>) => {
+    const config: BackgroundConfig = {
+      enabled: patch.enabled ?? bgEnabled,
+      type: patch.type ?? bgType,
+      url: patch.url ?? bgUrl,
+      imageData: patch.imageData ?? bgImageData,
+      opacity: patch.opacity ?? bgOpacity,
+    };
+    await chrome.runtime.sendMessage({ type: 'SAVE_BACKGROUND', payload: config });
+  };
+
+  const handleBgToggle = async (enabled: boolean) => {
+    setBgEnabled(enabled);
+    await saveBgConfig({ enabled });
+  };
+
+  const resizeImage = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const MAX = 1920;
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          const scale = Math.min(MAX / width, MAX / height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Failed to load image'));
+      };
+      img.src = objectUrl;
+    });
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    let data: string;
+    try {
+      data = await resizeImage(file);
+    } catch {
+      return;
+    }
+    setBgType('upload');
+    setBgImageData(data);
+    setBgEnabled(true);
+    await saveBgConfig({ enabled: true, type: 'upload', imageData: data, url: '' });
+    e.target.value = '';
+  };
+
+  const handleUrlConfirm = async () => {
+    if (!bgUrl.trim()) return;
+    setBgType('url');
+    setBgImageData('');
+    setBgEnabled(true);
+    await saveBgConfig({ enabled: true, type: 'url', url: bgUrl, imageData: '' });
+  };
+
+  const handleOpacityChange = (val: number) => {
+    setBgOpacity(val);
+    clearTimeout(opacitySaveTimer.current);
+    opacitySaveTimer.current = setTimeout(() => saveBgConfig({ opacity: val }), 200);
+  };
+
+  const handleClearBg = async () => {
+    setBgEnabled(false);
+    setBgType('upload');
+    setBgUrl('');
+    setBgImageData('');
+    setBgOpacity(0.3);
+    await chrome.runtime.sendMessage({ type: 'CLEAR_BACKGROUND' });
   };
 
   const updateField = (field: keyof SyncConfig, value: string) => {
@@ -194,6 +292,137 @@ export default function SettingsPage() {
               />
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-[13px] font-medium" style={{ color: 'var(--ds-text)' }}>
+          背景设置
+        </h2>
+
+        <div className="ds-surface-panel rounded-xl p-4 space-y-3">
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                自定义背景
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                为 DeepSeek 页面设置背景图片
+              </div>
+            </div>
+            <button
+              onClick={() => handleBgToggle(!bgEnabled)}
+              disabled={!bgPreview}
+              className="relative shrink-0 w-10 h-[22px] rounded-full transition-colors duration-200 disabled:opacity-40"
+              style={{
+                background: bgEnabled && bgPreview ? 'var(--ds-blue)' : 'var(--ds-border)',
+              }}
+            >
+              <span
+                className="absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                style={{
+                  transform: bgEnabled && bgPreview ? 'translateX(18px)' : 'translateX(0)',
+                }}
+              />
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="ds-btn-secondary flex-1 py-2 text-[11px] font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={SVG_PATHS.upload} />
+              </svg>
+              上传图片
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="url"
+              placeholder="粘贴图片 URL"
+              value={bgUrl}
+              onChange={(e) => setBgUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUrlConfirm()}
+              className={inputClass}
+              style={inputStyle}
+            />
+            <button
+              onClick={handleUrlConfirm}
+              disabled={!bgUrl.trim()}
+              className="ds-btn-secondary shrink-0 px-3 py-2 text-[11px] font-medium rounded-lg transition-all duration-150 disabled:opacity-40"
+            >
+              确认
+            </button>
+          </div>
+
+          {bgPreview && (
+            <div
+              className="relative rounded-lg overflow-hidden border"
+              style={{ borderColor: 'var(--ds-border)', height: '120px' }}
+            >
+              <img
+                src={bgPreview}
+                alt="背景预览"
+                className="w-full h-full object-cover"
+                style={{ opacity: bgOpacity }}
+                onError={() => { setBgUrl(''); setBgImageData(''); }}
+              />
+              <div
+                className="absolute inset-0 flex items-center justify-center text-[10px]"
+                style={{
+                  background: 'rgba(255,255,255,0.6)',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                  color: 'var(--ds-text-secondary)',
+                  pointerEvents: 'none',
+                }}
+              >
+                模拟效果预览
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="flex justify-between items-center mb-1.5">
+              <label className="text-[11px]" style={{ color: 'var(--ds-text-secondary)' }}>
+                背景透明度
+              </label>
+              <span className="text-[11px] font-mono" style={{ color: 'var(--ds-text-tertiary)' }}>
+                {bgOpacity.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.05"
+              max="1"
+              step="0.05"
+              value={bgOpacity}
+              onChange={(e) => handleOpacityChange(parseFloat(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+              style={{
+                background: `linear-gradient(to right, var(--ds-blue) ${bgOpacity * 100}%, var(--ds-border) ${bgOpacity * 100}%)`,
+              }}
+            />
+          </div>
+
+          {bgPreview && (
+            <button
+              onClick={handleClearBg}
+              className="ds-btn-danger w-full py-2 text-[11px] font-medium rounded-lg transition-all duration-150"
+            >
+              清除背景
+            </button>
+          )}
         </div>
       </section>
 

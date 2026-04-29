@@ -2,6 +2,14 @@ export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';
 
 export type ModelType = 'expert' | null;
 
+export interface BackgroundConfig {
+  enabled: boolean;
+  type: 'upload' | 'url';
+  url?: string;
+  imageData?: string;
+  opacity: number;
+}
+
 export interface Memory {
   id?: number;
   syncId: string;
@@ -95,7 +103,10 @@ export type MessageAction =
   | { type: 'WEBDAV_TEST'; payload: Omit<SyncConfig, 'lastSyncAt'> }
   | { type: 'WEBDAV_SYNC' }
   | { type: 'GET_SYNC_CONFIG' }
-  | { type: 'SAVE_SYNC_CONFIG'; payload: SyncConfig };
+  | { type: 'SAVE_SYNC_CONFIG'; payload: SyncConfig }
+  | { type: 'GET_BACKGROUND' }
+  | { type: 'SAVE_BACKGROUND'; payload: BackgroundConfig }
+  | { type: 'CLEAR_BACKGROUND' };
 
 export interface PromptConfig {
   memoryTokenBudget: number;

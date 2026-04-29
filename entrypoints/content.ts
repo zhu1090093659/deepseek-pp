@@ -1,4 +1,4 @@
-import type { Memory, ModelType, Skill, SystemPromptPreset, ToolCall } from '../core/types';
+import type { BackgroundConfig, Memory, ModelType, Skill, SystemPromptPreset, ToolCall } from '../core/types';
 import { stripToolCalls } from '../core/interceptor/tool-parser';
 
 export default defineContentScript({
@@ -41,9 +41,15 @@ export default defineContentScript({
       }
     });
 
+    chrome.runtime.sendMessage({ type: 'GET_BACKGROUND' }).then((cfg: BackgroundConfig | null) => {
+      applyBackground(cfg);
+    });
+
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === 'STATE_UPDATED') {
         syncToMainWorld(message.memories, message.skills, message.activePreset, message.modelType);
+      } else if (message.type === 'BACKGROUND_UPDATED') {
+        applyBackground(message.config as BackgroundConfig | null);
       }
     });
 
@@ -168,4 +174,77 @@ function setupDOMObserver() {
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function removeBackground() {
+  document.getElementById('dpp-bg')?.remove();
+  document.getElementById('dpp-bg-style')?.remove();
+  document.body.classList.remove('dpp-bg-active');
+}
+
+function applyBackground(config: BackgroundConfig | null) {
+  const imageUrl = config?.enabled
+    ? (config.type === 'url' ? config.url : config.imageData) || null
+    : null;
+
+  if (!imageUrl) {
+    removeBackground();
+    return;
+  }
+
+  const existingBg = document.getElementById('dpp-bg');
+  const existingStyle = document.getElementById('dpp-bg-style');
+
+  document.body.classList.add('dpp-bg-active');
+
+  const bgDiv = existingBg || document.createElement('div');
+  bgDiv.id = 'dpp-bg';
+  Object.assign(bgDiv.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '-1',
+    backgroundImage: `url("${imageUrl.replace(/[\\"]/g, '\\$&')}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    opacity: String(config.opacity),
+    pointerEvents: 'none',
+  });
+  if (!existingBg) document.body.prepend(bgDiv);
+
+  const styleEl = existingStyle || document.createElement('style');
+  styleEl.id = 'dpp-bg-style';
+  styleEl.textContent = `
+    body.dpp-bg-active,
+    body.dpp-bg-active #root,
+    body.dpp-bg-active #__next {
+      background: transparent !important;
+    }
+
+    body.dpp-bg-active #root > div,
+    body.dpp-bg-active #__next > div {
+      background: transparent !important;
+    }
+
+    body.dpp-bg-active #root > div > div,
+    body.dpp-bg-active #__next > div > div {
+      background: rgba(255, 255, 255, 0.82) !important;
+      backdrop-filter: blur(16px) !important;
+      -webkit-backdrop-filter: blur(16px) !important;
+    }
+
+    body.dpp-bg-active .ds-icon-button,
+    body.dpp-bg-active header,
+    body.dpp-bg-active nav {
+      background: transparent !important;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body.dpp-bg-active #root > div > div,
+      body.dpp-bg-active #__next > div > div {
+        background: rgba(30, 30, 30, 0.82) !important;
+      }
+    }
+  `;
+  if (!existingStyle) document.head.appendChild(styleEl);
 }

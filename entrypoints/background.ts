@@ -18,10 +18,11 @@ import {
   replaceAllPresets,
 } from '../core/preset/store';
 import { getModelType, setModelType } from '../core/model/store';
+import { getBackgroundConfig, saveBackgroundConfig, clearBackgroundConfig } from '../core/background/store';
 import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
 import { webdavTest, webdavMkcol, webdavGet, webdavPut } from '../core/sync/webdav-client';
 import { mergeMemories, mergeSkills, mergePresets } from '../core/sync/merge';
-import type { Memory, ModelType, Skill, SyncConfig, SystemPromptPreset } from '../core/types';
+import type { BackgroundConfig, Memory, ModelType, Skill, SyncConfig, SystemPromptPreset } from '../core/types';
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -133,6 +134,22 @@ async function handleMessage(
       return { ok: true };
     }
 
+    case 'GET_BACKGROUND':
+      return getBackgroundConfig();
+
+    case 'SAVE_BACKGROUND': {
+      const bgConfig = message.payload as BackgroundConfig;
+      await saveBackgroundConfig(bgConfig);
+      await broadcastBackgroundUpdate(bgConfig);
+      return { ok: true };
+    }
+
+    case 'CLEAR_BACKGROUND': {
+      await clearBackgroundConfig();
+      await broadcastBackgroundUpdate(null);
+      return { ok: true };
+    }
+
     case 'GET_SYNC_CONFIG':
       return getSyncConfig();
 
@@ -196,6 +213,18 @@ async function handleMessage(
   }
 }
 
+async function broadcastToTabs(payload: Record<string, unknown>, excludeTabId?: number) {
+  const tabs = await chrome.tabs.query({ url: '*://chat.deepseek.com/*' });
+  for (const tab of tabs) {
+    if (tab.id && tab.id !== excludeTabId) {
+      chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
+    }
+  }
+  if (excludeTabId) {
+    chrome.tabs.sendMessage(excludeTabId, payload).catch(() => {});
+  }
+}
+
 async function broadcastStateUpdate(excludeTabId?: number) {
   const [memories, skills, activePreset, modelType] = await Promise.all([
     getAllMemories(),
@@ -203,17 +232,9 @@ async function broadcastStateUpdate(excludeTabId?: number) {
     getActivePreset(),
     getModelType(),
   ]);
-  const tabs = await chrome.tabs.query({ url: '*://chat.deepseek.com/*' });
+  await broadcastToTabs({ type: 'STATE_UPDATED', memories, skills, activePreset, modelType }, excludeTabId);
+}
 
-  const payload = { type: 'STATE_UPDATED', memories, skills, activePreset, modelType };
-
-  for (const tab of tabs) {
-    if (tab.id && tab.id !== excludeTabId) {
-      chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
-    }
-  }
-
-  if (excludeTabId) {
-    chrome.tabs.sendMessage(excludeTabId, payload).catch(() => {});
-  }
+async function broadcastBackgroundUpdate(config: BackgroundConfig | null) {
+  await broadcastToTabs({ type: 'BACKGROUND_UPDATED', config });
 }
