@@ -154,11 +154,14 @@ function cleanToolCallsFromDOM() {
 
 function setupDOMObserver() {
   let cleanTimer: ReturnType<typeof setTimeout> | null = null;
+  let patchTimer: ReturnType<typeof setTimeout> | null = null;
 
   const observer = new MutationObserver((mutations) => {
+    let needsPatch = false;
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
+          needsPatch = true;
           const el = node as HTMLElement;
           if ((el.textContent || '').includes('<｜DSML｜tool_calls')) {
             if (cleanTimer) clearTimeout(cleanTimer);
@@ -166,14 +169,68 @@ function setupDOMObserver() {
               cleanTimer = null;
               cleanToolCallsFromDOM();
             }, 100);
-            return;
           }
         }
       }
     }
+    if (needsPatch && document.body.classList.contains('dpp-bg-active')) {
+      if (patchTimer) clearTimeout(patchTimer);
+      patchTimer = setTimeout(() => {
+        patchTimer = null;
+        patchContainerBackgrounds();
+      }, 200);
+    }
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function hasVisibleBackground(style: CSSStyleDeclaration): boolean {
+  const bg = style.backgroundColor;
+  const bgImg = style.backgroundImage;
+  return (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') ||
+         (bgImg !== 'none' && bgImg !== '');
+}
+
+function patchContainerBackgrounds() {
+  if (!document.body.classList.contains('dpp-bg-active')) return;
+  const root = document.getElementById('root');
+  if (!root) return;
+
+  const textarea = document.querySelector('textarea');
+  if (!textarea) return;
+
+  let inputBox: Element | null = null;
+  let el: Element | null = textarea.parentElement;
+  while (el && el !== root) {
+    const bg = getComputedStyle(el).backgroundColor;
+    if (bg === 'rgb(255, 255, 255)' || bg === 'rgb(249, 250, 251)') {
+      inputBox = el;
+      break;
+    }
+    el = el.parentElement;
+  }
+
+  if (!inputBox) return;
+
+  el = inputBox.parentElement;
+  while (el && el !== root && el !== document.body) {
+    const style = getComputedStyle(el);
+    if (hasVisibleBackground(style)) {
+      (el as HTMLElement).setAttribute('data-dpp-transparent', '');
+    }
+
+    if (style.position === 'sticky') {
+      for (const child of el.children) {
+        if (child.contains(textarea)) continue;
+        if (hasVisibleBackground(getComputedStyle(child))) {
+          (child as HTMLElement).setAttribute('data-dpp-transparent', '');
+        }
+      }
+    }
+
+    el = el.parentElement;
+  }
 }
 
 function getToolbarBottom(): number {
@@ -253,6 +310,16 @@ function applyBackground(config: BackgroundConfig | null) {
   const styleEl = existingStyle || document.createElement('style');
   styleEl.id = 'dpp-bg-style';
   styleEl.textContent = `
+    #dpp-bg::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--dpp-overlay-light);
+      backdrop-filter: var(--dpp-blur);
+      -webkit-backdrop-filter: var(--dpp-blur);
+      pointer-events: none;
+    }
+
     body.dpp-bg-active,
     body.dpp-bg-active #root,
     body.dpp-bg-active #__next {
@@ -266,21 +333,20 @@ function applyBackground(config: BackgroundConfig | null) {
 
     body.dpp-bg-active #root > div > div,
     body.dpp-bg-active #__next > div > div {
-      background: var(--dpp-overlay-light) !important;
-      backdrop-filter: var(--dpp-blur) !important;
-      -webkit-backdrop-filter: var(--dpp-blur) !important;
+      background: transparent !important;
     }
 
-    body.dpp-bg-active .ds-icon-button {
+    body.dpp-bg-active [data-dpp-transparent] {
       background: transparent !important;
     }
 
     @media (prefers-color-scheme: dark) {
-      body.dpp-bg-active #root > div > div,
-      body.dpp-bg-active #__next > div > div {
-        background: var(--dpp-overlay-dark) !important;
+      #dpp-bg::after {
+        background: var(--dpp-overlay-dark);
       }
     }
   `;
   if (!existingStyle) document.head.appendChild(styleEl);
+
+  patchContainerBackgrounds();
 }
