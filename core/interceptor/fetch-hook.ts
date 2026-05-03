@@ -185,12 +185,12 @@ function resolveSkills(skillName: string, args: string): ResolvedSkills | null {
   };
 }
 
-function processResponseText(fullText: string) {
-  const toolCalls = extractToolCalls(fullText);
-  for (const call of toolCalls) {
-    hookState.onToolCall(call);
+function notifyNewToolCalls(fullText: string, alreadyNotified: number): number {
+  const calls = extractToolCalls(fullText);
+  for (let i = alreadyNotified; i < calls.length; i++) {
+    hookState.onToolCall(calls[i]);
   }
-  hookState.onResponseComplete(fullText);
+  return calls.length;
 }
 
 async function interceptFetchResponse(responsePromise: Promise<Response>): Promise<Response> {
@@ -200,17 +200,22 @@ async function interceptFetchResponse(responsePromise: Promise<Response>): Promi
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let fullText = '';
-  let processed = false;
+  let notifiedCount = 0;
+  let completed = false;
+
+  const finalizeIfNeeded = () => {
+    if (completed) return;
+    completed = true;
+    notifiedCount = notifyNewToolCalls(fullText, notifiedCount);
+    hookState.onResponseComplete(fullText);
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          if (!processed) {
-            processed = true;
-            processResponseText(fullText);
-          }
+          finalizeIfNeeded();
           controller.close();
           break;
         }
@@ -223,11 +228,13 @@ async function interceptFetchResponse(responsePromise: Promise<Response>): Promi
           const parsed = parseSSEData(event.data);
           if (!parsed) continue;
           const text = extractTextFromParsed(parsed);
-          if (text) fullText += text;
+          if (text) {
+            fullText += text;
+            notifiedCount = notifyNewToolCalls(fullText, notifiedCount);
+          }
 
-          if (!processed && isStreamFinishedFromParsed(parsed)) {
-            processed = true;
-            processResponseText(fullText);
+          if (!completed && isStreamFinishedFromParsed(parsed)) {
+            finalizeIfNeeded();
           }
         }
       }
@@ -244,7 +251,15 @@ async function interceptFetchResponse(responsePromise: Promise<Response>): Promi
 function setupXHRResponseInterceptor(xhr: XMLHttpRequest) {
   let fullText = '';
   let lastLen = 0;
-  let processed = false;
+  let notifiedCount = 0;
+  let completed = false;
+
+  const finalizeIfNeeded = () => {
+    if (completed) return;
+    completed = true;
+    notifiedCount = notifyNewToolCalls(fullText, notifiedCount);
+    hookState.onResponseComplete(fullText);
+  };
 
   xhr.addEventListener('readystatechange', function () {
     if (xhr.readyState === 3 || xhr.readyState === 4) {
@@ -257,13 +272,13 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest) {
           const parsed = parseSSEData(event.data);
           if (!parsed) continue;
           const text = extractTextFromParsed(parsed);
-          if (text) fullText += text;
+          if (text) {
+            fullText += text;
+            notifiedCount = notifyNewToolCalls(fullText, notifiedCount);
+          }
         }
       }
     }
-    if (xhr.readyState === 4 && !processed) {
-      processed = true;
-      processResponseText(fullText);
-    }
+    if (xhr.readyState === 4) finalizeIfNeeded();
   });
 }
