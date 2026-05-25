@@ -43,7 +43,7 @@ async function sendNativeMessage<TParams extends Record<string, unknown> | undef
     });
   }
   if (!chrome.runtime?.sendNativeMessage) {
-    throw new McpTransportError('mcp_native_messaging_unavailable', 'Chrome native messaging is unavailable.', {
+    throw new McpTransportError('mcp_native_messaging_unavailable', 'Browser native messaging is unavailable.', {
       retryable: false,
     });
   }

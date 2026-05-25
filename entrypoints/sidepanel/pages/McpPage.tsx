@@ -43,7 +43,7 @@ const TRANSPORT_OPTIONS: { kind: McpTransportKind; label: string; hint: string }
   { kind: 'http', label: 'HTTP', hint: 'JSON-RPC over HTTP POST' },
   { kind: 'sse', label: 'SSE', hint: '旧版 MCP SSE 传输' },
   { kind: 'stdio_bridge', label: 'Stdio Bridge', hint: '本地桥接服务转发 stdio MCP' },
-  { kind: 'native_messaging', label: 'Native', hint: 'Chrome Native Messaging Host' },
+  { kind: 'native_messaging', label: 'Native', hint: 'Browser Native Messaging Host' },
 ];
 
 const DEFAULT_FORM: FormState = {

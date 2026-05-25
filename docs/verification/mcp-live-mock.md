@@ -8,7 +8,7 @@ Date: 2026-05-21
 npm run verify:mcp:mock
 npm run smoke:mcp
 npm run compile
-npm run build
+npm run build:all
 ```
 
 ### Result
@@ -32,16 +32,16 @@ All commands passed locally.
 
 ### Browser Policy Notes
 
-Full DeepSeek UI verification requires a user Chrome profile with:
+Full DeepSeek UI verification requires a user browser profile with:
 
-- `dist/chrome-mv3/` reloaded in `chrome://extensions/`
+- the matching unpacked build reloaded in the browser extension manager
 - an active authenticated `https://chat.deepseek.com/` session
 - explicit host permission approval for the MCP server origin from the MCP sidepanel
 
-The CLI verification cannot grant Chrome extension host permissions or assert the user's DeepSeek login state. To reproduce manually:
+The CLI verification cannot grant browser extension host permissions or assert the user's DeepSeek login state. To reproduce manually:
 
 1. Run `node scripts/mcp-live-mock.mjs --serve` and keep the process running.
-2. Reload the unpacked extension from `dist/chrome-mv3/`.
+2. Reload the unpacked extension for the target browser: `dist/chrome-mv3/`, `dist/edge-mv3/`, or `dist/firefox-mv3/manifest.json`.
 3. Open the sidepanel MCP tab and add a Streamable HTTP server using the printed loopback URL.
 4. Click `授权`, then `测试`, then `刷新工具`.
 5. Send a DeepSeek prompt that asks it to call `mcp_mock_echo` with `{"text":"manual"}` and confirm the tool result block appears and continuation is sent.

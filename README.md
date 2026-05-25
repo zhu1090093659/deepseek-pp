@@ -1,6 +1,6 @@
 # DeepSeek++
 
-为 [DeepSeek](https://chat.deepseek.com) 网页版注入 **类原生工具调用**、**MCP 工具系统**、**Agentic 记忆系统**、**Skill 技能系统**、**系统提示词预设** 和 **自动化任务** 的 Chrome 扩展。
+为 [DeepSeek](https://chat.deepseek.com) 网页版注入 **类原生工具调用**、**MCP 工具系统**、**Agentic 记忆系统**、**Skill 技能系统**、**系统提示词预设** 和 **自动化任务** 的 Chrome / Edge / Firefox 扩展。
 
 让 DeepSeek 像支持原生 tools 一样自动执行记忆保存、更新、删除和 MCP 工具调用，拥有跨对话长期记忆，并通过 `/skill` 指令一键切换专家模式；也可以像 Codex 自动化一样，把固定 prompt 放进独立会话里立即运行或按计划重复执行。
 
@@ -22,13 +22,13 @@
 
 ### MCP 工具系统
 
-- **支持多种 MCP 传输** — 支持 Streamable HTTP、HTTP POST、旧版 SSE、本地 stdio bridge 和 Chrome Native Messaging；浏览器不能直接启动 stdio 进程，因此 stdio 服务器需要通过本地 bridge 或 native host 转接
+- **支持多种 MCP 传输** — 支持 Streamable HTTP、HTTP POST、旧版 SSE、本地 stdio bridge 和浏览器 Native Messaging；浏览器不能直接启动 stdio 进程，因此 stdio 服务器需要通过本地 bridge 或 native host 转接
 - **标准 MCP 生命周期** — 连接时执行 `initialize` / `notifications/initialized`，发现工具走 `tools/list`，调用工具走 `tools/call`
 - **默认自动执行** — 新增 MCP 服务默认 `auto`，可在侧边栏按服务或单个工具禁用；禁用或手动策略的工具不会注入 DeepSeek prompt
-- **权限清晰可见** — HTTP/SSE/bridge 传输会请求对应 origin 的 Chrome host permission，侧边栏可直接授权、测试连接、刷新工具和查看延迟/错误
+- **权限清晰可见** — HTTP/SSE/bridge 传输会请求对应 origin 的浏览器 host permission，侧边栏可直接授权、测试连接、刷新工具和查看延迟/错误
 - **结果 continuation** — DeepSeek 输出 MCP XML 工具块后，扩展会自动执行工具、隐藏原始 XML、展示折叠结果，并把 `<tool_results>` 发回同一会话继续生成
 - **自动化兼容** — 自动化任务复用同一套 MCP 工具 schema、执行循环和历史记录，最多连续 3 轮工具结果 continuation
-- **本地安全边界** — MCP 配置和密钥保存在 Chrome 本地存储；WebDAV 同步仍只同步记忆、Skill 和预设，不同步 MCP secret
+- **本地安全边界** — MCP 配置和密钥保存在浏览器本地存储；WebDAV 同步仍只同步记忆、Skill 和预设，不同步 MCP secret
 - **默认限制** — 连接超时 10s，请求超时 60s，发现超时 20s，单次结果上限 64KB，单服务工具上限 128 个，均可在 MCP 服务编辑器中调整
 
 <p align="center">
@@ -83,12 +83,12 @@
 
 #### 自动化运行说明
 
-- 自动化依赖 Chrome 扩展后台定时器；Chrome 关闭或休眠期间错过的触发会在下次唤醒时合并为一次执行，不会补跑多次
+- 自动化依赖浏览器扩展后台定时器；浏览器关闭或休眠期间错过的触发会在下次唤醒时合并为一次执行，不会补跑多次
 - DeepSeek 网页需要保持已登录状态；任务执行时扩展会复用已有 DeepSeek 标签页，找不到时会打开 `https://chat.deepseek.com/`
 - cron/RRULE 的最小执行间隔为 15 分钟，避免页面接口、PoW 和账号风控被高频触发
 - 自动化 prompt 会走现有 DeepSeek++ 请求拦截链路，因此激活的系统预设、记忆注入、`/skill` 指令和工具调用能力仍然生效
 - 运行超时后不会自动重复发送同一条 prompt，避免 DeepSeek 页面仍在执行时产生重复消息
-- 从源码更新后需要在 Chrome 扩展管理页重新加载 `dist/chrome-mv3/`，再验证侧边栏「自动化」页
+- 从源码更新后需要在对应浏览器扩展管理页重新加载当前目标目录，再验证侧边栏「自动化」页
 
 ## 0.2.0 变更回顾
 
@@ -96,7 +96,7 @@
 
 | 方向 | 主要变化 |
 |------|----------|
-| MCP 工具系统 | 新增 MCP 服务配置、工具发现、健康检查、调用历史、结果大小限制和超时控制；支持 Streamable HTTP、HTTP POST、SSE、stdio bridge、Chrome Native Messaging；手动聊天和自动化任务都能自动执行 MCP 工具并把结果 continuation 回同一会话。 |
+| MCP 工具系统 | 新增 MCP 服务配置、工具发现、健康检查、调用历史、结果大小限制和超时控制；支持 Streamable HTTP、HTTP POST、SSE、stdio bridge、浏览器 Native Messaging；手动聊天和自动化任务都能自动执行 MCP 工具并把结果 continuation 回同一会话。 |
 | 工具调用内核 | 从固定记忆工具重构为 provider-neutral 工具契约；工具 schema、XML 解析、流式过滤、历史清理和 prompt 注入都改为动态 descriptor 驱动，同时保留旧 DSML 历史兼容。 |
 | 自动化任务 | 新增侧边栏自动化页、任务编辑器、立即运行、cron/RRULE 调度、暂停/恢复、独立 DeepSeek 会话、运行历史、PoW/auth 兼容、错过运行合并和失败状态展示。 |
 | 记忆系统 | 新增记忆更新/删除工具，优化相关记忆筛选、思考模式、自动清理和工具执行折叠展示，刷新页面后能恢复刚执行过的工具状态。 |
@@ -138,6 +138,25 @@ npm install
 npm run build
 ```
 
+默认 `npm run build` 生成 Chrome MV3 产物。跨浏览器构建可使用：
+
+```bash
+npm run build:chrome
+npm run build:edge
+npm run build:firefox
+npm run build:all
+```
+
+| 浏览器 | 加载入口 | 构建目录 |
+|--------|----------|----------|
+| Chrome | `chrome://extensions/` → 加载已解压的扩展程序 | `dist/chrome-mv3/` |
+| Edge | `edge://extensions/` → 加载解压缩的扩展 | `dist/edge-mv3/` |
+| Firefox | `about:debugging#/runtime/this-firefox` → 临时载入附加组件 | `dist/firefox-mv3/manifest.json` |
+
+Firefox 使用浏览器侧栏承载 DeepSeek++ 面板；Chrome 和 Edge 使用 `sidePanel`。Native Messaging host manifest 需要按浏览器分别安装。
+
+Chrome 手动加载示例：
+
 1. 打开 Chrome，访问 `chrome://extensions/`
 2. 开启右上角「开发者模式」
 3. 点击「加载已解压的扩展程序」
@@ -148,7 +167,9 @@ npm run build
 ```bash
 npm run dev    # 启动开发服务器，支持热重载
 npm run build  # 生产构建
+npm run build:all # 生成 Chrome / Edge / Firefox 产物
 npm run zip    # 打包为 .zip（用于发布）
+npm run zip:all # 打包 Chrome / Edge / Firefox 产物
 npm run compile # TypeScript 类型检查
 npm run smoke:mcp # 本地 MCP 协议/解析 smoke 检查
 npm run verify:mcp:mock # live mock MCP 手动/自动化 continuation 验证
@@ -158,9 +179,9 @@ npm run verify:mcp:mock # live mock MCP 手动/自动化 continuation 验证
 
 | 层次 | 技术 |
 |------|------|
-| 框架 | [WXT](https://wxt.dev) (Chrome MV3) |
+| 框架 | [WXT](https://wxt.dev) (Chrome / Edge / Firefox MV3) |
 | UI | React 19 + Tailwind CSS 4 |
-| 存储 | Dexie (IndexedDB) + Chrome Storage API |
+| 存储 | Dexie (IndexedDB) + WebExtension Storage API |
 | 语言 | TypeScript |
 
 ## 项目结构

@@ -38,25 +38,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build zip package
-        run: npm run zip
+      - name: Build zip packages
+        run: npm run zip:all
 
-      - name: Locate package
+      - name: Locate packages
         id: package
         shell: bash
         run: |
-          ZIP_FILE="$(find dist -maxdepth 1 -type f -name '*.zip' | sort | head -n 1)"
-          if [ -z "$ZIP_FILE" ]; then
-            echo "No zip package found in dist/" >&2
+          mapfile -t ZIP_FILES < <(find dist -maxdepth 1 -type f -name '*.zip' | sort)
+          if [ "${#ZIP_FILES[@]}" -eq 0 ]; then
+            echo "No zip packages found in dist/" >&2
             exit 1
           fi
-          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "zip_files<<EOF"
+            printf '%s\n' "${ZIP_FILES[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          ZIP_FILE: ${{ steps.package.outputs.zip_file }}
+          ZIP_FILES: ${{ steps.package.outputs.zip_files }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
@@ -64,6 +69,7 @@ jobs:
           TITLE="DeepSeek++ ${VERSION}"
           NOTES_FILE="docs/releases/${VERSION}.md"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          mapfile -t RELEASE_FILES <<< "$ZIP_FILES"
 
           if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
             echo "package.json version $PACKAGE_VERSION does not match release tag $TAG" >&2
@@ -71,9 +77,9 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ZIP_FILE" --clobber
+            gh release upload "$TAG" "${RELEASE_FILES[@]}" --clobber
           else
-            create_args=("$TAG" "$ZIP_FILE" --title "$TITLE")
+            create_args=("$TAG" "${RELEASE_FILES[@]}" --title "$TITLE")
             if [ -f "$NOTES_FILE" ]; then
               create_args+=(--notes-file "$NOTES_FILE")
             else

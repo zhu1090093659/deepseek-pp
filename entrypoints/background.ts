@@ -81,11 +81,12 @@ const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 const TAB_READY_TIMEOUT_MS = 20_000;
 const CONTENT_BRIDGE_RETRY_MS = 15_000;
 const CONTENT_BRIDGE_RETRY_STEP_MS = 500;
+type SidePanelApi = {
+  setPanelBehavior?: (options: { openPanelOnActionClick: boolean }) => Promise<void>;
+};
 
 export default defineBackground(() => {
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch(() => {});
+  enableSidePanelActionClick();
 
   archiveStaleMemories().catch(() => {});
   registerAutomationScheduler();
@@ -98,6 +99,13 @@ export default defineBackground(() => {
     return true;
   });
 });
+
+function enableSidePanelActionClick() {
+  if (import.meta.env.FIREFOX) return;
+
+  const sidePanel = (chrome as typeof chrome & { sidePanel?: SidePanelApi }).sidePanel;
+  sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
+}
 
 async function handleMessage(
   message: { type: string; payload?: unknown },
