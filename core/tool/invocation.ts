@@ -1,5 +1,5 @@
 import { MEMORY_TOOL_DESCRIPTORS } from './memory';
-import type { ToolCall, ToolDescriptor, ToolPayload } from './types';
+import type { ToolCall, ToolDescriptor, ToolError, ToolPayload } from './types';
 
 export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = MEMORY_TOOL_DESCRIPTORS;
 
@@ -8,6 +8,7 @@ export interface ToolInvocationCatalog {
   invocationNames: string[];
   descriptorByInvocationName: Map<string, ToolDescriptor>;
   descriptorByName: Map<string, ToolDescriptor>;
+  invocationNamesByDescriptorId: Map<string, string[]>;
 }
 
 export interface ToolParsingInput {
@@ -19,17 +20,37 @@ export function createToolInvocationCatalog(
 ): ToolInvocationCatalog {
   const descriptorByInvocationName = new Map<string, ToolDescriptor>();
   const descriptorByName = new Map<string, ToolDescriptor>();
+  const invocationNamesByDescriptorId = new Map<string, string[]>();
+  const toolNameCounts = new Map<string, number>();
+
+  for (const descriptor of descriptors) {
+    const name = descriptor.name.trim();
+    if (!isValidToolTagName(name)) continue;
+    toolNameCounts.set(name, (toolNameCounts.get(name) ?? 0) + 1);
+  }
 
   for (const descriptor of descriptors) {
     const invocationName = descriptor.invocationName.trim();
-    if (invocationName && !descriptorByInvocationName.has(invocationName)) {
-      descriptorByInvocationName.set(invocationName, descriptor);
+    const acceptedNames: string[] = [];
+    if (isValidToolTagName(invocationName)) {
+      addInvocationName(descriptorByInvocationName, acceptedNames, invocationName, descriptor);
     }
 
     const name = descriptor.name.trim();
     if (name && !descriptorByName.has(name)) {
       descriptorByName.set(name, descriptor);
     }
+
+    if (
+      name &&
+      name !== invocationName &&
+      isValidToolTagName(name) &&
+      toolNameCounts.get(name) === 1
+    ) {
+      addInvocationName(descriptorByInvocationName, acceptedNames, name, descriptor);
+    }
+
+    invocationNamesByDescriptorId.set(descriptor.id, acceptedNames);
   }
 
   return {
@@ -37,6 +58,7 @@ export function createToolInvocationCatalog(
     invocationNames: [...descriptorByInvocationName.keys()],
     descriptorByInvocationName,
     descriptorByName,
+    invocationNamesByDescriptorId,
   };
 }
 
@@ -51,6 +73,7 @@ export function createToolCallFromInvocation(
   payload: ToolPayload,
   raw: string,
   catalog: ToolInvocationCatalog,
+  options?: { parseError?: ToolError },
 ): ToolCall {
   const descriptor =
     catalog.descriptorByInvocationName.get(invocationName) ||
@@ -63,7 +86,27 @@ export function createToolCallFromInvocation(
     raw,
     descriptorId: descriptor?.id,
     provider: descriptor?.provider,
+    parseError: options?.parseError,
   };
+}
+
+export function getToolInvocationNames(
+  descriptor: ToolDescriptor,
+  catalog: ToolInvocationCatalog = createToolInvocationCatalog([descriptor]),
+): string[] {
+  const names = catalog.invocationNamesByDescriptorId.get(descriptor.id);
+  if (names?.length) return names;
+  return descriptor.invocationName ? [descriptor.invocationName] : [];
+}
+
+export function getPreferredToolInvocationName(
+  descriptor: ToolDescriptor,
+  catalog: ToolInvocationCatalog = createToolInvocationCatalog([descriptor]),
+): string {
+  const names = getToolInvocationNames(descriptor, catalog);
+  const directName = descriptor.name.trim();
+  if (directName && names.includes(directName)) return directName;
+  return names[0] ?? descriptor.invocationName;
 }
 
 export function getToolInvocationLabel(
@@ -95,4 +138,19 @@ export function hasXmlToolMarker(text: string, catalog: ToolInvocationCatalog): 
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function addInvocationName(
+  descriptorByInvocationName: Map<string, ToolDescriptor>,
+  acceptedNames: string[],
+  invocationName: string,
+  descriptor: ToolDescriptor,
+) {
+  acceptedNames.push(invocationName);
+  if (descriptorByInvocationName.has(invocationName)) return;
+  descriptorByInvocationName.set(invocationName, descriptor);
+}
+
+function isValidToolTagName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(value);
 }

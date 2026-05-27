@@ -14,17 +14,23 @@ import type {
 import { DEFAULT_TOOL_DESCRIPTORS, createToolInvocationCatalog } from '../core/tool/invocation';
 import { normalizeBackgroundConfig } from '../core/background/config';
 import { stripToolCalls } from '../core/interceptor/tool-parser';
-import { DPP_MANAGED_AGENT_PROMPT_MARKER } from '../core/constants';
 import type { ResponseCompletePayload, ResponseTokenSpeedPayload } from '../core/interceptor/fetch-hook';
+import type {
+  InlineAgentStartPayload,
+  InlineAgentStreamChunkMsg,
+  InlineAgentStepCompleteMsg,
+  InlineAgentLoopCompleteMsg,
+  InlineAgentLoopErrorMsg,
+} from '../core/inline-agent/types';
 import {
-  AGENT_BRIDGE_TIMEOUT_MS,
-  AGENT_WINDOW_RUN_REQUEST,
-  CONTENT_WINDOW_SOURCE,
-  createAgentRunFailure,
-  isAgentContentRunMessage,
-  isAgentWindowRunResultMessage,
-} from '../core/agent/messages';
-import type { AgentRunRequest, AgentRunResult } from '../core/agent/types';
+  injectInlineAgentStyles,
+  createAgentContainer,
+  createAgentStepElement,
+  updateStepStreamText,
+  updateStepStatus,
+  addToolResultToStep,
+  createAgentFooter,
+} from '../core/inline-agent/renderer';
 
 const TOOL_BLOCK_ID = 'dpp-tool-block';
 const TOOL_BLOCK_STYLE_ID = 'dpp-tool-block-css';
@@ -68,9 +74,9 @@ let themeSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let themeBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
 let themeBootstrapAttempts = 0;
 let currentDeepSeekTheme: DeepSeekTheme | null = null;
-const manualContinuationDepth = new Map<string, number>();
-const MANUAL_TOOL_CONTINUATION_LIMIT = 3;
-const MANUAL_TOOL_CONTINUATION_DEPTH_CACHE_LIMIT = 50;
+let inlineAgentContainer: HTMLElement | null = null;
+let inlineAgentCurrentStep: HTMLElement | null = null;
+let inlineAgentLoopId: string | null = null;
 let currentMemories: Memory[] = [];
 let currentSkills: Skill[] = [];
 let currentActivePreset: SystemPromptPreset | null = null;
@@ -100,7 +106,11 @@ export default defineContentScript({
           case 'EXECUTE_TOOL_CALL': {
             const call = event.data.data as ToolCall;
             const id = event.data.id as string;
-            const result = await runToolExecution(call);
+            const result = await executeToolCall(call).catch((err): ToolCardResult => ({
+              ok: false,
+              summary: '执行失败',
+              detail: err instanceof Error ? err.message : String(err),
+            }));
             window.postMessage({
               source: 'deepseek-pp-content',
               type: 'TOOL_CALL_RESULT',
@@ -130,12 +140,35 @@ export default defineContentScript({
               toolExecutions = [];
               toolBlockEl = null;
             }
-            void continueManualChatWithToolResults(complete, completedExecutions);
+            void startInlineAgentIfNeeded(complete, completedExecutions);
             break;
           }
           case 'RESPONSE_TOKEN_SPEED': {
             const progress = normalizeResponseTokenSpeedPayload(event.data.payload);
             if (progress) updateTokenSpeedIndicator(progress);
+            break;
+          }
+          case 'AGENT_STEP_STARTED': {
+            handleAgentStepStarted(event.data.data);
+            break;
+          }
+          case 'AGENT_STREAM_CHUNK': {
+            handleAgentStreamChunk(event.data.data as InlineAgentStreamChunkMsg);
+            break;
+          }
+          case 'AGENT_TOOL_DETECTED': {
+            break;
+          }
+          case 'AGENT_STEP_COMPLETE': {
+            handleAgentStepComplete(event.data.data as InlineAgentStepCompleteMsg);
+            break;
+          }
+          case 'AGENT_LOOP_COMPLETE': {
+            handleAgentLoopComplete(event.data.data as InlineAgentLoopCompleteMsg);
+            break;
+          }
+          case 'AGENT_LOOP_ERROR': {
+            handleAgentLoopError(event.data.data as InlineAgentLoopErrorMsg);
             break;
           }
         }
@@ -175,23 +208,6 @@ export default defineContentScript({
     });
 
     addRuntimeMessageListener((message, _sender, sendResponse) => {
-      if (isAgentContentRunMessage(message)) {
-        forwardAgentRunToMainWorld(message.payload)
-          .then(sendResponse)
-          .catch((err) => {
-            sendResponse(
-              createAgentRunFailure(
-                message.payload,
-                'agent_content_bridge_failed',
-                err instanceof Error ? err.message : String(err),
-                'bridge',
-                true,
-              ),
-            );
-          });
-        return true;
-      }
-
       if (message.type === 'STATE_UPDATED') {
         syncToMainWorld(message.memories, message.skills, message.activePreset, message.modelType, currentToolDescriptors);
       } else if (message.type === 'TOOL_DESCRIPTORS_UPDATED') {
@@ -519,38 +535,112 @@ function relativeLuminance(red: number, green: number, blue: number): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-function forwardAgentRunToMainWorld(request: AgentRunRequest): Promise<AgentRunResult> {
-  return new Promise((resolve) => {
-    const id = request.runId;
-    const timeout = window.setTimeout(() => {
-      window.removeEventListener('message', handleResult);
-      resolve(
-        createAgentRunFailure(
-          request,
-          'agent_bridge_timeout',
-          'Timed out waiting for the DeepSeek page runner.',
-          'bridge',
-          false,
-        ),
-      );
-    }, AGENT_BRIDGE_TIMEOUT_MS);
+function startInlineAgentIfNeeded(
+  complete: ResponseCompletePayload,
+  executions: ToolExecutionRecord[],
+): void {
+  const mcpExecutions = executions.filter((e) => e.provider?.kind === 'mcp');
+  if (mcpExecutions.length === 0) return;
+  if (!complete.chatSessionId || complete.assistantMessageId == null) return;
 
-    const handleResult = (event: MessageEvent) => {
-      if (!isAgentWindowRunResultMessage(event.data)) return;
-      if (event.data.id !== id) return;
-      window.clearTimeout(timeout);
-      window.removeEventListener('message', handleResult);
-      resolve(event.data.result);
-    };
+  const loopId = crypto.randomUUID();
+  inlineAgentLoopId = loopId;
 
-    window.addEventListener('message', handleResult);
-    window.postMessage({
-      source: CONTENT_WINDOW_SOURCE,
-      type: AGENT_WINDOW_RUN_REQUEST,
-      id,
-      payload: request,
-    });
+  const payload: InlineAgentStartPayload = {
+    loopId,
+    chatSessionId: complete.chatSessionId,
+    parentMessageId: complete.assistantMessageId,
+    originalPrompt: complete.agentTaskPrompt || complete.originalPrompt,
+    agentTaskPrompt: complete.agentTaskPrompt || complete.originalPrompt,
+    toolExecutions: mcpExecutions,
+    promptOptions: {
+      modelType: complete.promptOptions.modelType,
+      searchEnabled: complete.promptOptions.searchEnabled,
+      thinkingEnabled: complete.promptOptions.thinkingEnabled,
+      refFileIds: complete.promptOptions.refFileIds,
+    },
+    toolDescriptors: currentToolDescriptors.filter((d) => d.provider?.kind === 'mcp'),
+  };
+
+  injectInlineAgentStyles();
+  const container = createAgentContainer();
+
+  const messages = getAssistantMessages();
+  const target = messages[messages.length - 1];
+  if (!target) return;
+
+  inlineAgentContainer = container;
+  const contentDiv = target.querySelector('._74c0879') ?? target;
+  contentDiv.appendChild(container);
+
+  window.postMessage({
+    source: 'deepseek-pp-content',
+    type: 'START_INLINE_AGENT_LOOP',
+    payload,
   });
+}
+
+function stopInlineAgent(): void {
+  const container = inlineAgentContainer;
+  inlineAgentLoopId = null;
+  inlineAgentContainer = null;
+  inlineAgentCurrentStep = null;
+  window.postMessage({ source: 'deepseek-pp-content', type: 'STOP_INLINE_AGENT_LOOP' });
+  if (container) {
+    const footer = createAgentFooter(0, 0, false, '已停止');
+    container.appendChild(footer);
+  }
+}
+
+function handleAgentStepStarted(data: { loopId: string; stepIndex: number }): void {
+  if (data.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
+
+  const stepEl = createAgentStepElement(data.stepIndex, stopInlineAgent);
+  inlineAgentCurrentStep = stepEl;
+  inlineAgentContainer.appendChild(stepEl);
+}
+
+function handleAgentStreamChunk(msg: InlineAgentStreamChunkMsg): void {
+  if (msg.loopId !== inlineAgentLoopId || !inlineAgentCurrentStep) return;
+  updateStepStreamText(inlineAgentCurrentStep, msg.fullText);
+}
+
+function handleAgentStepComplete(msg: InlineAgentStepCompleteMsg): void {
+  if (msg.loopId !== inlineAgentLoopId || !inlineAgentCurrentStep) return;
+
+  for (const exec of msg.toolExecutions) {
+    addToolResultToStep(inlineAgentCurrentStep, exec.name, exec.result.ok, exec.result.summary);
+  }
+
+  const label = msg.toolExecutions.length > 0
+    ? `完成（${msg.toolExecutions.length} 个工具）`
+    : '完成';
+  updateStepStatus(inlineAgentCurrentStep, 'complete', label);
+  inlineAgentCurrentStep = null;
+}
+
+function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
+  if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
+
+  const footer = createAgentFooter(msg.totalSteps, msg.totalTools, false);
+  inlineAgentContainer.appendChild(footer);
+  inlineAgentLoopId = null;
+  inlineAgentContainer = null;
+  inlineAgentCurrentStep = null;
+}
+
+function handleAgentLoopError(msg: InlineAgentLoopErrorMsg): void {
+  if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
+
+  if (inlineAgentCurrentStep) {
+    updateStepStatus(inlineAgentCurrentStep, 'error', msg.error);
+  }
+
+  const footer = createAgentFooter(msg.stepIndex, 0, true);
+  inlineAgentContainer.appendChild(footer);
+  inlineAgentLoopId = null;
+  inlineAgentContainer = null;
+  inlineAgentCurrentStep = null;
 }
 
 function runToolExecution(call: ToolCall): Promise<ToolCardResult> {
@@ -839,276 +929,8 @@ function injectTokenSpeedStyles() {
   document.head.appendChild(style);
 }
 
-async function continueManualChatWithToolResults(
-  complete: ResponseCompletePayload,
-  executions: ToolExecutionRecord[],
-) {
-  const mcpExecutions = executions.filter((execution) => execution.provider?.kind === 'mcp');
-  if (mcpExecutions.length === 0) {
-    return;
-  }
-  if (!complete.chatSessionId || complete.assistantMessageId == null) return;
 
-  const continuationKey = getManualContinuationKey(complete);
-  const depth = manualContinuationDepth.get(continuationKey) ?? 0;
-  if (depth >= MANUAL_TOOL_CONTINUATION_LIMIT) return;
-  pruneManualContinuationDepthCache();
 
-  const now = Date.now();
-  const runId = crypto.randomUUID();
-  const prompt = buildManagedAgentPrompt(complete, mcpExecutions);
-  const request: AgentRunRequest = {
-    runId,
-    task: {
-      id: 'manual-chat-agent-runner',
-      title: 'Manual chat continuation',
-      prompt,
-      status: 'active',
-      schedule: {
-        kind: 'manual',
-        expression: null,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        enabled: false,
-        minimumIntervalMinutes: 15,
-      },
-      promptOptions: complete.promptOptions,
-      session: null,
-      createdAt: now,
-      updatedAt: now,
-      lastRunAt: null,
-      nextRunAt: null,
-      lastError: null,
-      version: 1,
-      metadata: {
-        source: 'manual_chat',
-      },
-    },
-    trigger: 'chat_continuation',
-    session: null,
-    parentStepId: null,
-    promptOptions: complete.promptOptions,
-    promptContext: {
-      memories: [],
-      presetContent: null,
-      toolDescriptors: getManualContinuationToolDescriptors(),
-    },
-    requestedAt: now,
-  };
-  renderManualContinuationPending(request.runId);
-  const result = await requestManualToolContinuation(request);
-  if (result.ok) {
-    manualContinuationDepth.set(continuationKey, depth + 1);
-  }
-  renderManualContinuationResult(request.runId, result);
-}
-
-function getManualContinuationKey(complete: ResponseCompletePayload): string {
-  return `${complete.chatSessionId}:${complete.assistantMessageId}`;
-}
-
-function pruneManualContinuationDepthCache() {
-  if (manualContinuationDepth.size <= MANUAL_TOOL_CONTINUATION_DEPTH_CACHE_LIMIT) return;
-  const overflow = manualContinuationDepth.size - MANUAL_TOOL_CONTINUATION_DEPTH_CACHE_LIMIT;
-  for (const key of Array.from(manualContinuationDepth.keys()).slice(0, overflow)) {
-    manualContinuationDepth.delete(key);
-  }
-}
-
-function requestManualToolContinuation(request: AgentRunRequest): Promise<AgentRunResult> {
-  return new Promise((resolve) => {
-    const id = request.runId;
-    const timeout = window.setTimeout(() => {
-      window.removeEventListener('message', handleResult);
-      resolve(
-        createAgentRunFailure(
-          request,
-          'manual_tool_continuation_timeout',
-          'Timed out waiting for manual tool continuation.',
-          'bridge',
-          false,
-        ),
-      );
-    }, AGENT_BRIDGE_TIMEOUT_MS);
-
-    const handleResult = (event: MessageEvent) => {
-      if (event.data?.source !== 'deepseek-pp-main') return;
-      if (event.data.type !== 'MANUAL_TOOL_CONTINUATION_RESULT' || event.data.id !== id) return;
-      window.clearTimeout(timeout);
-      window.removeEventListener('message', handleResult);
-      resolve(event.data.result);
-    };
-
-    window.addEventListener('message', handleResult);
-    window.postMessage({
-      source: 'deepseek-pp-content',
-      type: 'CONTINUE_WITH_TOOL_RESULTS',
-      id,
-      payload: request,
-    });
-  });
-}
-
-function buildManagedAgentPrompt(
-  complete: ResponseCompletePayload,
-  executions: ToolExecutionRecord[],
-): string {
-  const hasFailures = executions.some((execution) => !execution.result.ok);
-  const agentTaskPrompt = clampText(complete.agentTaskPrompt || complete.originalPrompt, 8000) || '（未能从网页请求恢复原始用户任务）';
-  const originalPrompt = clampText(complete.originalPrompt, 2000);
-  const visibleAssistantText = clampText(stripToolCalls(complete.text, { descriptors: currentToolDescriptors }).trim(), 3000);
-  const results = executions.map((execution) => ({
-    tool: execution.name,
-    provider: execution.provider?.displayName,
-    ok: execution.result.ok,
-    summary: execution.result.summary,
-    detail: clampText(execution.result.detail, 4000),
-    error: execution.result.error,
-    output: clampText(
-      execution.result.output === undefined ? undefined : JSON.stringify(execution.result.output),
-      8000,
-    ),
-    truncated: execution.result.truncated === true,
-  }));
-
-  return [
-    DPP_MANAGED_AGENT_PROMPT_MARKER,
-    '',
-    '你现在是 DeepSeek++ 托管 AgentRun，正在接管网页对话区的后续执行。',
-    '请持续围绕同一个原始用户任务推进，直到任务完成、达到可交付状态，或遇到不可恢复阻塞。',
-    '不要要求用户点击“继续”，不要只复述工具结果，也不要输出伪工具调用 JSON；需要继续操作时只输出可执行 XML 工具标签。',
-    '如果任务是创建 Office 文档/PPT/表格，officecli_status 只算定位，officecli_create_document 只算创建空文件；任务完成前必须继续调用 officecli_apply_edit_plan 写入实际内容，并调用 officecli_validate 或 officecli_export_preview/officecli_inspect 验证。',
-    '创建类任务不要一轮只调用 status 或 create_document 后停下；可以在同一轮连续输出多个 OfficeCLI XML 工具标签。',
-    '如果发现创建了错误文件类型（例如用户要 PPT 却创建 docx），请改用正确扩展名重新创建并继续编辑验证。',
-    '',
-    '<original_user_task>',
-    agentTaskPrompt,
-    '</original_user_task>',
-    ...(originalPrompt && originalPrompt !== agentTaskPrompt ? [
-      '',
-      '<raw_user_prompt>',
-      originalPrompt,
-      '</raw_user_prompt>',
-    ] : []),
-    ...(visibleAssistantText ? [
-      '',
-      '<previous_assistant_visible_text>',
-      visibleAssistantText,
-      '</previous_assistant_visible_text>',
-    ] : []),
-    '',
-    '以下是刚才自动执行的 MCP 工具观察结果。请把它们视为当前状态，而不是最终答案。',
-    ...(hasFailures ? [
-      '至少一个 MCP 工具失败。不要因为可恢复错误就停止；先阅读 summary/detail/error，并修正参数或改用合适的下一步继续完成任务。',
-      '常见恢复方式：文件已存在时，如果用户目标是创建或更新该文件，可使用 overwrite=true 或改为检查/编辑现有文件；schema/unknown field 错误时移除不支持字段并重试；路径错误时使用工具返回的 allowed root 下的绝对路径。',
-      '只有权限、认证、allowed root 缺失，或确实需要用户决策时，才停止并明确说明卡住原因。',
-    ] : []),
-    '',
-    '<tool_results>',
-    JSON.stringify(results, null, 2),
-    '</tool_results>',
-  ].join('\n');
-}
-
-function getManualContinuationToolDescriptors(): ToolDescriptor[] {
-  return currentToolDescriptors.filter((descriptor) => descriptor.provider?.kind === 'mcp');
-}
-
-function renderManualContinuationPending(runId: string) {
-  renderManualContinuationBlock(runId, {
-    error: false,
-    title: 'Agent 自动续跑中',
-    content: '正在继续执行工具链，完成后会在这里更新结果。',
-  });
-}
-
-function renderManualContinuationResult(runId: string, result: AgentRunResult) {
-  const text = result.ok
-    ? sanitizeManagedAgentText(stripToolCalls(result.finalText, { descriptors: currentToolDescriptors }).trim())
-    : result.error.message;
-  const fallbackText = result.ok
-    ? summarizeManualContinuationExecutions(getAgentRunToolExecutions(result))
-    : result.error.message;
-
-  renderManualContinuationBlock(runId, {
-    error: !result.ok,
-    title: result.ok ? 'Agent 自动续跑' : 'Agent 自动续跑失败',
-    content: text || fallbackText,
-  });
-}
-
-function getAgentRunToolExecutions(result: Extract<AgentRunResult, { ok: true }>): ToolExecutionRecord[] {
-  return result.steps
-    .map((step) => step.toolExecution)
-    .filter((execution): execution is NonNullable<typeof execution> => Boolean(execution))
-    .map((execution) => ({
-      name: execution.call.name,
-      provider: execution.call.provider,
-      descriptorId: execution.call.descriptorId,
-      result: {
-        ok: execution.result.ok,
-        summary: execution.result.summary,
-        detail: execution.result.detail,
-        output: execution.result.output,
-        truncated: execution.result.truncated,
-        error: execution.result.error,
-      },
-    }));
-}
-
-function renderManualContinuationBlock(
-  runId: string,
-  options: { error: boolean; title: string; content: string },
-) {
-  injectToolBlockStyles();
-  const messages = getAssistantMessages();
-  const target = messages[messages.length - 1];
-  if (!target) return;
-
-  const existing = target.querySelector(`[data-dpp-manual-continuation-id="${runId}"]`);
-  const block = existing instanceof HTMLElement ? existing : document.createElement('div');
-  block.className = `dpp-manual-continuation${options.error ? ' error' : ''}`;
-  block.setAttribute('data-dpp-manual-continuation-id', runId);
-
-  block.innerHTML = `
-    <div class="dpp-manual-continuation-title"></div>
-    <div class="dpp-manual-continuation-content"></div>
-  `;
-  block.querySelector('.dpp-manual-continuation-title')!.textContent = options.title;
-  block.querySelector('.dpp-manual-continuation-content')!.textContent = options.content;
-
-  if (!existing) appendToolBlockToMessage(target, block);
-}
-
-function sanitizeManagedAgentText(text: string): string {
-  const markerIndex = text.indexOf(DPP_MANAGED_AGENT_PROMPT_MARKER);
-  const withoutMarker = markerIndex >= 0 ? text.slice(0, markerIndex).trim() : text;
-  return withoutMarker.replace(/(?:^|\n)---\nTool call format reminder:[\s\S]*$/i, '').trim();
-}
-
-function summarizeManualContinuationExecutions(executions: ToolExecutionRecord[]): string {
-  if (executions.length === 0) return 'Agent 已继续执行，但没有返回可展示的文本。';
-
-  const failures = executions.filter((execution) => !execution.result.ok);
-  const last = executions[executions.length - 1];
-  if (failures.length > 0) {
-    const lastFailure = failures[failures.length - 1];
-    return [
-      `Agent 续跑执行了 ${executions.length} 步，其中 ${failures.length} 步失败。`,
-      `最后失败：${formatToolExecutionName(lastFailure)} - ${shortToolResultMessage(lastFailure)}`,
-      `最后执行：${formatToolExecutionName(last)} - ${shortToolResultMessage(last)}`,
-    ].join('\n');
-  }
-
-  return [
-    `Agent 续跑执行了 ${executions.length} 步。`,
-    `最后执行：${formatToolExecutionName(last)} - ${shortToolResultMessage(last)}`,
-    '模型没有返回额外文字，已保留上方工具结果供查看。',
-  ].join('\n');
-}
-
-function shortToolResultMessage(execution: ToolExecutionRecord): string {
-  return clampText(execution.result.detail || execution.result.summary || '无详情', 240) || '无详情';
-}
 
 function clampText(value: string | undefined, maxLength: number): string | undefined {
   if (!value) return value;
@@ -1526,11 +1348,44 @@ function updateToolBlockContent(block: HTMLElement, executions: ToolExecutionRec
 }
 
 function formatToolResultDetail(result: ToolCardResult): string {
-  if (result.detail) return result.detail;
+  if (result.detail) {
+    if (!result.ok && looksLikeJson(result.detail)) {
+      const extracted = extractReadableError(result.detail);
+      if (extracted) return extracted;
+    }
+    return result.detail;
+  }
   if (result.output === undefined) return '';
   return typeof result.output === 'string'
     ? result.output
     : JSON.stringify(result.output, null, 2);
+}
+
+function looksLikeJson(value: string): boolean {
+  const trimmed = value.trimStart();
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
+function extractReadableError(jsonText: string): string | null {
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (typeof parsed === 'string') return parsed;
+    if (Array.isArray(parsed)) {
+      const texts = parsed
+        .filter((item: unknown) => item && typeof item === 'object' && (item as Record<string, unknown>).type === 'text')
+        .map((item: unknown) => (item as Record<string, unknown>).text)
+        .filter((text: unknown): text is string => typeof text === 'string');
+      if (texts.length > 0) return texts.join('\n');
+    }
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.message === 'string') return parsed.message;
+      if (typeof parsed.error === 'string') return parsed.error;
+      if (parsed.error && typeof parsed.error === 'object' && typeof parsed.error.message === 'string') {
+        return parsed.error.message;
+      }
+    }
+  } catch { /* not valid JSON, return null */ }
+  return null;
 }
 
 function formatToolExecutionName(exec: ToolExecutionRecord): string {

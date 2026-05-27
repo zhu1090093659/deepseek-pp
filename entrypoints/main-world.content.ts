@@ -13,17 +13,16 @@ import type {
   ToolCall,
   ToolCallRestoreRecord,
   ToolDescriptor,
+  ToolExecutionRecord,
   ToolResult,
 } from '../core/types';
-import {
-  AGENT_WINDOW_RUN_RESULT,
-  AGENT_BRIDGE_TIMEOUT_MS,
-  MAIN_WORLD_WINDOW_SOURCE,
-  createAgentRunFailure,
-  isAgentWindowRunRequestMessage,
-} from '../core/agent/messages';
-import { runDeepSeekAgentRun } from '../core/agent/deepseek-runner';
-import type { AgentRunRequest, AgentRunResult } from '../core/agent/types';
+import { runInlineAgentLoop } from '../core/inline-agent/loop';
+import type { InlineAgentStartPayload } from '../core/inline-agent/types';
+
+const MAIN_WORLD_SOURCE = 'deepseek-pp-main';
+const TOOL_BRIDGE_TIMEOUT_MS = 120_000;
+
+let activeAgentAbort: AbortController | null = null;
 
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
@@ -34,73 +33,28 @@ export default defineContentScript({
 
     updateHookState({
       onToolCall(call: ToolCall) {
-        window.postMessage({
-          source: 'deepseek-pp-main',
-          type: 'TOOL_CALL',
-          data: call,
-        });
+        window.postMessage({ source: MAIN_WORLD_SOURCE, type: 'TOOL_CALL', data: call });
       },
       async onToolCallExecuted(call: ToolCall) {
-        return new Promise((resolve) => {
-          const id = Math.random().toString(36).slice(2);
-          const timeout = setTimeout(() => {
-            window.removeEventListener('message', handler);
-            resolve({ ok: false, summary: 'Tool execution timed out (bridge timeout)' });
-          }, AGENT_BRIDGE_TIMEOUT_MS);
-          const handler = (event: MessageEvent) => {
-            if (event.data?.source !== 'deepseek-pp-content') return;
-            if (event.data.type !== 'TOOL_CALL_RESULT' || event.data.id !== id) return;
-            clearTimeout(timeout);
-            window.removeEventListener('message', handler);
-            resolve(event.data.result);
-          };
-          window.addEventListener('message', handler);
-          window.postMessage({
-            source: 'deepseek-pp-main',
-            type: 'EXECUTE_TOOL_CALL',
-            data: call,
-            id,
-          });
-        });
+        return executeToolCallViaContent(call);
       },
       onToolCallsRestored(records: ToolCallRestoreRecord[]) {
-        window.postMessage({
-          source: 'deepseek-pp-main',
-          type: 'RESTORE_TOOL_CALLS',
-          records,
-        });
+        window.postMessage({ source: MAIN_WORLD_SOURCE, type: 'RESTORE_TOOL_CALLS', records });
       },
       onResponseComplete(complete: ResponseCompletePayload) {
-        window.postMessage({
-          source: 'deepseek-pp-main',
-          type: 'RESPONSE_COMPLETE',
-          payload: complete,
-        });
+        window.postMessage({ source: MAIN_WORLD_SOURCE, type: 'RESPONSE_COMPLETE', payload: complete });
       },
       onResponseTokenSpeed(progress: ResponseTokenSpeedPayload) {
-        window.postMessage({
-          source: 'deepseek-pp-main',
-          type: 'RESPONSE_TOKEN_SPEED',
-          payload: progress,
-        });
+        window.postMessage({ source: MAIN_WORLD_SOURCE, type: 'RESPONSE_TOKEN_SPEED', payload: progress });
       },
       onMemoriesUsed(ids: number[]) {
-        window.postMessage({
-          source: 'deepseek-pp-main',
-          type: 'MEMORIES_USED',
-          ids,
-        });
+        window.postMessage({ source: MAIN_WORLD_SOURCE, type: 'MEMORIES_USED', ids });
       },
     });
 
     window.addEventListener('message', (event) => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.source !== 'deepseek-pp-content') return;
-
-      if (isAgentWindowRunRequestMessage(event.data)) {
-        void handleAgentRunRequest(event.data.id, event.data.payload);
-        return;
-      }
 
       switch (event.data.type) {
         case 'SYNC_STATE': {
@@ -115,8 +69,15 @@ export default defineContentScript({
           initSkillPopup(skills);
           break;
         }
-        case 'CONTINUE_WITH_TOOL_RESULTS': {
-          void handleManualToolContinuation(event.data.id, event.data.payload);
+        case 'START_INLINE_AGENT_LOOP': {
+          void handleStartInlineAgentLoop(event.data.payload as InlineAgentStartPayload);
+          break;
+        }
+        case 'STOP_INLINE_AGENT_LOOP': {
+          handleStopInlineAgentLoop();
+          break;
+        }
+        case 'TOOL_CALL_RESULT': {
           break;
         }
       }
@@ -124,50 +85,50 @@ export default defineContentScript({
   },
 });
 
-async function handleAgentRunRequest(id: string, request: AgentRunRequest) {
-  const result = await runAgentInMainWorld(request).catch((err): AgentRunResult =>
-    createAgentRunFailure(
-      request,
-      'agent_main_world_failed',
-      err instanceof Error ? err.message : String(err),
-      'runner',
-      true,
-    ),
-  );
+async function handleStartInlineAgentLoop(payload: InlineAgentStartPayload): Promise<void> {
+  if (activeAgentAbort) activeAgentAbort.abort();
 
-  window.postMessage({
-    source: MAIN_WORLD_WINDOW_SOURCE,
-    type: AGENT_WINDOW_RUN_RESULT,
-    id,
-    result,
-  });
+  const abort = new AbortController();
+  activeAgentAbort = abort;
+
+  const post = (type: string, data: unknown) => {
+    window.postMessage({ source: MAIN_WORLD_SOURCE, type, data });
+  };
+
+  const executeTool = async (call: ToolCall): Promise<ToolExecutionRecord> => {
+    const enrichedCall: ToolCall = {
+      ...call,
+      source: {
+        trigger: 'agent_run',
+        chatSessionId: payload.chatSessionId,
+        runId: payload.loopId,
+      },
+    };
+    const result = await executeToolCallViaContent(enrichedCall);
+    return {
+      name: call.name,
+      result: {
+        ok: result.ok,
+        summary: result.summary,
+        detail: result.detail,
+        output: result.output,
+        error: result.error,
+        truncated: result.truncated,
+      },
+      provider: call.provider,
+      descriptorId: call.descriptorId,
+    };
+  };
+
+  await runInlineAgentLoop(payload, { post, executeTool, signal: abort.signal });
+  if (activeAgentAbort === abort) activeAgentAbort = null;
 }
 
-async function handleManualToolContinuation(id: string, request: AgentRunRequest) {
-  const result = await runDeepSeekAgentRun(request, {
-    executeToolCall: executeToolCallViaContent,
-  }).catch((err): AgentRunResult =>
-    createAgentRunFailure(
-      request,
-      'manual_tool_continuation_failed',
-      err instanceof Error ? err.message : String(err),
-      'runner',
-      true,
-    ),
-  );
-
-  window.postMessage({
-    source: MAIN_WORLD_WINDOW_SOURCE,
-    type: 'MANUAL_TOOL_CONTINUATION_RESULT',
-    id,
-    result,
-  });
-}
-
-async function runAgentInMainWorld(request: AgentRunRequest): Promise<AgentRunResult> {
-  return runDeepSeekAgentRun(request, {
-    executeToolCall: executeToolCallViaContent,
-  });
+function handleStopInlineAgentLoop(): void {
+  if (activeAgentAbort) {
+    activeAgentAbort.abort();
+    activeAgentAbort = null;
+  }
 }
 
 function executeToolCallViaContent(call: ToolCall): Promise<ToolResult> {
@@ -176,7 +137,7 @@ function executeToolCallViaContent(call: ToolCall): Promise<ToolResult> {
     const timeout = setTimeout(() => {
       window.removeEventListener('message', handler);
       resolve({ ok: false, summary: 'Tool execution timed out (bridge timeout)' });
-    }, AGENT_BRIDGE_TIMEOUT_MS);
+    }, TOOL_BRIDGE_TIMEOUT_MS);
     const handler = (event: MessageEvent) => {
       if (event.data?.source !== 'deepseek-pp-content') return;
       if (event.data.type !== 'TOOL_CALL_RESULT' || event.data.id !== id) return;
@@ -186,7 +147,7 @@ function executeToolCallViaContent(call: ToolCall): Promise<ToolResult> {
     };
     window.addEventListener('message', handler);
     window.postMessage({
-      source: 'deepseek-pp-main',
+      source: MAIN_WORLD_SOURCE,
       type: 'EXECUTE_TOOL_CALL',
       data: call,
       id,
