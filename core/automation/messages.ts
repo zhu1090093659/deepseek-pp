@@ -28,6 +28,7 @@ export interface AutomationWindowRunRequestMessage {
 
 export interface AutomationWindowRunResultMessage {
   source: typeof MAIN_WORLD_WINDOW_SOURCE;
+  nonce?: string;
   type: typeof AUTOMATION_WINDOW_RUN_RESULT;
   id: string;
   result: AutomationRunnerResult;

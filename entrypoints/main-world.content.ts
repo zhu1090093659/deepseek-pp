@@ -19,17 +19,31 @@ import {
 import { runDeepSeekAutomation } from '../core/automation/runner';
 import type { AutomationRunnerRequest, AutomationRunnerResult } from '../core/automation/types';
 
+const DPP_NONCE_ATTR = 'data-dpp-nonce';
+
+function generateNonce(): string {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
   world: 'MAIN',
   runAt: 'document_start',
   main() {
+    const nonce = generateNonce();
+    if (document.documentElement) {
+      document.documentElement.setAttribute(DPP_NONCE_ATTR, nonce);
+    }
+
     installFetchHook();
 
     updateHookState({
       onToolCall(call: ToolCall) {
         window.postMessage({
           source: 'deepseek-pp-main',
+          nonce,
           type: 'TOOL_CALL',
           data: call,
         });
@@ -46,6 +60,7 @@ export default defineContentScript({
           window.addEventListener('message', handler);
           window.postMessage({
             source: 'deepseek-pp-main',
+            nonce,
             type: 'EXECUTE_TOOL_CALL',
             data: call,
             id,
@@ -55,6 +70,7 @@ export default defineContentScript({
       onToolCallsRestored(records: ToolCallRestoreRecord[]) {
         window.postMessage({
           source: 'deepseek-pp-main',
+          nonce,
           type: 'RESTORE_TOOL_CALLS',
           records,
         });
@@ -62,6 +78,7 @@ export default defineContentScript({
       onResponseComplete(complete: ResponseCompletePayload) {
         window.postMessage({
           source: 'deepseek-pp-main',
+          nonce,
           type: 'RESPONSE_COMPLETE',
           payload: complete,
         });
@@ -69,6 +86,7 @@ export default defineContentScript({
       onMemoriesUsed(ids: number[]) {
         window.postMessage({
           source: 'deepseek-pp-main',
+          nonce,
           type: 'MEMORIES_USED',
           ids,
         });
@@ -118,6 +136,7 @@ async function handleAutomationRunRequest(id: string, request: AutomationRunnerR
 
   window.postMessage({
     source: MAIN_WORLD_WINDOW_SOURCE,
+    nonce,
     type: AUTOMATION_WINDOW_RUN_RESULT,
     id,
     result,
@@ -137,6 +156,7 @@ async function handleManualToolContinuation(id: string, request: AutomationRunne
 
   window.postMessage({
     source: MAIN_WORLD_WINDOW_SOURCE,
+    nonce,
     type: 'MANUAL_TOOL_CONTINUATION_RESULT',
     id,
     result,
@@ -161,6 +181,7 @@ function executeToolCallViaContent(call: ToolCall): Promise<ToolResult> {
     window.addEventListener('message', handler);
     window.postMessage({
       source: 'deepseek-pp-main',
+      nonce,
       type: 'EXECUTE_TOOL_CALL',
       data: call,
       id,

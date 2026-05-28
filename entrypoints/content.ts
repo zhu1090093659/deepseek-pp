@@ -72,6 +72,9 @@ export default defineContentScript({
     const handleMainWorldMessage = async (event: MessageEvent) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
 
+      const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
+      if (expectedNonce && event.data.nonce !== expectedNonce) return;
+
       try {
         switch (event.data.type) {
           case 'TOOL_CALL': {
@@ -505,6 +508,8 @@ function forwardAutomationRunToMainWorld(request: AutomationRunnerRequest): Prom
 
     const handleResult = (event: MessageEvent) => {
       if (!isAutomationWindowRunResultMessage(event.data)) return;
+      const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
+      if (expectedNonce && event.data.nonce !== expectedNonce) return;
       if (event.data.id !== id) return;
       window.clearTimeout(timeout);
       window.removeEventListener('message', handleResult);
@@ -615,6 +620,8 @@ function requestManualToolContinuation(request: AutomationRunnerRequest): Promis
 
     const handleResult = (event: MessageEvent) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
+      const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
+      if (expectedNonce && event.data.nonce !== expectedNonce) return;
       if (event.data.type !== 'MANUAL_TOOL_CONTINUATION_RESULT' || event.data.id !== id) return;
       window.clearTimeout(timeout);
       window.removeEventListener('message', handleResult);
