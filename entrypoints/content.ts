@@ -1420,6 +1420,15 @@ function removeBackground() {
   document.body.style.removeProperty('--dpp-blur');
 }
 
+function escapeCssUrl(url: string): string {
+  return url
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\)/g, '\\)')
+    .replace(/\n/g, '\\a ')
+    .replace(/\r/g, '\\d ');
+}
+
 function applyBackground(config: BackgroundConfig | null) {
   const normalizedConfig = normalizeBackgroundConfig(config);
   if (!normalizedConfig?.enabled) {
@@ -1456,7 +1465,7 @@ function applyBackground(config: BackgroundConfig | null) {
     right: '0',
     bottom: '0',
     zIndex: '-1',
-    backgroundImage: `url("${imageUrl.replace(/[\\"]/g, '\\$&')}")`,
+    backgroundImage: `url("${escapeCssUrl(imageUrl)}")`,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
     backgroundRepeat: 'no-repeat',
