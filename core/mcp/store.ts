@@ -10,6 +10,7 @@ import type {
   McpServerUpdateInput,
   McpToolCacheEntry,
 } from './types';
+import { encryptString, decryptString } from '../crypto';
 
 const STORAGE_KEY = 'deepseek_pp_mcp_servers';
 const STORAGE_VERSION = 1;
@@ -185,14 +186,17 @@ export function buildMcpRequestHeaders(server: McpServerConfig): Record<string, 
 
 async function readState(): Promise<McpServerStorageState> {
   const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  return normalizeState(data[STORAGE_KEY]);
+  const state = normalizeState(data[STORAGE_KEY]);
+  state.servers = await Promise.all(state.servers.map(decryptServerSecrets));
+  return state;
 }
 
 async function writeState(state: McpServerStorageState): Promise<void> {
+  const encryptedServers = await Promise.all(state.servers.map(encryptServerSecrets));
   await chrome.storage.local.set({
     [STORAGE_KEY]: {
       version: STORAGE_VERSION,
-      servers: state.servers.map(normalizeServer),
+      servers: encryptedServers.map(normalizeServer),
       toolCaches: state.toolCaches.map(normalizeToolCache),
     },
   });
@@ -390,5 +394,25 @@ function normalizeToolCache(raw: unknown): McpToolCacheEntry {
       toolCount: positiveNumber(value.health?.toolCount, 0),
       error: stringValue(value.health?.error),
     },
+  };
+}
+
+async function encryptServerSecrets(server: McpServerConfig): Promise<McpServerConfig> {
+  return {
+    ...server,
+    secrets: await Promise.all(server.secrets.map(async (secret) => ({
+      ...secret,
+      value: secret.value ? await encryptString(secret.value) : '',
+    }))),
+  };
+}
+
+async function decryptServerSecrets(server: McpServerConfig): Promise<McpServerConfig> {
+  return {
+    ...server,
+    secrets: await Promise.all(server.secrets.map(async (secret) => ({
+      ...secret,
+      value: secret.value ? await decryptString(secret.value) : '',
+    }))),
   };
 }
