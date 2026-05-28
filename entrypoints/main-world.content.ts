@@ -19,6 +19,9 @@ import {
 import { runDeepSeekAutomation } from '../core/automation/runner';
 import type { AutomationRunnerRequest, AutomationRunnerResult } from '../core/automation/types';
 
+// Weak anti-spoofing nonce: blocks low-cost postMessage forgery but does NOT
+// provide cryptographic authentication. The nonce is stored in a DOM attribute
+// readable by page scripts. Main security boundary is background service worker.
 const DPP_NONCE_ATTR = 'data-dpp-nonce';
 
 function generateNonce(): string {

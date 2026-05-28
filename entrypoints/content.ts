@@ -69,11 +69,15 @@ export default defineContentScript({
   async main() {
     installExtensionInvalidationGuards();
 
+    // NOTE: Nonce verification is a weak anti-spoofing measure. It blocks
+    // low-cost forgery (scripts that only guess the source string) but does
+    // NOT provide cryptographic authentication. The main security boundary
+    // remains the background service worker's tool call validation.
     const handleMainWorldMessage = async (event: MessageEvent) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
 
       const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
-      if (expectedNonce && event.data.nonce !== expectedNonce) return;
+      if (!expectedNonce || event.data.nonce !== expectedNonce) return;
 
       try {
         switch (event.data.type) {
@@ -509,7 +513,7 @@ function forwardAutomationRunToMainWorld(request: AutomationRunnerRequest): Prom
     const handleResult = (event: MessageEvent) => {
       if (!isAutomationWindowRunResultMessage(event.data)) return;
       const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
-      if (expectedNonce && event.data.nonce !== expectedNonce) return;
+      if (!expectedNonce || event.data.nonce !== expectedNonce) return;
       if (event.data.id !== id) return;
       window.clearTimeout(timeout);
       window.removeEventListener('message', handleResult);
@@ -621,7 +625,7 @@ function requestManualToolContinuation(request: AutomationRunnerRequest): Promis
     const handleResult = (event: MessageEvent) => {
       if (event.data?.source !== 'deepseek-pp-main') return;
       const expectedNonce = document.documentElement?.getAttribute('data-dpp-nonce');
-      if (expectedNonce && event.data.nonce !== expectedNonce) return;
+      if (!expectedNonce || event.data.nonce !== expectedNonce) return;
       if (event.data.type !== 'MANUAL_TOOL_CONTINUATION_RESULT' || event.data.id !== id) return;
       window.clearTimeout(timeout);
       window.removeEventListener('message', handleResult);
