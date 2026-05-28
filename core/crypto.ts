@@ -2,6 +2,7 @@ const ALGORITHM = 'AES-GCM';
 const KEY_LENGTH = 256;
 const IV_LENGTH = 12;
 const SALT = 'deepseek-pp-sync-v1';
+const VERSION_PREFIX = 'v1:';
 
 let cachedKey: CryptoKey | null = null;
 
@@ -50,29 +51,32 @@ export async function encryptString(plaintext: string): Promise<string> {
   combined.set(iv, 0);
   combined.set(new Uint8Array(ciphertext), iv.length);
 
-  return btoa(String.fromCharCode(...combined));
+  return VERSION_PREFIX + btoa(String.fromCharCode(...combined));
 }
 
-export async function decryptString(ciphertext: string): Promise<string> {
-  if (!ciphertext) return ciphertext;
+export async function decryptString(value: string): Promise<string> {
+  if (!value) return value;
 
-  try {
-    const key = await getEncryptionKey();
-    const combined = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
-
-    if (combined.length < IV_LENGTH + 1) return ciphertext;
-
-    const iv = combined.slice(0, IV_LENGTH);
-    const data = combined.slice(IV_LENGTH);
-
-    const decrypted = await crypto.subtle.decrypt(
-      { name: ALGORITHM, iv },
-      key,
-      data,
-    );
-
-    return new TextDecoder().decode(decrypted);
-  } catch {
-    return ciphertext;
+  if (!value.startsWith(VERSION_PREFIX)) {
+    throw new Error('Legacy plaintext detected. Please re-save to encrypt.');
   }
+
+  const raw = value.slice(VERSION_PREFIX.length);
+  const key = await getEncryptionKey();
+  const combined = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+
+  if (combined.length < IV_LENGTH + 1) {
+    throw new Error('Corrupted ciphertext: too short.');
+  }
+
+  const iv = combined.slice(0, IV_LENGTH);
+  const data = combined.slice(IV_LENGTH);
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: ALGORITHM, iv },
+    key,
+    data,
+  );
+
+  return new TextDecoder().decode(decrypted);
 }
