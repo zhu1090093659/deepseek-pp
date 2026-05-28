@@ -407,12 +407,23 @@ async function encryptServerSecrets(server: McpServerConfig): Promise<McpServerC
   };
 }
 
+async function decryptOrMigrate(value: string): Promise<string> {
+  try {
+    return await decryptString(value);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Legacy plaintext')) {
+      return value;
+    }
+    throw err;
+  }
+}
+
 async function decryptServerSecrets(server: McpServerConfig): Promise<McpServerConfig> {
   return {
     ...server,
     secrets: await Promise.all(server.secrets.map(async (secret) => ({
       ...secret,
-      value: secret.value ? await decryptString(secret.value) : '',
+      value: secret.value ? await decryptOrMigrate(secret.value) : '',
     }))),
   };
 }
