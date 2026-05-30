@@ -146,6 +146,17 @@ export function injectInlineAgentStyles(): void {
     body.dpp-theme-dark .dpp-agent-stop-btn:hover {
       background: #1f1f2e;
     }
+    [data-dpp-body-text] {
+      font-size: inherit;
+      line-height: 1.7;
+      margin-top: 12px;
+      word-break: break-word;
+    }
+    [data-dpp-body-text] h3 { font-size: 1.1em; font-weight: 600; margin: 10px 0 4px; }
+    [data-dpp-body-text] p { margin: 3px 0; }
+    [data-dpp-body-text] ul, [data-dpp-body-text] ol { margin: 3px 0 3px 16px; }
+    [data-dpp-body-text] strong { font-weight: 600; }
+    [data-dpp-body-text] a { color: var(--ds-blue, #4D6BFE); text-decoration: underline; }
   `;
   document.head.appendChild(style);
 }

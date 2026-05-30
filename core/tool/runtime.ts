@@ -18,6 +18,12 @@ import {
   isMemoryToolName,
   type MemoryToolRuntime,
 } from './memory';
+import {
+  WEB_SEARCH_TOOL_DESCRIPTORS,
+  executeWebSearchToolCall,
+  isWebSearchToolName,
+} from './web-search';
+import { getWebToolSettings } from './web-settings';
 import type { ToolCall, ToolDescriptor, ToolExecutionTrigger, ToolResult } from './types';
 
 const memoryRuntime: MemoryToolRuntime = {
@@ -37,8 +43,13 @@ const memoryRuntime: MemoryToolRuntime = {
 };
 
 export async function getRuntimeToolDescriptors(): Promise<ToolDescriptor[]> {
+  const webSettings = await getWebToolSettings();
+  const enabledWebDescriptors = WEB_SEARCH_TOOL_DESCRIPTORS.filter(
+    (d) => webSettings[d.name as keyof typeof webSettings] !== false,
+  );
   return [
     ...MEMORY_TOOL_DESCRIPTORS,
+    ...enabledWebDescriptors,
     ...await getMcpToolDescriptors(),
   ];
 }
@@ -77,6 +88,10 @@ async function executeToolCallWithoutHistory(call: ToolCall): Promise<ToolResult
 
   if (isMemoryToolName(call.name)) {
     return executeMemoryToolCall(memoryRuntime, call);
+  }
+
+  if (isWebSearchToolName(call.name)) {
+    return executeWebSearchToolCall(call);
   }
 
   if (call.provider?.kind === 'mcp' || call.descriptorId?.startsWith('mcp:')) {

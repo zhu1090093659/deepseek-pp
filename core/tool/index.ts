@@ -34,6 +34,14 @@ export {
 } from './memory';
 
 export {
+  WEB_SEARCH_TOOL_DESCRIPTORS,
+  WEB_SEARCH_TOOL_NAMES,
+  WEB_SEARCH_TOOL_PROVIDER,
+  executeWebSearchToolCall,
+  isWebSearchToolName,
+} from './web-search';
+
+export {
   DEFAULT_TOOL_DESCRIPTORS,
   createToolCallFromInvocation,
   createToolInvocationCatalog,
@@ -51,6 +59,10 @@ export type {
   MemoryToolRuntime,
   MemoryToolSaveConfirmation,
 } from './memory';
+
+export type {
+  WebSearchToolName,
+} from './web-search';
 
 export type {
   ToolInvocationCatalog,

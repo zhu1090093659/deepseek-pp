@@ -166,7 +166,7 @@ async function runAutomationToolLoop(
     getParentMessageId: (turn) => turn.responseMessageId,
     extractToolCalls: (text) => extractToolCalls(text, {
       descriptors: request.promptContext?.toolDescriptors ?? DEFAULT_TOOL_DESCRIPTORS,
-    }).filter((call) => call.provider?.kind === 'mcp'),
+    }).filter((call) => call.provider?.kind === 'mcp' || call.provider?.id === 'web'),
     async executeToolCall(call, parentMessageId) {
       const result = await options.executeToolCall!({
         ...call,

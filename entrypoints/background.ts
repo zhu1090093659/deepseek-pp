@@ -41,6 +41,8 @@ import {
 import { refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/mcp/transports';
 import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../core/shell';
+import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
+import type { WebSearchToolName } from '../core/tool/web-search';
 import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 
@@ -270,6 +272,58 @@ async function handleMessage(
         cache,
         health: cache.health,
       };
+    }
+
+    case 'GET_WEB_TOOL_SETTINGS':
+      return getWebToolSettings();
+
+    case 'SET_WEB_TOOL_SETTING': {
+      const { name, enabled } = message.payload as { name: WebSearchToolName; enabled: boolean };
+      await setWebToolEnabled(name, enabled);
+      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'DIAGNOSE_WEB_SEARCH': {
+      const q = typeof (message.payload as { query?: string })?.query === 'string'
+        ? (message.payload as { query: string }).query : 'test';
+      const diags: Record<string, { status: number; length: number; error?: string; preview?: string }> = {};
+      for (const domain of ['cn.bing.com', 'www.bing.com']) {
+        const url = `https://${domain}/search?q=${encodeURIComponent(q)}`;
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept-Language': 'zh-CN,zh;q=0.9',
+            },
+            signal: AbortSignal.timeout(10_000),
+          });
+          const text = await resp.text();
+          diags[domain] = {
+            status: resp.status,
+            length: text.length,
+            preview: text.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200),
+          };
+        } catch (e) {
+          diags[domain] = {
+            status: 0,
+            length: 0,
+            error: e instanceof Error ? e.message.slice(0, 150) : String(e).slice(0, 150),
+          };
+        }
+      }
+      return diags;
+    }
+
+    case 'REQUEST_HOST_PERMISSION': {
+      const { origins } = message.payload as { origins: string[] };
+      if (!origins?.length) return { ok: false, error: 'no_origins' };
+      try {
+        const granted = await chrome.permissions.request({ origins }).catch(() => false);
+        return { ok: granted, origins };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     }
 
     case 'GET_TOOL_DESCRIPTORS':

@@ -639,8 +639,16 @@ function startInlineAgentIfNeeded(
   complete: ResponseCompletePayload,
   executions: ToolExecutionRecord[],
 ): void {
-  const mcpExecutions = executions.filter((e) => e.provider?.kind === 'mcp');
-  if (mcpExecutions.length === 0) return;
+  // Collect executions that should trigger a continuation:
+  // MCP tools + local web search tools (web_search, web_fetch)
+  const continuableExecutions = executions.filter(
+    (e) =>
+      e.provider?.kind === 'mcp' ||
+      e.provider?.id === 'web' ||
+      e.name === 'web_search' ||
+      e.name === 'web_fetch',
+  );
+  if (continuableExecutions.length === 0) return;
   if (!complete.chatSessionId || complete.assistantMessageId == null) return;
 
   const loopId = crypto.randomUUID();
@@ -651,14 +659,20 @@ function startInlineAgentIfNeeded(
     parentMessageId: complete.assistantMessageId,
     originalPrompt: complete.agentTaskPrompt || complete.originalPrompt,
     agentTaskPrompt: complete.agentTaskPrompt || complete.originalPrompt,
-    toolExecutions: mcpExecutions,
+    toolExecutions: continuableExecutions,
     promptOptions: {
       modelType: complete.promptOptions.modelType,
       searchEnabled: complete.promptOptions.searchEnabled,
       thinkingEnabled: complete.promptOptions.thinkingEnabled,
       refFileIds: complete.promptOptions.refFileIds,
     },
-    toolDescriptors: currentToolDescriptors.filter((d) => d.provider?.kind === 'mcp'),
+    toolDescriptors: currentToolDescriptors.filter(
+      (d) =>
+        d.provider?.kind === 'mcp' ||
+        d.provider?.id === 'web' ||
+        d.name === 'web_search' ||
+        d.name === 'web_fetch',
+    ),
     powWasmUrl: chrome.runtime.getURL(DEEPSEEK_POW_WASM_PATH),
   };
 
@@ -671,7 +685,7 @@ function startInlineAgentIfNeeded(
   if (!target) return;
 
   inlineAgentLoopId = loopId;
-  activeInlineAgentTrace = createInlineAgentTrace(complete, loopId, mcpExecutions.length);
+  activeInlineAgentTrace = createInlineAgentTrace(complete, loopId, continuableExecutions.length);
   void writeInlineAgentTrace(activeInlineAgentTrace);
 
   inlineAgentContainer = container;
@@ -759,13 +773,8 @@ function handleAgentStepComplete(msg: InlineAgentStepCompleteMsg): void {
     text: fullText,
     toolExecutions: msg.toolExecutions,
     responseMessageId: msg.responseMessageId,
-    collapsed: true,
+    collapsed: false, // Don't collapse — handleAgentLoopComplete controls visibility
   }), { immediate: true });
-
-  const completedStep = inlineAgentCurrentStep;
-  setTimeout(() => {
-    completedStep.setAttribute('data-collapsed', 'true');
-  }, 800);
 
   inlineAgentCurrentStep = null;
 }
@@ -773,44 +782,189 @@ function handleAgentStepComplete(msg: InlineAgentStepCompleteMsg): void {
 function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
   if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
 
-  const footer = createAgentFooter(msg.totalSteps, msg.totalTools, false);
-  inlineAgentContainer.appendChild(footer);
-  updateActiveInlineAgentTrace((trace) => ({
-    ...trace,
-    status: 'complete',
-    totalSteps: msg.totalSteps,
-    totalTools: msg.totalTools,
-    finalText: msg.finalText,
-  }), { immediate: true });
-  inlineAgentLoopId = null;
-  inlineAgentContainer = null;
-  inlineAgentCurrentStep = null;
-  activeInlineAgentTrace = null;
-  inlineAgentContainerObserver?.disconnect();
-  inlineAgentContainerObserver = null;
+  try {
+    // Step 1: Uncollapse all steps so content is visible
+    const allSteps = inlineAgentContainer.querySelectorAll('.dpp-agent-step');
+    allSteps.forEach((s) => s.removeAttribute('data-collapsed'));
+
+    // Step 2: Collect body text from ALL steps.
+    // msg.finalText is the finalization response (usually short/empty),
+    // the real answer is in the earlier continuation step. Always merge
+    // all step bodies to get the full text.
+    let bodyText = '';
+    if (allSteps.length > 0) {
+      const texts: string[] = [];
+      allSteps.forEach((s) => {
+        const body = s.querySelector('.dpp-agent-step-body');
+        if (body && (body as HTMLElement).textContent?.trim()) {
+          texts.push((body as HTMLElement).textContent!.trim());
+        }
+      });
+      bodyText = texts.join('\n\n');
+    }
+
+    // Strip <task_complete> blocks and extract their summary for display
+    bodyText = bodyText.replace(/<task_complete>\s*({[\s\S]*?})\s*<\/task_complete>/g, (_m, json) => {
+      try {
+        const parsed = JSON.parse(json);
+        return parsed.summary || '';
+      } catch {
+        return '';
+      }
+    }).trim();
+
+    // Step 3: Render body text with Markdown into ALL step bodies
+    // (the answer is in step 0 (continuation), not step 1 (finalization))
+    if (bodyText) {
+      allSteps.forEach((s) => {
+        const body = s.querySelector('.dpp-agent-step-body');
+        if (body) {
+          body.innerHTML = renderMarkdown(bodyText);
+        }
+      });
+      // Mark the last step as complete
+      if (allSteps.length > 0) {
+        updateStepStatus(allSteps[allSteps.length - 1] as HTMLElement, 'complete', '完成');
+      }
+    }
+    // Insert the final answer as independent body text AFTER the agent container.
+    // This is the user-visible "正文" below the tool execution steps.
+    if (bodyText) {
+      const parent = inlineAgentContainer.parentNode;
+      if (parent) {
+        const textDiv = document.createElement('div');
+        textDiv.innerHTML = renderMarkdown(bodyText);
+        textDiv.setAttribute('data-dpp-body-text', 'true');
+        parent.appendChild(textDiv);
+      }
+    }
+
+    const footer = createAgentFooter(msg.totalSteps, msg.totalTools, false);
+    inlineAgentContainer.appendChild(footer);
+    updateActiveInlineAgentTrace((trace) => ({
+      ...trace,
+      status: 'complete',
+      totalSteps: msg.totalSteps,
+      totalTools: msg.totalTools,
+      finalText: msg.finalText,
+    }), { immediate: true });
+  } catch (err) {
+    console.error('[DeepSeek++] handleAgentLoopComplete error:', err);
+  } finally {
+    // ALWAYS clean up state — even if rendering throws, the next agent loop
+    // must start fresh. Otherwise subsequent searches silently fail.
+    inlineAgentLoopId = null;
+    inlineAgentContainer = null;
+    inlineAgentCurrentStep = null;
+    activeInlineAgentTrace = null;
+    inlineAgentContainerObserver?.disconnect();
+    inlineAgentContainerObserver = null;
+
+    // Note: no silent refresh — it breaks the extension's tool execution state.
+    // After manual page refresh, DeepSeek's native renderer will show the
+    // continuation message with proper Markdown.
+  }
+}
+
+
+
+/**
+ * Lightweight inline Markdown → HTML renderer.
+ * Covers bold, italic, code (inline + block), links, and line breaks.
+ * IMPORTANT: order matters — run patterns from most-specific to least-specific
+ * to avoid re-processing generated HTML.
+ */
+function renderMarkdown(text: string): string {
+  try {
+    // 1. Escape HTML entities first (safety)
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // 2. Code blocks (```...```) — before inline code to avoid ` inside blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
+      const inner = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<pre><code>${inner}</code></pre>`;
+    });
+
+    // 3. Inline code (`code`)
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // 4. Bold (**text**) — before italic so ** is not mistaken for *
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // 5. Italic (*text*)
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // 6. Links [text](url)
+    html = html.replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+    );
+
+    // 7. Headings (### / ## / #)
+    html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+
+    // 8. Unordered lists: "- " or "* " at line start
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/^\* (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/((?:<li>.*?<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+    // 9. Ordered lists: "1. " etc.
+    html = html.replace(/^\d+\.\s+(.+)$/gm, '<ol><li>$1</li></ol>');
+    // Merge consecutive <ol> blocks
+    html = html.replace(/<\/ol>\s*<ol>/g, '');
+
+    // 10. Paragraph breaks — double newlines
+    html = html.replace(/\n\s*\n/g, '</p><p>');
+    // Single newlines → <br>
+    html = html.replace(/\n/g, '<br>');
+    // Cleanup: remove <br> immediately before or after block-level tags
+    html = html.replace(/<br>\s*<\/(ul|ol|li|h[234])>/g, '</$1>');
+    html = html.replace(/<\/(ul|ol|li|h[234])>\s*<br>/g, '</$1>');
+    html = html.replace(/<(ul|ol|h[234])>\s*<br>/g, '<$1>');
+    html = html.replace(/<br>\s*<\/(p)>/g, '</$1>');
+    // Wrap in <p> if not already wrapped
+    if (!html.startsWith('<')) {
+      html = '<p>' + html + '</p>';
+    }
+
+    return html;
+  } catch {
+    // If rendering fails, return the original text as safe plain text
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  }
 }
 
 function handleAgentLoopError(msg: InlineAgentLoopErrorMsg): void {
   if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
 
-  if (inlineAgentCurrentStep) {
-    updateStepStatus(inlineAgentCurrentStep, 'error', msg.error);
-  }
+  try {
+    if (inlineAgentCurrentStep) {
+      updateStepStatus(inlineAgentCurrentStep, 'error', msg.error);
+    }
 
-  const footer = createAgentFooter(msg.stepIndex, msg.totalTools, true, msg.error);
-  inlineAgentContainer.appendChild(footer);
-  updateActiveInlineAgentTrace((trace) => ({
-    ...trace,
-    status: 'error',
-    totalSteps: msg.stepIndex,
-    error: msg.error,
-  }), { immediate: true });
-  inlineAgentLoopId = null;
-  inlineAgentContainer = null;
-  inlineAgentCurrentStep = null;
-  activeInlineAgentTrace = null;
-  inlineAgentContainerObserver?.disconnect();
-  inlineAgentContainerObserver = null;
+    const footer = createAgentFooter(msg.stepIndex, msg.totalTools, true, msg.error);
+    inlineAgentContainer.appendChild(footer);
+    updateActiveInlineAgentTrace((trace) => ({
+      ...trace,
+      status: 'error',
+      totalSteps: msg.stepIndex,
+      error: msg.error,
+    }), { immediate: true });
+  } catch (err) {
+    console.error('[DeepSeek++] handleAgentLoopError:', err);
+  } finally {
+    inlineAgentLoopId = null;
+    inlineAgentContainer = null;
+    inlineAgentCurrentStep = null;
+    activeInlineAgentTrace = null;
+    inlineAgentContainerObserver?.disconnect();
+    inlineAgentContainerObserver = null;
+  }
 }
 
 function runToolExecution(call: ToolCall): Promise<ToolCardResult> {
@@ -2031,6 +2185,10 @@ function summarizeRestoredToolCall(call: ToolCall): ToolCardResult {
       return { ok: true, summary: '已更新', detail };
     case 'memory_delete':
       return { ok: true, summary: '已删除', detail };
+    case 'web_search':
+      return { ok: true, summary: '已搜索', detail: String(typeof call.payload.query === 'string' ? call.payload.query : '') };
+    case 'web_fetch':
+      return { ok: true, summary: '已获取', detail: String(typeof call.payload.url === 'string' ? call.payload.url : '') };
     default:
       return { ok: true, summary: '已执行', detail };
   }
