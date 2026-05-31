@@ -10,11 +10,11 @@ const EXPECTED_HASHES = {
   systemTemplateChat: '5bca8e90d23381c9605cbfebf7ecb91f28f4010ddbc2a6ccc291fa046fcd6eec',
   systemTemplateThinking: 'fa31e863e5f54f7a4e48cffdbae0e543028de4a565f77504e66edd707c73b5f3',
   memoryToolSchemas: 'a64e0a8874552177eba10089d5acfdc2996d0b703f83b1a57e9d76c733da9a7b',
-  promptAugmentationBuild: '1adbcf592e25a4e08efa5e28908986298bb9d905e3bf9b1d5206933fe81587e0',
-  promptToolSchemaRenderer: 'b6d16bd540f1254eecefb19e32647291e8347d8cdb86360dd01501b25deaa457',
-  inlineAgentContinuationPrompt: '74b7394f059708fcf3ee138d3592ab57cd6cb0f89e0677dd610753ddf69f9e02',
-  inlineAgentNudgePrompt: 'dc1b79c9a9f0d55ddfebc7b59e8ed4320ec8497a8d740a8eaea1e58a97b4e17a',
-  inlineAgentFinalizationPrompt: '3026d86018f23de4d4b82f8f37fcafc0d94a6fc46648d55847745a7c58882f91',
+  promptAugmentationBuild: '1b42d5b8df743388dfb86ee83e055e00a56fb5389bd7df1afd961c57b45b2335',
+  promptToolSchemaRenderer: '0678c3a3178bd4ea2c745152f902c7d77d9a3526009e77fec75609c03b931850',
+  inlineAgentContinuationPrompt: '72c9a77d04a9d9b06258b3ba97e0f45c7d9c3a95d6beb402e1d3bbba5197b3c5',
+  inlineAgentNudgePrompt: '93bc1a0ce340e6212d30a9af1e345d0f7e1eaab9a495d8c78abb48f4ec94368d',
+  inlineAgentFinalizationPrompt: 'a476d1b4ad4d8f1895e2f1bedeacbc41932257c359106d7c9ecd090e7abff5da',
   inlineAgentPromptHelpers: 'cdb723464379a5ead572eff1d93fd4585d7f845739d67fa214fbbdc0694153c6',
 };
 
@@ -43,6 +43,7 @@ const cases = {
   promptAugmentationBuild: extractFunction('buildPromptAugmentation', sources.augmentation),
   promptToolSchemaRenderer: [
     extractFunction('renderToolSchemas', sources.augmentation),
+    extractFunction('renderWebSearchGuidance', sources.augmentation),
     extractFunction('renderToolSchema', sources.augmentation),
     extractFunction('renderShellMcpHint', sources.augmentation),
     extractFunction('renderToolFormatReminder', sources.augmentation),

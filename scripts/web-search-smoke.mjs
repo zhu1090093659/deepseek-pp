@@ -162,6 +162,7 @@ async function performWebSearch(query, topK) {
       const html = await response.text();
       if (html.length < 200) throw new Error(`${domain} returned empty response`);
       const results = parseBingResults(html, topK);
+      if (results.length === 0) throw new Error(`${domain} returned no parseable search results`);
       return { ok: true, summary: `搜索完成，找到 ${results.length} 条结果`, results, domain, status: response.status };
     } catch (e) {
       lastError = e.message;

@@ -773,8 +773,13 @@ function handleAgentStepComplete(msg: InlineAgentStepCompleteMsg): void {
     text: fullText,
     toolExecutions: msg.toolExecutions,
     responseMessageId: msg.responseMessageId,
-    collapsed: false, // Don't collapse — handleAgentLoopComplete controls visibility
+    collapsed: true,
   }), { immediate: true });
+
+  const completedStep = inlineAgentCurrentStep;
+  setTimeout(() => {
+    completedStep.setAttribute('data-collapsed', 'true');
+  }, 800);
 
   inlineAgentCurrentStep = null;
 }
@@ -783,61 +788,8 @@ function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
   if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
 
   try {
-    // Step 1: Uncollapse all steps so content is visible
-    const allSteps = inlineAgentContainer.querySelectorAll('.dpp-agent-step');
-    allSteps.forEach((s) => s.removeAttribute('data-collapsed'));
-
-    // Step 2: Collect body text from ALL steps.
-    // msg.finalText is the finalization response (usually short/empty),
-    // the real answer is in the earlier continuation step. Always merge
-    // all step bodies to get the full text.
-    let bodyText = '';
-    if (allSteps.length > 0) {
-      const texts: string[] = [];
-      allSteps.forEach((s) => {
-        const body = s.querySelector('.dpp-agent-step-body');
-        if (body && (body as HTMLElement).textContent?.trim()) {
-          texts.push((body as HTMLElement).textContent!.trim());
-        }
-      });
-      bodyText = texts.join('\n\n');
-    }
-
-    // Strip <task_complete> blocks and extract their summary for display
-    bodyText = bodyText.replace(/<task_complete>\s*({[\s\S]*?})\s*<\/task_complete>/g, (_m, json) => {
-      try {
-        const parsed = JSON.parse(json);
-        return parsed.summary || '';
-      } catch {
-        return '';
-      }
-    }).trim();
-
-    // Step 3: Render body text with Markdown into ALL step bodies
-    // (the answer is in step 0 (continuation), not step 1 (finalization))
-    if (bodyText) {
-      allSteps.forEach((s) => {
-        const body = s.querySelector('.dpp-agent-step-body');
-        if (body) {
-          body.innerHTML = renderMarkdown(bodyText);
-        }
-      });
-      // Mark the last step as complete
-      if (allSteps.length > 0) {
-        updateStepStatus(allSteps[allSteps.length - 1] as HTMLElement, 'complete', '完成');
-      }
-    }
-    // Insert the final answer as independent body text AFTER the agent container.
-    // This is the user-visible "正文" below the tool execution steps.
-    if (bodyText) {
-      const parent = inlineAgentContainer.parentNode;
-      if (parent) {
-        const textDiv = document.createElement('div');
-        textDiv.innerHTML = renderMarkdown(bodyText);
-        textDiv.setAttribute('data-dpp-body-text', 'true');
-        parent.appendChild(textDiv);
-      }
-    }
+    const finalText = getInlineAgentDisplayFinalText(msg.finalText);
+    appendInlineAgentFinalAnswer(inlineAgentContainer, finalText, msg.loopId);
 
     const footer = createAgentFooter(msg.totalSteps, msg.totalTools, false);
     inlineAgentContainer.appendChild(footer);
@@ -846,7 +798,7 @@ function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
       status: 'complete',
       totalSteps: msg.totalSteps,
       totalTools: msg.totalTools,
-      finalText: msg.finalText,
+      finalText,
     }), { immediate: true });
   } catch (err) {
     console.error('[DeepSeek++] handleAgentLoopComplete error:', err);
@@ -864,6 +816,34 @@ function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
     // After manual page refresh, DeepSeek's native renderer will show the
     // continuation message with proper Markdown.
   }
+}
+
+function getInlineAgentDisplayFinalText(text: string): string {
+  const withoutToolCalls = stripToolCalls(text, { descriptors: currentToolDescriptors });
+  return replaceTaskCompleteBlocks(withoutToolCalls).trim();
+}
+
+function replaceTaskCompleteBlocks(text: string): string {
+  return text.replace(/<task_complete>\s*({[\s\S]*?})\s*<\/task_complete>/g, (_m, json) => {
+    try {
+      const parsed = JSON.parse(json) as { summary?: unknown };
+      return typeof parsed.summary === 'string' ? parsed.summary : '';
+    } catch {
+      return '';
+    }
+  });
+}
+
+function appendInlineAgentFinalAnswer(container: HTMLElement, text: string, loopId: string): void {
+  if (!text) return;
+  const parent = container.parentNode;
+  if (!parent) return;
+
+  const textDiv = document.createElement('div');
+  textDiv.innerHTML = renderMarkdown(text);
+  textDiv.setAttribute('data-dpp-body-text', 'true');
+  textDiv.setAttribute('data-dpp-agent-loop-id', loopId);
+  parent.appendChild(textDiv);
 }
 
 

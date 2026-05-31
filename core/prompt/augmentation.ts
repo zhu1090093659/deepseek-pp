@@ -43,9 +43,13 @@ export function buildPromptAugmentation(
   const memBlock = formatMemoriesBlock(selected);
   const toolsBlock = renderToolSchemas(toolDescriptors);
   const template = thinkingEnabled ? SYSTEM_TEMPLATE_THINKING : SYSTEM_TEMPLATE_CHAT;
-  const system = template
+  const baseSystem = template
     .replace('{{memories}}', memBlock)
     .replace('{{tools}}', toolsBlock);
+  const system = [
+    baseSystem,
+    renderWebSearchGuidance(toolDescriptors),
+  ].filter(Boolean).join('\n\n');
   const presetPrefix = presetContent ? `${presetContent}\n\n---\n\n` : '';
   const toolReminder = renderToolFormatReminder(toolDescriptors);
 
@@ -63,6 +67,42 @@ export function renderToolSchemas(descriptors: readonly ToolDescriptor[] = DEFAU
     .map((descriptor) => renderToolSchema(descriptor, catalog))
     .join('\n\n');
   return [shellHint, schemas].filter(Boolean).join('\n\n');
+}
+
+function renderWebSearchGuidance(descriptors: readonly ToolDescriptor[]): string {
+  const hasWebSearch = descriptors.some((descriptor) => descriptor.name === 'web_search');
+  if (!hasWebSearch) return '';
+
+  return [
+    '## 网络搜索规则',
+    '',
+    '当对话中出现以下情况时，你应当使用 web_search 工具搜索互联网：',
+    '- 用户询问实时信息、新闻、事件、汇率、天气等',
+    '- 用户询问你不确定的知识，需要查阅最新资料',
+    '- 用户明确要求你搜索或查询某些信息',
+    '- 你需要验证事实、数据或引用来源',
+    '',
+    '### 搜索流程',
+    '1. 先输出 web_search 工具调用进行搜索',
+    '2. 搜索会自动执行，结果会展示在页面上并回传给你',
+    '3. 阅读搜索结果后，基于结果给出回答',
+    '',
+    '### 示例',
+    '',
+    '用户：2024年诺贝尔奖得主是谁？',
+    '助手回复：',
+    '',
+    '我帮你搜索一下最新的信息。',
+    '',
+    '<web_search>',
+    '{"query": "2024 诺贝尔奖得主"}',
+    '</web_search>',
+    '',
+    '### 规则',
+    '- 搜索时使用中文关键词可获得更好的中文结果',
+    '- 如果一次搜索不够，可以继续调用 web_search 搜索不同关键词',
+    '- 不要在没有搜索的情况下编造实时信息',
+  ].join('\n');
 }
 
 function renderToolSchema(descriptor: ToolDescriptor, catalog: ToolInvocationCatalog): string {

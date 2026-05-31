@@ -126,6 +126,10 @@ async function performWebSearch(call: ToolCall): Promise<ToolResult> {
     }
     try {
       const results = await bingSearch(domains[i], query, topK);
+      if (results.length === 0) {
+        lastError = `${domains[i]} returned no parseable search results`;
+        continue;
+      }
       return {
         ok: true,
         name: call.name,
@@ -148,16 +152,23 @@ async function performWebSearch(call: ToolCall): Promise<ToolResult> {
     lastError?.includes('NetworkError') ||
     lastError?.includes('opaque') ||
     lastError?.includes('status 0');
+  const hasNoParseableResults = lastError?.includes('no parseable search results') === true;
 
   return {
     ok: false,
     name: call.name,
-    summary: '搜索失败',
+    summary: hasNoParseableResults ? '搜索无结果' : '搜索失败',
     detail: isPermissionError
       ? `扩展没有访问必应的权限。请完全移除扩展后重新加载 dist/chrome-mv3 目录，或在 chrome://extensions → DeepSeek++ 详情中确认 cn.bing.com 已列入网站访问权限。`
-      : `搜索失败: ${lastError}`,
+      : hasNoParseableResults
+        ? `未找到可解析搜索结果: ${lastError}`
+        : `搜索失败: ${lastError}`,
     error: {
-      code: isPermissionError ? 'search_permission_denied' : 'search_failed',
+      code: isPermissionError
+        ? 'search_permission_denied'
+        : hasNoParseableResults
+          ? 'search_no_results'
+          : 'search_failed',
       message: lastError ?? 'unknown error',
       retryable: !isPermissionError,
     },
