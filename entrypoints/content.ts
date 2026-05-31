@@ -1706,6 +1706,15 @@ function previewUnknown(value: unknown): string {
 
 const PERMISSION_BANNER_ID = 'dpp-permission-banner';
 const PERMISSION_BANNER_STYLE_ID = 'dpp-permission-banner-css';
+const PERMISSION_BANNER_TIMEOUT_MS = 60_000;
+
+interface ActivePermissionRequest {
+  banner: HTMLElement;
+  resolve: (granted: boolean) => void;
+  timeoutId: ReturnType<typeof setTimeout> | null;
+}
+
+let activePermissionRequest: ActivePermissionRequest | null = null;
 
 async function requestWebFetchPermission(url: string): Promise<boolean> {
   let origin: string;
@@ -1715,31 +1724,39 @@ async function requestWebFetchPermission(url: string): Promise<boolean> {
     return false;
   }
 
+  finishActivePermissionRequest(false);
   const banner = createPermissionBanner(origin);
   if (!banner) return false;
 
   try {
     const granted = await new Promise<boolean>((resolve) => {
-      const grantBtn = banner.querySelector('.dpp-permission-grant');
-      const denyBtn = banner.querySelector('.dpp-permission-deny');
+      const session: ActivePermissionRequest = { banner, resolve, timeoutId: null };
+      activePermissionRequest = session;
+
+      const grantBtn = banner.querySelector<HTMLButtonElement>('.dpp-permission-grant');
+      const denyBtn = banner.querySelector<HTMLButtonElement>('.dpp-permission-deny');
+      if (!grantBtn || !denyBtn) {
+        finishPermissionRequest(session, false);
+        return;
+      }
 
       const cleanup = (result: boolean) => {
-        banner.remove();
-        resolve(result);
+        finishPermissionRequest(session, result);
       };
+      session.timeoutId = setTimeout(() => cleanup(false), PERMISSION_BANNER_TIMEOUT_MS);
 
-      grantBtn?.addEventListener('click', async () => {
+      grantBtn.addEventListener('click', async () => {
         grantBtn.textContent = '请求中...';
-        (grantBtn as HTMLButtonElement).disabled = true;
-        denyBtn?.setAttribute('disabled', '');
+        grantBtn.disabled = true;
+        denyBtn.disabled = true;
         const permResult = await sendRuntimeMessage<{ ok: boolean }>({
           type: 'REQUEST_HOST_PERMISSION',
           payload: { origins: [`${origin}/*`] },
         });
         cleanup(permResult?.ok === true);
-      });
+      }, { once: true });
 
-      denyBtn?.addEventListener('click', () => cleanup(false));
+      denyBtn.addEventListener('click', () => cleanup(false), { once: true });
     });
 
     return granted;
@@ -1748,11 +1765,30 @@ async function requestWebFetchPermission(url: string): Promise<boolean> {
   }
 }
 
+function finishActivePermissionRequest(granted: boolean): void {
+  if (!activePermissionRequest) return;
+  finishPermissionRequest(activePermissionRequest, granted);
+}
+
+function finishPermissionRequest(session: ActivePermissionRequest, granted: boolean): void {
+  if (activePermissionRequest !== session) return;
+  activePermissionRequest = null;
+  if (session.timeoutId) {
+    clearTimeout(session.timeoutId);
+    session.timeoutId = null;
+  }
+  session.banner.remove();
+  session.resolve(granted);
+}
+
 function createPermissionBanner(origin: string): HTMLElement | null {
   injectPermissionBannerStyles();
 
   const existing = document.getElementById(PERMISSION_BANNER_ID);
-  if (existing) existing.remove();
+  if (existing) {
+    finishActivePermissionRequest(false);
+    existing.remove();
+  }
 
   const banner = document.createElement('div');
   banner.id = PERMISSION_BANNER_ID;
