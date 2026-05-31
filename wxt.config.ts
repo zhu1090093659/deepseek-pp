@@ -8,6 +8,19 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 const safeWxtBrowser = resolve(rootDir, 'core/browser/safe-wxt-browser.ts');
 const CHROMIUM_BROWSERS = new Set(['chrome', 'edge']);
 const extensionVersion = readPackageVersion();
+const rawPackageVersion = readRawPackageVersion();
+
+function readRawPackageVersion(): string {
+  const packageJson = JSON.parse(
+    readFileSync(resolve(rootDir, 'package.json'), 'utf8'),
+  ) as { version?: unknown };
+
+  if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) {
+    throw new Error('package.json version is required');
+  }
+
+  return packageJson.version;
+}
 
 function readPackageVersion(): string {
   const packageJson = JSON.parse(
@@ -18,7 +31,9 @@ function readPackageVersion(): string {
     throw new Error('package.json version is required for extension manifest');
   }
 
-  return packageJson.version;
+  // Chrome/Firefox require version to be 1-4 dot-separated integers.
+  // Strip semver pre-release suffix (e.g. "0.5.1-post1" → "0.5.1").
+  return packageJson.version.replace(/-.+$/, '');
 }
 
 function createManifest(env: ConfigEnv): UserManifest {
@@ -68,6 +83,9 @@ export default defineConfig({
   manifest: createManifest,
   vite: () => ({
     plugins: [tailwindcss()],
+    define: {
+      __RAW_EXTENSION_VERSION__: JSON.stringify(rawPackageVersion),
+    },
     resolve: {
       alias: {
         '@wxt-dev/browser': safeWxtBrowser,
