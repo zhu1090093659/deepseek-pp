@@ -280,6 +280,19 @@ async function performWebFetch(call: ToolCall): Promise<ToolResult> {
     };
   }
 
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return {
+      ok: false,
+      name: call.name,
+      summary: '无效的 URL',
+      detail: `无法解析 URL: ${url}`,
+      error: { code: 'invalid_url', message: `Invalid URL: ${url}`, retryable: false },
+    };
+  }
+
   try {
     const response = await fetch(url, {
       headers: {
@@ -299,7 +312,6 @@ async function performWebFetch(call: ToolCall): Promise<ToolResult> {
     if (contentType.includes('text/html') || contentType.includes('text/plain') || contentType.includes('application/json')) {
       text = await response.text();
     } else {
-      // Non-text content — just report the type
       return {
         ok: true,
         name: call.name,
@@ -338,14 +350,14 @@ async function performWebFetch(call: ToolCall): Promise<ToolResult> {
       name: call.name,
       summary: '获取页面失败',
       detail: isPermissionError
-        ? `无法访问 ${url}，缺少主机权限。请在侧边栏「工具」页输入网址并点击「授权」，或前往 chrome://extensions 添加 ${new URL(url).origin} 的权限。`
+        ? `无法访问 ${url}，缺少主机权限。`
         : message,
       error: {
         code: isPermissionError ? 'fetch_permission_denied' : 'fetch_failed',
         message: isPermissionError
-          ? `Host permission for ${new URL(url).origin} is not granted.`
+          ? `Host permission for ${parsedUrl.origin} is not granted.`
           : message,
-        retryable: !isPermissionError,
+        retryable: isPermissionError,
       },
     };
   }

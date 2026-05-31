@@ -1606,11 +1606,32 @@ async function executeToolCall(call: ToolCall): Promise<ToolCardResult> {
 
   const result = await sendRuntimeToolCallMessage(call);
   const normalized = normalizeRuntimeToolCallResult(result);
-  if (normalized) return normalized;
+
+  if (normalized) {
+    if (shouldAutoRequestPermission(call, normalized)) {
+      const url = call.payload?.url;
+      const granted = typeof url === 'string' ? await requestWebFetchPermission(url) : false;
+      if (granted) {
+        const retryResult = await sendRuntimeToolCallMessage(call);
+        const retryNormalized = normalizeRuntimeToolCallResult(retryResult);
+        if (retryNormalized) return retryNormalized;
+      }
+    }
+    return normalized;
+  }
+
   if (!extensionContextValid) {
     return { ok: false, summary: '执行失败', detail: '扩展已重新加载，请刷新当前 DeepSeek 页面后重试。' };
   }
   return createInvalidRuntimeToolResult(result);
+}
+
+function shouldAutoRequestPermission(call: ToolCall, result: ToolCardResult): boolean {
+  return (
+    call.name === 'web_fetch' &&
+    !result.ok &&
+    result.error?.code === 'fetch_permission_denied'
+  );
 }
 
 async function sendRuntimeToolCallMessage(call: ToolCall): Promise<unknown> {
@@ -1679,6 +1700,171 @@ function previewUnknown(value: unknown): string {
   }
   const text = String(value);
   return text.length > 500 ? `${text.slice(0, 500)}...` : text;
+}
+
+// --- Auto permission request for web_fetch ---
+
+const PERMISSION_BANNER_ID = 'dpp-permission-banner';
+const PERMISSION_BANNER_STYLE_ID = 'dpp-permission-banner-css';
+
+async function requestWebFetchPermission(url: string): Promise<boolean> {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return false;
+  }
+
+  const banner = createPermissionBanner(origin);
+  if (!banner) return false;
+
+  try {
+    const granted = await new Promise<boolean>((resolve) => {
+      const grantBtn = banner.querySelector('.dpp-permission-grant');
+      const denyBtn = banner.querySelector('.dpp-permission-deny');
+
+      const cleanup = (result: boolean) => {
+        banner.remove();
+        resolve(result);
+      };
+
+      grantBtn?.addEventListener('click', async () => {
+        grantBtn.textContent = '请求中...';
+        (grantBtn as HTMLButtonElement).disabled = true;
+        denyBtn?.setAttribute('disabled', '');
+        const permResult = await sendRuntimeMessage<{ ok: boolean }>({
+          type: 'REQUEST_HOST_PERMISSION',
+          payload: { origins: [`${origin}/*`] },
+        });
+        cleanup(permResult?.ok === true);
+      });
+
+      denyBtn?.addEventListener('click', () => cleanup(false));
+    });
+
+    return granted;
+  } finally {
+    if (banner.isConnected) banner.remove();
+  }
+}
+
+function createPermissionBanner(origin: string): HTMLElement | null {
+  injectPermissionBannerStyles();
+
+  const existing = document.getElementById(PERMISSION_BANNER_ID);
+  if (existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.id = PERMISSION_BANNER_ID;
+  banner.className = 'dpp-permission-banner';
+  banner.innerHTML = `
+    <span class="dpp-permission-text">DeepSeek++ 需要访问 <strong>${escapeHtml(origin)}</strong> 的权限以获取该页面内容</span>
+    <div class="dpp-permission-actions">
+      <button type="button" class="dpp-permission-deny">拒绝</button>
+      <button type="button" class="dpp-permission-grant">授权</button>
+    </div>
+  `;
+
+  const inputArea = findDeepSeekInputBox();
+  const target = inputArea?.parentElement ?? document.body;
+  target.appendChild(banner);
+  return banner;
+}
+
+function injectPermissionBannerStyles() {
+  if (document.getElementById(PERMISSION_BANNER_STYLE_ID)) return;
+
+  const style = document.createElement('style');
+  style.id = PERMISSION_BANNER_STYLE_ID;
+  style.textContent = `
+    .dpp-permission-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 16px;
+      margin: 8px 12px;
+      border-radius: 10px;
+      background: var(--ds-card, #fff);
+      border: 1px solid var(--ds-blue, #4D6BFE);
+      box-shadow: 0 2px 12px rgba(77, 107, 254, 0.15);
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+      color: var(--ds-text, #1D1D1F);
+      animation: dppPermFadeIn 0.2s ease-out;
+      z-index: 100;
+    }
+
+    .dpp-permission-text {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .dpp-permission-text strong {
+      color: var(--ds-blue, #4D6BFE);
+    }
+
+    .dpp-permission-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .dpp-permission-actions button {
+      padding: 5px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--ds-border, #E5E7EB);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .dpp-permission-deny {
+      background: var(--ds-surface, #F7F8FA);
+      color: var(--ds-text-secondary, #6B7280);
+    }
+
+    .dpp-permission-deny:hover {
+      background: var(--ds-danger-bg, #FEF2F2);
+      color: var(--ds-danger, #EF4444);
+      border-color: var(--ds-danger-border, #FECACA);
+    }
+
+    .dpp-permission-grant {
+      background: var(--ds-blue, #4D6BFE);
+      color: #fff;
+      border-color: var(--ds-blue, #4D6BFE);
+    }
+
+    .dpp-permission-grant:hover {
+      opacity: 0.9;
+    }
+
+    .dpp-permission-grant:disabled,
+    .dpp-permission-deny[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    @keyframes dppPermFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    body.dpp-theme-dark .dpp-permission-banner {
+      background: var(--ds-card, #151922);
+      border-color: var(--ds-blue, #7D91FF);
+      box-shadow: 0 2px 12px rgba(125, 145, 255, 0.2);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.appendChild(document.createTextNode(text));
+  return div.innerHTML;
 }
 
 // --- Tool execution collapsible block (matches official "已思考" style) ---
