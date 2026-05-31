@@ -96,6 +96,7 @@ export default function ToolsPage() {
   });
   const [permState, setPermState] = useState<PermissionState>('idle');
   const [permUrl, setPermUrl] = useState('');
+  const [allSitesState, setAllSitesState] = useState<PermissionState>('idle');
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_WEB_TOOL_SETTINGS' }).then((result: Record<string, boolean>) => {
@@ -133,6 +134,15 @@ export default function ToolsPage() {
     } else {
       setPermState('denied');
     }
+  };
+
+  const handleGrantAllSites = async () => {
+    setAllSitesState('granting');
+    const result = await chrome.runtime.sendMessage({
+      type: 'REQUEST_HOST_PERMISSION',
+      payload: { origins: ['http://*/*', 'https://*/*'] },
+    });
+    setAllSitesState(result?.ok ? 'granted' : 'denied');
   };
 
   return (
@@ -274,6 +284,39 @@ export default function ToolsPage() {
             网址格式不正确，请输入完整 URL（如 https://example.com）
           </div>
         )}
+
+        <div className="pt-1">
+          <button
+            onClick={handleGrantAllSites}
+            disabled={allSitesState === 'granting' || allSitesState === 'granted'}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[12px] font-medium rounded-xl transition-all duration-150 disabled:opacity-50"
+            style={{
+              background: allSitesState === 'granted' ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
+              color: allSitesState === 'granted' ? 'var(--ds-success)' : 'var(--ds-blue)',
+              border: `1px solid ${allSitesState === 'granted' ? 'var(--ds-success-border)' : 'var(--ds-blue)'}`,
+            }}
+          >
+            {allSitesState === 'granting' ? (
+              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : allSitesState === 'granted' ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+            {allSitesState === 'granting'
+              ? '请求中...'
+              : allSitesState === 'granted'
+                ? '已授权全部网站'
+                : '授权全部网站'}
+          </button>
+          <p className="text-[10px] mt-1.5 text-center" style={{ color: 'var(--ds-text-tertiary)' }}>
+            一键授予扩展访问所有网站的权限，此后 web_fetch 获取任意页面不再弹窗
+          </p>
+        </div>
       </section>
     </div>
   );
