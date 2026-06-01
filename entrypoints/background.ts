@@ -757,17 +757,15 @@ async function runSidepanelToolLoop(
   let currentInput = input;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const fullText = await new Promise<string>((resolve, reject) => {
-      let accumulated = '';
-      submitPromptStreaming(currentInput, {
-        onTextChunk(_text: string, fullText: string) {
-          accumulated = fullText;
-        },
-        onFinished() {
-          resolve(accumulated);
-        },
-      }).catch(reject);
+    let accumulated = '';
+    const turn = await submitPromptStreaming(currentInput, {
+      onTextChunk(_text: string, fullText: string) {
+        accumulated = fullText;
+      },
     });
+
+    chatParentMessageId = turn.responseMessageId;
+    const fullText = accumulated || turn.assistantText;
 
     if (!fullText) {
       broadcastChatChunk({ text: '', done: true }, excludeTabId);
@@ -776,9 +774,7 @@ async function runSidepanelToolLoop(
 
     broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
 
-    const toolCalls = extractToolCalls(fullText, {
-      descriptors: [], // empty — uses default descriptors
-    });
+    const toolCalls = extractToolCalls(fullText);
 
     if (toolCalls.length === 0) {
       broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
@@ -787,7 +783,7 @@ async function runSidepanelToolLoop(
 
     const execs: ToolExecutionRecord[] = [];
     for (const call of toolCalls) {
-      const result = await executeRuntimeToolCall(call, 'sidepanel_chat' as any);
+      const result = await executeRuntimeToolCall(call, 'sidepanel_chat');
       execs.push({
         name: call.name,
         result: {
@@ -811,7 +807,7 @@ async function runSidepanelToolLoop(
     currentInput = {
       ...currentInput,
       prompt: continuationPrompt,
-      parentMessageId: null,
+      parentMessageId: chatParentMessageId,
     };
   }
 

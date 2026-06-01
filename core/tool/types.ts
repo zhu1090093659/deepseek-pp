@@ -12,7 +12,7 @@ export type ToolDescriptorId = string;
 
 export type ToolCallId = string;
 
-export type ToolExecutionTrigger = 'manual_chat' | 'agent_run' | 'automation' | 'test';
+export type ToolExecutionTrigger = 'manual_chat' | 'agent_run' | 'automation' | 'test' | 'sidepanel_chat';
 
 export type ToolExecutionMode = 'auto' | 'manual' | 'disabled';
 
