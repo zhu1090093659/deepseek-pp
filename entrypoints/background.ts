@@ -121,29 +121,31 @@ async function createContextMenus() {
   }
 }
 
-chrome.contextMenus.onClicked.addListener((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
-  if (!info.selectionText) return;
-  const selectedText = info.selectionText.trim();
-  if (!selectedText) return;
+try {
+  chrome.contextMenus.onClicked.addListener((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+    if (!info.selectionText) return;
+    const selectedText = info.selectionText.trim();
+    if (!selectedText) return;
 
-  if (info.menuItemId === 'send-to-chat') {
-    openSidePanelAndSendText(selectedText, tab).catch(() => {});
-    return;
-  }
+    if (info.menuItemId === 'send-to-chat') {
+      openSidePanelAndSendText(selectedText, tab).catch(() => {});
+      return;
+    }
 
-  if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('scenario-')) {
-    const scenarioId = info.menuItemId.slice('scenario-'.length);
-    getAllScenarios()
-      .then((scenarios) => {
-        const scenario = scenarios.find((s) => s.id === scenarioId);
-        if (!scenario) return;
-        const processed = applyScenarioTemplate(scenario.template, selectedText);
-        openSidePanelAndSendText(processed, tab);
-      })
-      .catch(() => {});
-    return;
-  }
-});
+    if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('scenario-')) {
+      const scenarioId = info.menuItemId.slice('scenario-'.length);
+      getAllScenarios()
+        .then((scenarios) => {
+          const scenario = scenarios.find((s) => s.id === scenarioId);
+          if (!scenario) return;
+          const processed = applyScenarioTemplate(scenario.template, selectedText);
+          openSidePanelAndSendText(processed, tab);
+        })
+        .catch(() => {});
+      return;
+    }
+  });
+} catch {}
 
 async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
   const tabId = tab?.id;
