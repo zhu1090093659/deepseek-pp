@@ -94,7 +94,7 @@ export class DeepSeekPayloadError extends Error {
 }
 
 export async function createChatSession(clientHeaders: Record<string, string>): Promise<string> {
-  const response = await fetch(CHAT_SESSION_CREATE_PATH, {
+  const response = await fetch(new URL(CHAT_SESSION_CREATE_PATH, DEEPSEEK_API_URL).href, {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json', ...clientHeaders },
@@ -489,7 +489,7 @@ function normalizeModelType(modelType: string | null): string {
 }
 
 async function createPowChallenge(clientHeaders: Record<string, string>): Promise<PowChallenge> {
-  const response = await fetch(POW_CHALLENGE_PATH, {
+  const response = await fetch(new URL(POW_CHALLENGE_PATH, DEEPSEEK_API_URL).href, {
     method: 'POST',
     credentials: 'include',
     headers: { 'content-type': 'application/json', ...clientHeaders },

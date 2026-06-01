@@ -561,6 +561,12 @@ async function handleMessage(
       return { ok: true, hasToken: !!headers };
     }
 
+    case 'AUTH_STATUS_CHANGED': {
+      const newHeaders = await loadClientHeadersFromStorage();
+      broadcastToTabs({ type: 'AUTH_STATUS_CHANGED', hasToken: !!newHeaders }).catch(() => {});
+      return { ok: true };
+    }
+
     case 'SCENARIOS_UPDATED':
       await createContextMenus();
       return { ok: true };

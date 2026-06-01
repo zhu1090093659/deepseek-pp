@@ -40,6 +40,8 @@ import {
   createAgentFooter,
 } from '../core/inline-agent/renderer';
 
+import { createClientHeaders, rememberDeepSeekClientHeaders, saveClientHeadersToStorage } from '../core/deepseek/adapter';
+
 const TOOL_BLOCK_ID = 'dpp-tool-block';
 const TOOL_BLOCK_STYLE_ID = 'dpp-tool-block-css';
 const ASSISTANT_RESPONSE_CONTENT_SELECTOR = '._74c0879';
@@ -193,6 +195,10 @@ export default defineContentScript({
           case 'MEMORIES_USED': {
             const ids = event.data.ids as number[];
             await sendRuntimeMessage({ type: 'TOUCH_MEMORIES', payload: { ids } });
+            break;
+          }
+          case 'HEADERS_CAPTURED': {
+            await persistDeepSeekClientHeaders();
             break;
           }
           case 'RESPONSE_COMPLETE': {
@@ -369,6 +375,21 @@ function invalidateExtensionContext() {
   stopTokenSpeedIndicatorMountObserver();
   stopTokenSpeedRouteWatcher();
   removeTokenSpeedIndicator();
+}
+
+/** 主世界捕获到 DeepSeek 请求头后，隔离世界从 localStorage 读取 token 并持久化到 chrome.storage */
+async function persistDeepSeekClientHeaders(): Promise<void> {
+  try {
+    const headers = createClientHeaders();
+    if (headers) {
+      rememberDeepSeekClientHeaders(headers);
+      await saveClientHeadersToStorage();
+      // 通知侧边栏重新检查登录状态
+      chrome.runtime.sendMessage({ type: 'AUTH_STATUS_CHANGED' }).catch(() => {});
+    }
+  } catch {
+    // 静默失败，用户发送下一条消息时会重试
+  }
 }
 
 async function sendRuntimeMessage<T>(message: unknown): Promise<T | undefined> {

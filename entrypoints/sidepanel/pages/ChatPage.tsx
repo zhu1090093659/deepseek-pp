@@ -22,7 +22,11 @@ export default function ChatPage() {
 
   // Listen for streaming chunks and incoming text
   useEffect(() => {
-    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string }) => {
+    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean }) => {
+      if (msg.type === 'AUTH_STATUS_CHANGED') {
+        setHasToken(msg.hasToken ?? false);
+        return;
+      }
       if (msg.type === 'CHAT_STREAM_CHUNK') {
         if (msg.error) {
           setError(msg.error);
