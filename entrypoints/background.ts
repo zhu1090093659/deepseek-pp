@@ -42,11 +42,22 @@ import { refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/mcp/transports';
 import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../core/shell';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
+import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
+import {
+  createChatSession,
+  createPowHeaders,
+  submitPromptStreaming,
+  loadClientHeadersFromStorage,
+} from '../core/deepseek/adapter';
+import { buildPromptAugmentation } from '../core/prompt';
+import { extractToolCalls } from '../core/interceptor/tool-parser';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolResult } from '../core/types';
+import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolExecutionRecord, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
+let chatSessionId: string | null = null;
+let chatParentMessageId: number | null = null;
 type SidePanelApi = {
   setPanelBehavior?: (options: { openPanelOnActionClick: boolean }) => Promise<void>;
 };
@@ -62,6 +73,7 @@ export default defineBackground(() => {
 
   archiveStaleMemories().catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error));
   ensureShellMcpPreset().catch((error) => reportBackgroundStartupError('shell_mcp_preset_failed', error));
+  createContextMenus().catch((error) => reportBackgroundStartupError('context_menus_failed', error));
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
@@ -77,6 +89,76 @@ function enableSidePanelActionClick() {
   const sidePanel = (chrome as typeof chrome & { sidePanel?: SidePanelApi }).sidePanel;
   sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true })
     .catch((error) => reportBackgroundStartupError('sidepanel_behavior_failed', error));
+}
+
+async function createContextMenus() {
+  try {
+    await chrome.contextMenus.removeAll();
+  } catch {}
+  const scenarios = await getAllScenarios();
+  const enabledScenarios = scenarios.filter((s) => s.enabled);
+
+  chrome.contextMenus.create({
+    id: 'send-to-chat',
+    title: '发送到对话',
+    contexts: ['selection'],
+  });
+
+  if (enabledScenarios.length > 0) {
+    chrome.contextMenus.create({
+      id: 'separator-1',
+      type: 'separator',
+      contexts: ['selection'],
+    });
+
+    for (const scenario of enabledScenarios) {
+      chrome.contextMenus.create({
+        id: `scenario-${scenario.id}`,
+        title: scenario.label,
+        contexts: ['selection'],
+      });
+    }
+  }
+}
+
+try {
+  chrome.contextMenus.onClicked.addListener((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+    if (!info.selectionText) return;
+    const selectedText = info.selectionText.trim();
+    if (!selectedText) return;
+
+    if (info.menuItemId === 'send-to-chat') {
+      openSidePanelAndSendText(selectedText, tab).catch(() => {});
+      return;
+    }
+
+    if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('scenario-')) {
+      const scenarioId = info.menuItemId.slice('scenario-'.length);
+      getAllScenarios()
+        .then((scenarios) => {
+          const scenario = scenarios.find((s) => s.id === scenarioId);
+          if (!scenario) return;
+          const processed = applyScenarioTemplate(scenario.template, selectedText);
+          openSidePanelAndSendText(processed, tab);
+        })
+        .catch(() => {});
+      return;
+    }
+  });
+} catch {}
+
+async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
+  const tabId = tab?.id;
+  if (!tabId) return;
+
+  try {
+    if (chrome.sidePanel?.open) {
+      await chrome.sidePanel.open({ tabId }).catch(() => {});
+    }
+  } catch {}
+
+  // 广播发送到所有侧边栏实例
+  chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch(() => {});
 }
 
 async function ensureShellMcpPreset() {
@@ -461,6 +543,34 @@ async function handleMessage(
       return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
     }
 
+    case 'CHAT_SUBMIT_PROMPT': {
+      const { text } = message.payload as { text: string };
+      if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
+      // Fire and forget — the streaming response is broadcast
+      handleChatSubmitPrompt(text, sender.tab?.id).catch(() => {});
+      return { ok: true };
+    }
+
+    case 'CHAT_NEW_SESSION':
+      chatSessionId = null;
+      chatParentMessageId = null;
+      return { ok: true };
+
+    case 'GET_AUTH_STATUS': {
+      const headers = await loadClientHeadersFromStorage();
+      return { ok: true, hasToken: !!headers };
+    }
+
+    case 'AUTH_STATUS_CHANGED': {
+      const newHeaders = await loadClientHeadersFromStorage();
+      broadcastToTabs({ type: 'AUTH_STATUS_CHANGED', hasToken: !!newHeaders }).catch(() => {});
+      return { ok: true };
+    }
+
+    case 'SCENARIOS_UPDATED':
+      await createContextMenus();
+      return { ok: true };
+
     default:
       return null;
   }
@@ -584,4 +694,137 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
     skills: snapshot.skills.length,
     presets: snapshot.presets.length,
   };
+}
+
+async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
+  const headers = await loadClientHeadersFromStorage();
+  if (!headers) {
+    broadcastChatChunk({ text: '', done: true, error: '请先在 chat.deepseek.com 登录并发送一条消息以获取认证信息' }, excludeTabId);
+    return;
+  }
+
+  try {
+    if (!chatSessionId) {
+      chatSessionId = await createChatSession(headers);
+      chatParentMessageId = null;
+    }
+
+    const [memories, activePreset, toolDescriptors] = await Promise.all([
+      getAllMemories(),
+      getActivePreset(),
+      getRuntimeToolDescriptors(),
+    ]);
+
+    const { augmented } = buildPromptAugmentation(prompt, {
+      memories,
+      presetContent: activePreset?.content ?? null,
+      toolDescriptors: toolDescriptors.filter((t) => t.execution.enabled),
+      thinkingEnabled: false,
+    });
+
+    const powHeaders = await createPowHeaders(headers);
+
+    const initialInput = {
+      chatSessionId,
+      parentMessageId: chatParentMessageId,
+      modelType: null,
+      prompt: augmented,
+      refFileIds: [],
+      thinkingEnabled: false,
+      searchEnabled: false,
+      clientHeaders: headers,
+      powHeaders,
+    };
+
+    await runSidepanelToolLoop(initialInput, excludeTabId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
+    if (msg.includes('auth') || msg.includes('token') || msg.includes('401')) {
+      chatSessionId = null;
+    }
+  }
+}
+
+async function runSidepanelToolLoop(
+  input: {
+    chatSessionId: string;
+    parentMessageId: number | null;
+    modelType: string | null;
+    prompt: string;
+    refFileIds: string[];
+    thinkingEnabled: boolean;
+    searchEnabled: boolean;
+    clientHeaders: Record<string, string>;
+    powHeaders: Record<string, string>;
+  },
+  excludeTabId?: number,
+) {
+  const MAX_STEPS = 20;
+  const allExecutions: ToolExecutionRecord[] = [];
+  let currentInput = input;
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    let accumulated = '';
+    const turn = await submitPromptStreaming(currentInput, {
+      onTextChunk(_text: string, fullText: string) {
+        accumulated = fullText;
+      },
+    });
+
+    chatParentMessageId = turn.responseMessageId;
+    const fullText = accumulated || turn.assistantText;
+
+    if (!fullText) {
+      broadcastChatChunk({ text: '', done: true }, excludeTabId);
+      return;
+    }
+
+    broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
+
+    const toolCalls = extractToolCalls(fullText);
+
+    if (toolCalls.length === 0) {
+      broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
+      return;
+    }
+
+    const execs: ToolExecutionRecord[] = [];
+    for (const call of toolCalls) {
+      const result = await executeRuntimeToolCall(call, 'sidepanel_chat');
+      execs.push({
+        name: call.name,
+        result: {
+          ok: result.ok,
+          summary: result.summary,
+          detail: result.detail,
+          output: result.output,
+          truncated: result.truncated,
+          error: result.error,
+        },
+      });
+    }
+    allExecutions.push(...execs);
+
+    const toolResultsText = execs.map((e) =>
+      `<${e.name}_result>\n${JSON.stringify(e.result)}\n</${e.name}_result>`
+    ).join('\n');
+
+    const continuationPrompt = `[TOOL_RESULTS]\n${toolResultsText}\n[/TOOL_RESULTS]\n\n请根据上述工具执行结果继续回答。`;
+
+    currentInput = {
+      ...currentInput,
+      prompt: continuationPrompt,
+      parentMessageId: chatParentMessageId,
+    };
+  }
+
+  broadcastChatChunk({ text: '(达到最大工具调用步数，对话结束)', done: true }, excludeTabId);
+}
+
+function broadcastChatChunk(
+  chunk: { text: string; done: boolean; error?: string },
+  excludeTabId?: number,
+) {
+  chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
 }

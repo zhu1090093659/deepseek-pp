@@ -12,6 +12,7 @@ import {
 } from '../../../core/pet/config';
 import type { BackgroundConfig, Memory, PetConfig, PetPosition, SyncConfig, SyncCounts } from '../../../core/types';
 import { SVG_PATHS } from '../constants';
+import ScenarioManager from '../components/ScenarioManager';
 
 const DEFAULT_SYNC_CONFIG: SyncConfig = {
   url: '',
@@ -912,6 +913,10 @@ export default function SettingsPage() {
             GitHub
           </a>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <ScenarioManager />
       </section>
     </div>
   );

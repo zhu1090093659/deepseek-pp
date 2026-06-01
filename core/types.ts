@@ -234,3 +234,21 @@ export interface PromptConfig {
   memoryTokenBudget: number;
   systemTemplate: string;
 }
+
+export interface ScenarioConfig {
+  id: string;
+  label: string;
+  template: string;
+  builtIn: boolean;
+  enabled: boolean;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface ChatStreamChunk {
+  text: string;
+  done: boolean;
+}

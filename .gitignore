@@ -32,3 +32,5 @@ native-host/
 *.sln
 *.sw?
 .playwright-mcp
+openspec  
+docs/superpowers  
