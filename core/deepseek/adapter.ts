@@ -176,6 +176,28 @@ export function rememberDeepSeekClientHeaders(headersInit: HeadersInit | undefin
   };
 }
 
+const STORAGE_HEADERS_KEY = 'deepseekCachedClientHeaders';
+
+export async function saveClientHeadersToStorage(): Promise<void> {
+  if (!rememberedClientHeaders) return;
+  try {
+    await chrome.storage.local.set({ [STORAGE_HEADERS_KEY]: rememberedClientHeaders });
+  } catch {
+    // content script might not have storage access; silently fail
+  }
+}
+
+export async function loadClientHeadersFromStorage(): Promise<Record<string, string> | null> {
+  try {
+    const data = await chrome.storage.local.get(STORAGE_HEADERS_KEY);
+    const headers = data[STORAGE_HEADERS_KEY] as Record<string, string> | undefined;
+    if (headers?.Authorization) return headers;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function submitPrompt(input: SubmitPromptInput, signal?: AbortSignal): Promise<ModelTurn> {
   const response = await fetch(DEEPSEEK_API_URL, {
     method: 'POST',
