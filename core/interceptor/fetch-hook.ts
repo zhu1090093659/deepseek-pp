@@ -1,5 +1,5 @@
 import { DEEPSEEK_API_URL, PRESET_REINJECTION_INTERVAL } from '../constants';
-import { rememberDeepSeekClientHeaders } from '../deepseek/adapter';
+import { rememberDeepSeekClientHeaders, saveClientHeadersToStorage } from '../deepseek/adapter';
 import type { Memory, ModelType, SystemPromptPreset, ToolCall, ToolCallRestoreRecord, ToolDescriptor } from '../types';
 import { buildPromptAugmentation, sanitizeInternalPromptText } from '../prompt';
 import { parseSkillCommand } from '../skill/parser';
@@ -130,6 +130,7 @@ function hookFetch() {
 
     await waitForInitialHookState();
     rememberDeepSeekClientHeaders(init.headers);
+    saveClientHeadersToStorage();
     const originalContext = createRequestContext(init.body);
     const modified = modifyRequestBody(init.body);
     const requestBody = modified?.body ?? init.body;
@@ -167,6 +168,7 @@ function hookXHR() {
       const xhr = this;
       const sendChatRequest = () => {
         rememberDeepSeekClientHeaders(xhrHeaders.get(xhr));
+        saveClientHeadersToStorage();
         const originalContext = createRequestContext(body);
         const modified = modifyRequestBody(body);
         const requestBody = modified?.body ?? body;
