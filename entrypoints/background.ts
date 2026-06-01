@@ -43,11 +43,21 @@ import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/m
 import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../core/shell';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
 import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
+import {
+  createChatSession,
+  createPowHeaders,
+  submitPromptStreaming,
+  loadClientHeadersFromStorage,
+} from '../core/deepseek/adapter';
+import { buildPromptAugmentation } from '../core/prompt';
+import { extractToolCalls } from '../core/interceptor/tool-parser';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolResult } from '../core/types';
+import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolExecutionRecord, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
+let chatSessionId: string | null = null;
+let chatParentMessageId: number | null = null;
 type SidePanelApi = {
   setPanelBehavior?: (options: { openPanelOnActionClick: boolean }) => Promise<void>;
 };
@@ -531,6 +541,24 @@ async function handleMessage(
       return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
     }
 
+    case 'CHAT_SUBMIT_PROMPT': {
+      const { text } = message.payload as { text: string };
+      if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
+      // Fire and forget — the streaming response is broadcast
+      handleChatSubmitPrompt(text, sender.tab?.id).catch(() => {});
+      return { ok: true };
+    }
+
+    case 'CHAT_NEW_SESSION':
+      chatSessionId = null;
+      chatParentMessageId = null;
+      return { ok: true };
+
+    case 'GET_AUTH_STATUS': {
+      const headers = await loadClientHeadersFromStorage();
+      return { ok: true, hasToken: !!headers };
+    }
+
     case 'SCENARIOS_UPDATED':
       await createContextMenus();
       return { ok: true };
@@ -658,4 +686,141 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
     skills: snapshot.skills.length,
     presets: snapshot.presets.length,
   };
+}
+
+async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
+  const headers = await loadClientHeadersFromStorage();
+  if (!headers) {
+    broadcastChatChunk({ text: '', done: true, error: '请先在 chat.deepseek.com 登录并发送一条消息以获取认证信息' }, excludeTabId);
+    return;
+  }
+
+  try {
+    if (!chatSessionId) {
+      chatSessionId = await createChatSession(headers);
+      chatParentMessageId = null;
+    }
+
+    const [memories, activePreset, toolDescriptors] = await Promise.all([
+      getAllMemories(),
+      getActivePreset(),
+      getRuntimeToolDescriptors(),
+    ]);
+
+    const { augmented } = buildPromptAugmentation(prompt, {
+      memories,
+      presetContent: activePreset?.content ?? null,
+      toolDescriptors: toolDescriptors.filter((t) => t.execution.enabled),
+      thinkingEnabled: false,
+    });
+
+    const powHeaders = await createPowHeaders(headers);
+
+    const initialInput = {
+      chatSessionId,
+      parentMessageId: chatParentMessageId,
+      modelType: null,
+      prompt: augmented,
+      refFileIds: [],
+      thinkingEnabled: false,
+      searchEnabled: false,
+      clientHeaders: headers,
+      powHeaders,
+    };
+
+    await runSidepanelToolLoop(initialInput, excludeTabId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
+    if (msg.includes('auth') || msg.includes('token') || msg.includes('401')) {
+      chatSessionId = null;
+    }
+  }
+}
+
+async function runSidepanelToolLoop(
+  input: {
+    chatSessionId: string;
+    parentMessageId: number | null;
+    modelType: string | null;
+    prompt: string;
+    refFileIds: string[];
+    thinkingEnabled: boolean;
+    searchEnabled: boolean;
+    clientHeaders: Record<string, string>;
+    powHeaders: Record<string, string>;
+  },
+  excludeTabId?: number,
+) {
+  const MAX_STEPS = 20;
+  const allExecutions: ToolExecutionRecord[] = [];
+  let currentInput = input;
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const fullText = await new Promise<string>((resolve, reject) => {
+      let accumulated = '';
+      submitPromptStreaming(currentInput, {
+        onTextChunk(_text: string, fullText: string) {
+          accumulated = fullText;
+        },
+        onFinished() {
+          resolve(accumulated);
+        },
+      }).catch(reject);
+    });
+
+    if (!fullText) {
+      broadcastChatChunk({ text: '', done: true }, excludeTabId);
+      return;
+    }
+
+    broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
+
+    const toolCalls = extractToolCalls(fullText, {
+      descriptors: [], // empty — uses default descriptors
+    });
+
+    if (toolCalls.length === 0) {
+      broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
+      return;
+    }
+
+    const execs: ToolExecutionRecord[] = [];
+    for (const call of toolCalls) {
+      const result = await executeRuntimeToolCall(call, 'sidepanel_chat' as any);
+      execs.push({
+        name: call.name,
+        result: {
+          ok: result.ok,
+          summary: result.summary,
+          detail: result.detail,
+          output: result.output,
+          truncated: result.truncated,
+          error: result.error,
+        },
+      });
+    }
+    allExecutions.push(...execs);
+
+    const toolResultsText = execs.map((e) =>
+      `<${e.name}_result>\n${JSON.stringify(e.result)}\n</${e.name}_result>`
+    ).join('\n');
+
+    const continuationPrompt = `[TOOL_RESULTS]\n${toolResultsText}\n[/TOOL_RESULTS]\n\n请根据上述工具执行结果继续回答。`;
+
+    currentInput = {
+      ...currentInput,
+      prompt: continuationPrompt,
+      parentMessageId: null,
+    };
+  }
+
+  broadcastChatChunk({ text: '(达到最大工具调用步数，对话结束)', done: true }, excludeTabId);
+}
+
+function broadcastChatChunk(
+  chunk: { text: string; done: boolean; error?: string },
+  excludeTabId?: number,
+) {
+  chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
 }
