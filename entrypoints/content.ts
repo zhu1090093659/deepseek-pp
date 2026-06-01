@@ -42,6 +42,9 @@ import {
 
 const TOOL_BLOCK_ID = 'dpp-tool-block';
 const TOOL_BLOCK_STYLE_ID = 'dpp-tool-block-css';
+const ASSISTANT_RESPONSE_CONTENT_SELECTOR = '._74c0879';
+const REASONING_HOST_META_RE = /\b(?:reason|reasoning|think|thinking|thought)\b/i;
+const REASONING_HOST_TEXT_RE = /^(?:已思考|思考中|正在思考|thinking|reasoning|thought)(?:[（(:：]|$)/i;
 const TOKEN_SPEED_BADGE_ID = 'dpp-token-speed-badge';
 const TOKEN_SPEED_STYLE_ID = 'dpp-token-speed-css';
 const PET_HOST_ID = 'dpp-pet-host';
@@ -689,8 +692,8 @@ function startInlineAgentIfNeeded(
   void writeInlineAgentTrace(activeInlineAgentTrace);
 
   inlineAgentContainer = container;
-  const contentDiv = target.querySelector('._74c0879') ?? target;
-  contentDiv.appendChild(container);
+  const responseHost = getAssistantResponseHost(target);
+  responseHost.appendChild(container);
 
   // Keep agent container at the bottom when DeepSeek's UI appends new content
   inlineAgentContainerObserver?.disconnect();
@@ -699,7 +702,7 @@ function startInlineAgentIfNeeded(
       container.parentNode.appendChild(container);
     }
   });
-  inlineAgentContainerObserver.observe(contentDiv, { childList: true });
+  inlineAgentContainerObserver.observe(responseHost, { childList: true });
 
   window.postMessage({
     source: 'deepseek-pp-content',
@@ -788,6 +791,9 @@ function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
   if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
 
   try {
+    inlineAgentContainerObserver?.disconnect();
+    inlineAgentContainerObserver = null;
+
     const finalText = getInlineAgentDisplayFinalText(msg.finalText);
     appendInlineAgentFinalAnswer(inlineAgentContainer, finalText, msg.loopId);
 
@@ -2347,8 +2353,7 @@ function mountRestoredInlineAgentContainer(
   container: HTMLElement,
   hideHostContent: boolean,
 ): void {
-  const responseContent = message.querySelector('._74c0879');
-  const host = responseContent ?? message;
+  const host = getAssistantResponseHost(message);
 
   if (hideHostContent) {
     host.setAttribute('data-dpp-agent-host-hidden', 'true');
@@ -2398,8 +2403,49 @@ function summarizeRestoredToolCall(call: ToolCall): ToolCardResult {
 
 function getAssistantMessages(): Element[] {
   const messages = Array.from(document.querySelectorAll('.ds-message'));
-  const assistantMessages = messages.filter((message) => message.querySelector('._74c0879'));
+  const assistantMessages = messages.filter((message) => getAssistantContentHosts(message).length > 0);
   return assistantMessages.length > 0 ? assistantMessages : messages;
+}
+
+function getAssistantResponseHost(message: Element): Element {
+  const hosts = getAssistantContentHosts(message);
+  if (hosts.length === 0) return message;
+
+  // DeepSeek reuses the same content class for reasoning and final-answer blocks.
+  const responseHosts = hosts.filter((host) => !looksLikeReasoningContentHost(host));
+  return getLastElement(responseHosts) ?? getLastElement(hosts) ?? message;
+}
+
+function getAssistantContentHosts(message: Element): HTMLElement[] {
+  return Array.from(message.querySelectorAll<HTMLElement>(ASSISTANT_RESPONSE_CONTENT_SELECTOR))
+    .filter((host) => !host.parentElement?.closest(ASSISTANT_RESPONSE_CONTENT_SELECTOR));
+}
+
+function looksLikeReasoningContentHost(host: HTMLElement): boolean {
+  const metadata = [
+    host.className,
+    host.parentElement?.className ?? '',
+    host.getAttribute('aria-label') ?? '',
+    host.getAttribute('data-testid') ?? '',
+    host.getAttribute('data-role') ?? '',
+  ].join(' ');
+  if (REASONING_HOST_META_RE.test(metadata)) return true;
+
+  const firstText = getFirstMeaningfulChildText(host);
+  return REASONING_HOST_TEXT_RE.test(firstText);
+}
+
+function getFirstMeaningfulChildText(host: Element): string {
+  for (const child of Array.from(host.childNodes)) {
+    const text = normalizeText(child.textContent ?? '');
+    if (text) return text.slice(0, 80);
+  }
+
+  return normalizeText(host.textContent ?? '').slice(0, 80);
+}
+
+function getLastElement<T>(items: T[]): T | undefined {
+  return items.length > 0 ? items[items.length - 1] : undefined;
 }
 
 function findRestoredToolTarget(
@@ -2596,19 +2642,13 @@ function collapseToolBlock() {
 }
 
 function appendToolBlockToMessage(message: Element, block: HTMLElement) {
-  const responseContent = message.querySelector('._74c0879');
-  if (responseContent) {
-    responseContent.appendChild(block);
-    return;
-  }
-
-  message.appendChild(block);
+  getAssistantResponseHost(message).appendChild(block);
 }
 
 function placeToolBlock(block: HTMLElement) {
   const tryPlace = () => {
     // Find last assistant message container
-    const messages = document.querySelectorAll('.ds-message');
+    const messages = getAssistantMessages();
     if (messages.length === 0) return false;
 
     const lastMsg = messages[messages.length - 1];
