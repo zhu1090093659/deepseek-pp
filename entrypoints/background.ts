@@ -42,6 +42,7 @@ import { refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/mcp/transports';
 import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../core/shell';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
+import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
 import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
@@ -62,6 +63,7 @@ export default defineBackground(() => {
 
   archiveStaleMemories().catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error));
   ensureShellMcpPreset().catch((error) => reportBackgroundStartupError('shell_mcp_preset_failed', error));
+  createContextMenus().catch((error) => reportBackgroundStartupError('context_menus_failed', error));
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
@@ -77,6 +79,74 @@ function enableSidePanelActionClick() {
   const sidePanel = (chrome as typeof chrome & { sidePanel?: SidePanelApi }).sidePanel;
   sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true })
     .catch((error) => reportBackgroundStartupError('sidepanel_behavior_failed', error));
+}
+
+async function createContextMenus() {
+  try {
+    await chrome.contextMenus.removeAll();
+  } catch {}
+  const scenarios = await getAllScenarios();
+  const enabledScenarios = scenarios.filter((s) => s.enabled);
+
+  chrome.contextMenus.create({
+    id: 'send-to-chat',
+    title: '发送到对话',
+    contexts: ['selection'],
+  });
+
+  if (enabledScenarios.length > 0) {
+    chrome.contextMenus.create({
+      id: 'separator-1',
+      type: 'separator',
+      contexts: ['selection'],
+    });
+
+    for (const scenario of enabledScenarios) {
+      chrome.contextMenus.create({
+        id: `scenario-${scenario.id}`,
+        title: scenario.label,
+        contexts: ['selection'],
+      });
+    }
+  }
+}
+
+chrome.contextMenus.onClicked.addListener((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+  if (!info.selectionText) return;
+  const selectedText = info.selectionText.trim();
+  if (!selectedText) return;
+
+  if (info.menuItemId === 'send-to-chat') {
+    openSidePanelAndSendText(selectedText, tab).catch(() => {});
+    return;
+  }
+
+  if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('scenario-')) {
+    const scenarioId = info.menuItemId.slice('scenario-'.length);
+    getAllScenarios()
+      .then((scenarios) => {
+        const scenario = scenarios.find((s) => s.id === scenarioId);
+        if (!scenario) return;
+        const processed = applyScenarioTemplate(scenario.template, selectedText);
+        openSidePanelAndSendText(processed, tab);
+      })
+      .catch(() => {});
+    return;
+  }
+});
+
+async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
+  const tabId = tab?.id;
+  if (!tabId) return;
+
+  try {
+    if (chrome.sidePanel?.open) {
+      await chrome.sidePanel.open({ tabId }).catch(() => {});
+    }
+  } catch {}
+
+  // 广播发送到所有侧边栏实例
+  chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch(() => {});
 }
 
 async function ensureShellMcpPreset() {
@@ -460,6 +530,10 @@ async function handleMessage(
       await broadcastStateUpdate(sender.tab?.id);
       return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
     }
+
+    case 'SCENARIOS_UPDATED':
+      await createContextMenus();
+      return { ok: true };
 
     default:
       return null;
