@@ -12,7 +12,6 @@ export default function ChatPage() {
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [searchEnabled, setSearchEnabled] = useState(true);
   const [modelType, setModelType] = useState<'expert' | null>(null);
-  const [processingStatus, setProcessingStatus] = useState<'thinking' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -63,22 +62,13 @@ export default function ChatPage() {
         return;
       }
       if (msg.type === 'CHAT_STREAM_CHUNK') {
-        // 处理处理状态更新
-        if (msg.status === 'thinking') {
-          setProcessingStatus('thinking');
-        }
-        if (msg.status === 'responding') {
-          setProcessingStatus(null);
-        }
         if (msg.error) {
           setError(msg.error);
           setIsStreaming(false);
-          setProcessingStatus(null);
           return;
         }
         if (msg.done) {
           setIsStreaming(false);
-          setProcessingStatus(null);
           return;
         }
         if (msg.text) {
@@ -111,7 +101,6 @@ export default function ChatPage() {
     setInputText('');
     setIsStreaming(true);
     setError(null);
-    setProcessingStatus(null);
 
     chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text, thinkingEnabled, searchEnabled, modelType } })
       .catch((err: Error) => {
@@ -125,7 +114,6 @@ export default function ChatPage() {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
-    setProcessingStatus(null);
     inputRef.current?.focus();
   };
 
@@ -228,7 +216,7 @@ export default function ChatPage() {
             isStreaming={isStreaming && i === messages.length - 1 && msg.role === 'assistant'}
           />
         ))}
-        {processingStatus && (
+        {isStreaming && messages[messages.length - 1]?.role === 'user' && (
           <div className="flex items-center justify-center gap-2 py-4 text-xs" style={{ color: 'var(--ds-text-tertiary)' }}>
             <span className="inline-block w-3 h-3 rounded-full animate-spin" style={{
               border: '2px solid var(--ds-border)',
