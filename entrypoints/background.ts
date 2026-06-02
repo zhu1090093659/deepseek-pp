@@ -560,13 +560,18 @@ async function handleMessage(
     }
 
     case 'CHAT_SUBMIT_PROMPT': {
-      const { text } = message.payload as { text: string };
+      const { text, thinkingEnabled, searchEnabled, modelType } = message.payload as {
+        text: string;
+        thinkingEnabled?: boolean;
+        searchEnabled?: boolean;
+        modelType?: string | null;
+      };
       if (!(await getChatEnabled())) {
         return { ok: false, error: 'chat_disabled' };
       }
       if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
       // Fire and forget — the streaming response is broadcast
-      handleChatSubmitPrompt(text, sender.tab?.id).catch(() => {});
+      handleChatSubmitPrompt(text, sender.tab?.id, { thinkingEnabled, searchEnabled, modelType }).catch(() => {});
       return { ok: true };
     }
 
@@ -715,7 +720,15 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
   };
 }
 
-async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
+async function handleChatSubmitPrompt(
+  prompt: string,
+  excludeTabId?: number,
+  options?: {
+    thinkingEnabled?: boolean;
+    searchEnabled?: boolean;
+    modelType?: string | null;
+  },
+) {
   const headers = await loadClientHeadersFromStorage();
   if (!headers) {
     broadcastChatChunk({ text: '', done: true, error: '请先在 chat.deepseek.com 登录并发送一条消息以获取认证信息' }, excludeTabId);
@@ -740,7 +753,7 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
       memories,
       presetContent: activePreset?.content ?? null,
       toolDescriptors: enabledDescriptors,
-      thinkingEnabled: false,
+      thinkingEnabled: options?.thinkingEnabled ?? false,
     });
 
     const powHeaders = await createPowHeaders(headers);
@@ -748,11 +761,11 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
     const initialInput = {
       chatSessionId,
       parentMessageId: chatParentMessageId,
-      modelType: null,
+      modelType: options?.modelType ?? null,
       prompt: augmented,
       refFileIds: [],
-      thinkingEnabled: false,
-      searchEnabled: false,
+      thinkingEnabled: options?.thinkingEnabled ?? false,
+      searchEnabled: options?.searchEnabled ?? false,
       clientHeaders: headers,
       powHeaders,
     };
