@@ -9,6 +9,9 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasToken, setHasToken] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [searchEnabled, setSearchEnabled] = useState(false);
+  const [modelType, setModelType] = useState<'expert' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -85,7 +88,7 @@ export default function ChatPage() {
     setIsStreaming(true);
     setError(null);
 
-    chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text } })
+    chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text, thinkingEnabled, searchEnabled, modelType } })
       .catch((err: Error) => {
         setError(err.message);
         setIsStreaming(false);
@@ -97,6 +100,9 @@ export default function ChatPage() {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
+    setThinkingEnabled(false);
+    setSearchEnabled(false);
+    setModelType(null);
     inputRef.current?.focus();
   };
 
@@ -125,14 +131,52 @@ export default function ChatPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid var(--ds-border)' }}>
         <span className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>对话</span>
-        <button
-          onClick={newSession}
-          className="text-xs px-2.5 py-1 rounded-md"
-          style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
-          title="新建会话"
-        >
-          新建
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setThinkingEnabled((p) => !p)}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: thinkingEnabled ? 'var(--ds-purple)' : 'var(--ds-text-tertiary)',
+              background: thinkingEnabled ? 'var(--ds-purple-bg)' : 'var(--ds-surface)',
+              border: thinkingEnabled ? '1px solid var(--ds-purple-border)' : '1px solid transparent',
+            }}
+            title="启用深度思考"
+          >
+            思考
+          </button>
+          <button
+            onClick={() => setSearchEnabled((p) => !p)}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: searchEnabled ? 'var(--ds-info)' : 'var(--ds-text-tertiary)',
+              background: searchEnabled ? 'var(--ds-info-bg)' : 'var(--ds-surface)',
+              border: searchEnabled ? '1px solid var(--ds-info-border)' : '1px solid transparent',
+            }}
+            title="启用联网搜索"
+          >
+            搜索
+          </button>
+          <button
+            onClick={() => setModelType((p) => (p === 'expert' ? null : 'expert'))}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: modelType === 'expert' ? 'var(--ds-warning)' : 'var(--ds-text-tertiary)',
+              background: modelType === 'expert' ? 'var(--ds-warning-bg)' : 'var(--ds-surface)',
+              border: modelType === 'expert' ? '1px solid var(--ds-warning-border)' : '1px solid transparent',
+            }}
+            title="启用专家模式"
+          >
+            专家
+          </button>
+          <button
+            onClick={newSession}
+            className="text-xs px-2.5 py-1 rounded-md"
+            style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
+            title="新建会话"
+          >
+            新建
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
