@@ -814,7 +814,6 @@ async function runSidepanelToolLoop(
     const turn = await submitPromptStreaming(currentInput, {
       onTextChunk(newText: string, fullText: string) {
         accumulated = fullText;
-        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
       },
       onStatusChange(status) {
         broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
@@ -832,7 +831,9 @@ async function runSidepanelToolLoop(
     const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
-      broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
+      // 非流式输出：先发送完整文本，再发送完成信号
+      broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
+      broadcastChatChunk({ text: '', done: true }, excludeTabId);
       return;
     }
 
