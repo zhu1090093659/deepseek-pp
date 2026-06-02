@@ -43,6 +43,7 @@ import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/m
 import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../core/shell';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
 import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
+import { getChatEnabled } from '../core/chat/store';
 import {
   createChatSession,
   createPowHeaders,
@@ -81,6 +82,12 @@ export default defineBackground(() => {
       .catch((error) => sendResponse(createBackgroundErrorResponse(message, error)));
     return true;
   });
+
+  chrome.storage.onChanged.addListener((changes) => {
+    if ('deepseek_pp_chat_enabled' in changes) {
+      createContextMenus().catch(() => {});
+    }
+  });
 });
 
 function enableSidePanelActionClick() {
@@ -92,6 +99,11 @@ function enableSidePanelActionClick() {
 }
 
 async function createContextMenus() {
+  const chatEnabled = await getChatEnabled();
+  if (!chatEnabled) {
+    try { await chrome.contextMenus.removeAll(); } catch {}
+    return;
+  }
   try {
     await chrome.contextMenus.removeAll();
   } catch {}
@@ -122,10 +134,12 @@ async function createContextMenus() {
 }
 
 try {
-  chrome.contextMenus.onClicked.addListener((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+  chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
     if (!info.selectionText) return;
     const selectedText = info.selectionText.trim();
     if (!selectedText) return;
+    const chatEnabled = await getChatEnabled();
+    if (!chatEnabled) return;
 
     if (info.menuItemId === 'send-to-chat') {
       openSidePanelAndSendText(selectedText, tab).catch(() => {});
@@ -545,6 +559,9 @@ async function handleMessage(
 
     case 'CHAT_SUBMIT_PROMPT': {
       const { text } = message.payload as { text: string };
+      if (!(await getChatEnabled())) {
+        return { ok: false, error: 'chat_disabled' };
+      }
       if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
       // Fire and forget — the streaming response is broadcast
       handleChatSubmitPrompt(text, sender.tab?.id).catch(() => {});
