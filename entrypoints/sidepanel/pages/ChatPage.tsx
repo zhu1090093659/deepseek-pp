@@ -139,11 +139,12 @@ export default function ChatPage() {
           </div>
         )}
         {messages.map((msg, i) => (
-          <ChatMessage key={i} message={msg} isStreaming={false} />
+          <ChatMessage
+            key={i}
+            message={msg}
+            isStreaming={isStreaming && i === messages.length - 1 && msg.role === 'assistant'}
+          />
         ))}
-        {isStreaming && messages[messages.length - 1]?.role === 'assistant' && (
-          <ChatMessage message={messages[messages.length - 1]} isStreaming />
-        )}
         {error && (
           <div className="text-xs text-red-400 text-center mt-2">{error}</div>
         )}
