@@ -380,6 +380,9 @@ async function readCompletionStreamWithCallbacks(
     consumeSSEText(complete, summary);
     const newText = summary.assistantText.slice(prevLen);
 
+    if (!summary._phase && newText) {
+      summary._phase = 'responding';
+    }
     if (summary._phase && summary._phase !== lastPhase) {
       lastPhase = summary._phase;
       callbacks.onStatusChange?.(summary._phase);
@@ -394,6 +397,9 @@ async function readCompletionStreamWithCallbacks(
     const prevLen = summary.assistantText.length;
     consumeSSEText(buffer, summary);
     const newText = summary.assistantText.slice(prevLen);
+    if (!summary._phase && newText) {
+      summary._phase = 'responding';
+    }
     if (summary._phase && summary._phase !== lastPhase) {
       lastPhase = summary._phase;
       callbacks.onStatusChange?.(summary._phase);
