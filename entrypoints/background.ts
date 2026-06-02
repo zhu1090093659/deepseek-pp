@@ -828,11 +828,15 @@ async function runSidepanelToolLoop(
       return;
     }
 
+    // 剥离思考前缀：只保留从第一个"回答式"句子开始的内容
+    const responseText = stripThinkingPrefix(fullText);
+
+    // 从完整文本中检测工具调用（思考部分也可能包含工具调用）
     const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
-      // 非流式输出：先发送完整文本，再发送完成信号
-      broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
+      // 非流式输出：先发送完整文本（剥离思考前缀），再发送完成信号
+      broadcastChatChunk({ text: responseText, done: false }, excludeTabId);
       broadcastChatChunk({ text: '', done: true }, excludeTabId);
       return;
     }
@@ -875,4 +879,23 @@ function broadcastChatChunk(
   excludeTabId?: number,
 ) {
   chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
+}
+
+// 剥离思考前缀：DeepSeek 在搜索/思考模式下会在回复开头输出搜索计划等思考内容。
+// 这些内容以第一人称叙述搜索/分析过程，以"回答式"句子开头标志着真正回复的开始。
+function stripThinkingPrefix(text: string): string {
+  // 中文回答常见的开头标记
+  const answerMarkers = [
+    '没问题', '好的', '当然', '可以啊', '可以', '这是', '给你', '这就',
+    '根据', '以下', '这里', '来看', '先说', '首先',
+  ];
+  // 按句号、感叹号、问号、换行分割
+  const segments = text.split(/(?<=[。！？\n])/);
+  for (let i = 0; i < segments.length; i++) {
+    const trimmed = segments[i].trim();
+    if (answerMarkers.some(m => trimmed.startsWith(m))) {
+      return segments.slice(i).join('').trim();
+    }
+  }
+  return text;
 }

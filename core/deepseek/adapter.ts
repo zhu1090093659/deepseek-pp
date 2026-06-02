@@ -376,6 +376,7 @@ async function readCompletionStreamWithCallbacks(
     const complete = buffer.slice(0, boundary + 2);
     buffer = buffer.slice(boundary + 2);
 
+    console.log("[DPP_RAW]", complete.slice(0, 500));
     const prevLen = summary.assistantText.length;
     consumeSSEText(complete, summary);
     const newText = summary.assistantText.slice(prevLen);
@@ -402,6 +403,7 @@ async function readCompletionStreamWithCallbacks(
     }
   }
 
+  console.log('[DPP_FULL]', summary.assistantText.slice(0, 500));
   callbacks.onFinished?.();
   return summary;
 }
@@ -413,6 +415,7 @@ function consumeSSEText(
   const events = parseSSEChunk(text);
   for (const event of events) {
     const parsed: any = parseSSEData(event.data);
+    console.log('[DPP_SSE]', JSON.stringify({ e: event.type, p: parsed?.p, o: parsed?.o, v: typeof parsed?.v === 'string' ? parsed.v.slice(0, 120) : Array.isArray(parsed?.v) ? `[${parsed.v.length} items]` : parsed?.v }));
     if (!parsed) continue;
 
     if (isThinkingPatchPath(parsed.p)) {
@@ -422,21 +425,18 @@ function consumeSSEText(
       continue;
     }
 
-    if (isResponseTextPatchPath(parsed.p) || isResponseFragmentsAppendPatch(parsed)) {
-      if (summary._phase !== 'responding') {
-        summary._phase = 'responding';
+    // 检查 fragment 追加中的 type 字段：只有 type=RESPONSE 才算响应
+    if (parsed?.p === 'response/fragments' && parsed?.o === 'APPEND' && Array.isArray(parsed?.v)) {
+      if (parsed.v.some((item: unknown) => (item as any)?.type === 'RESPONSE')) {
+        if (summary._phase !== 'responding') {
+          summary._phase = 'responding';
+        }
       }
     }
 
     const eventText = extractResponseTextFromParsed(parsed);
-    // 无 path 且 phase 未确认 → 检查文本是否含思考/搜索标记
-    if (!summary._phase && eventText && !parsed.p) {
-      if (/^(?:[\s\S]*?)?(?:已思考|搜索到)/.test(eventText)) {
-        summary._phase = 'thinking';
-      }
-    }
-    // 仅在确认是响应文本时累加：已在 responding 阶段，或有 path
-    if (eventText && (summary._phase === 'responding' || !!parsed.p)) {
+    // 仅在确认是响应文本时累加
+    if (eventText && summary._phase === 'responding') {
       summary.assistantText += eventText;
     }
     if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
