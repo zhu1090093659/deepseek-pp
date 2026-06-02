@@ -201,7 +201,7 @@ export default function ChatPage() {
           </button>
           <button
             onClick={async () => {
-              const resp = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_SESSION' });
+              const resp = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_SESSION' }).catch(() => ({}));
               if (resp?.sessionId) {
                 chrome.tabs.create({ url: `https://chat.deepseek.com/a/chat/s/${resp.sessionId}` });
               }
