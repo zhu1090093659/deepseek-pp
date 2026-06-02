@@ -814,6 +814,7 @@ async function runSidepanelToolLoop(
     const turn = await submitPromptStreaming(currentInput, {
       onTextChunk(newText: string, fullText: string) {
         accumulated = fullText;
+        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
       },
       onStatusChange(status) {
         broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
@@ -828,15 +829,11 @@ async function runSidepanelToolLoop(
       return;
     }
 
-    // 剥离思考前缀：只保留从第一个"回答式"句子开始的内容
-    const responseText = stripThinkingPrefix(fullText);
 
     // 从完整文本中检测工具调用（思考部分也可能包含工具调用）
     const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
-      // 非流式输出：先发送完整文本（剥离思考前缀），再发送完成信号
-      broadcastChatChunk({ text: responseText, done: false }, excludeTabId);
       broadcastChatChunk({ text: '', done: true }, excludeTabId);
       return;
     }
