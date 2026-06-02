@@ -138,6 +138,13 @@ try {
     if (!info.selectionText) return;
     const selectedText = info.selectionText.trim();
     if (!selectedText) return;
+
+    // 在 async 边界之前打开侧边栏，保留用户手势
+    const tabId = tab?.id;
+    if (tabId && chrome.sidePanel?.open) {
+      chrome.sidePanel.open({ tabId }).catch(() => {});
+    }
+
     const chatEnabled = await getChatEnabled();
     if (!chatEnabled) return;
 
@@ -162,18 +169,9 @@ try {
 } catch {}
 
 async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
-  const tabId = tab?.id;
-  if (!tabId) return;
-
-  // 先写入 storage 作为容灾：message 可能因侧边栏未就绪而丢失
+  // 写入 storage 作为容灾：message 可能因侧边栏未就绪而丢失
   try {
     await chrome.storage.local.set({ pendingChatText: text });
-  } catch {}
-
-  try {
-    if (chrome.sidePanel?.open) {
-      await chrome.sidePanel.open({ tabId }).catch(() => {});
-    }
   } catch {}
 
   chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch(() => {});
