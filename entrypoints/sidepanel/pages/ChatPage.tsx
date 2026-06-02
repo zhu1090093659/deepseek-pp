@@ -204,6 +204,8 @@ export default function ChatPage() {
               const resp = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_SESSION' }).catch(() => ({}));
               if (resp?.sessionId) {
                 chrome.tabs.create({ url: `https://chat.deepseek.com/a/chat/s/${resp.sessionId}` });
+              } else {
+                setError('请先发送一条消息');
               }
             }}
             className="text-xs px-2.5 py-1 rounded-md"
