@@ -14,7 +14,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
     navigator.clipboard.writeText(message.text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch(() => {});
   }, [message.text]);
 
   return (
