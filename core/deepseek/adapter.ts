@@ -1,4 +1,5 @@
 import { DEEPSEEK_API_URL } from '../constants';
+import { getChatEnabled } from '../chat/store';
 import {
   extractResponseTextFromParsed,
   isStreamFinishedFromParsed,
@@ -179,6 +180,8 @@ export function rememberDeepSeekClientHeaders(headersInit: HeadersInit | undefin
 const STORAGE_HEADERS_KEY = 'deepseekCachedClientHeaders';
 
 export async function saveClientHeadersToStorage(): Promise<void> {
+  const chatEnabled = await getChatEnabled();
+  if (!chatEnabled) return;
   if (!rememberedClientHeaders) return;
   try {
     await chrome.storage.local.set({ [STORAGE_HEADERS_KEY]: rememberedClientHeaders });
