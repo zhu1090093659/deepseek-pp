@@ -877,22 +877,3 @@ function broadcastChatChunk(
 ) {
   chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
 }
-
-// 剥离思考前缀：DeepSeek 在搜索/思考模式下会在回复开头输出搜索计划等思考内容。
-// 这些内容以第一人称叙述搜索/分析过程，以"回答式"句子开头标志着真正回复的开始。
-function stripThinkingPrefix(text: string): string {
-  // 中文回答常见的开头标记
-  const answerMarkers = [
-    '没问题', '好的', '当然', '可以啊', '可以', '这是', '给你', '这就',
-    '根据', '以下', '这里', '来看', '先说', '首先',
-  ];
-  // 按句号、感叹号、问号、换行分割
-  const segments = text.split(/(?<=[。！？\n])/);
-  for (let i = 0; i < segments.length; i++) {
-    const trimmed = segments[i].trim();
-    if (answerMarkers.some(m => trimmed.startsWith(m))) {
-      return segments.slice(i).join('').trim();
-    }
-  }
-  return text;
-}

@@ -376,7 +376,6 @@ async function readCompletionStreamWithCallbacks(
     const complete = buffer.slice(0, boundary + 2);
     buffer = buffer.slice(boundary + 2);
 
-    console.log("[DPP_RAW]", complete.slice(0, 500));
     const prevLen = summary.assistantText.length;
     consumeSSEText(complete, summary);
     const newText = summary.assistantText.slice(prevLen);
@@ -403,7 +402,6 @@ async function readCompletionStreamWithCallbacks(
     }
   }
 
-  console.log('[DPP_FULL]', summary.assistantText.slice(0, 500));
   callbacks.onFinished?.();
   return summary;
 }
@@ -415,7 +413,6 @@ function consumeSSEText(
   const events = parseSSEChunk(text);
   for (const event of events) {
     const parsed: any = parseSSEData(event.data);
-    console.log('[DPP_SSE]', JSON.stringify({ e: event.type, p: parsed?.p, o: parsed?.o, v: typeof parsed?.v === 'string' ? parsed.v.slice(0, 120) : Array.isArray(parsed?.v) ? `[${parsed.v.length} items]` : parsed?.v }));
     if (!parsed) continue;
 
     if (isThinkingPatchPath(parsed.p)) {
