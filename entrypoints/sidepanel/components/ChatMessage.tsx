@@ -22,7 +22,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
           <span className="whitespace-pre-wrap">{message.text}</span>
         ) : (
           <div className="prose prose-sm max-w-none [&_pre]:overflow-x-auto [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:bg-[var(--ds-bg)] [&_code]:text-sm">
-            <ReactMarkdown>{message.text}</ReactMarkdown>
+            <ReactMarkdown>{message.text.replace(/\n(?!\n)/g, '\n\n')}</ReactMarkdown>
           </div>
         )}
         {isStreaming && !isUser && (
