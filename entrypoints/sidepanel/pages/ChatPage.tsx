@@ -12,6 +12,7 @@ export default function ChatPage() {
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [searchEnabled, setSearchEnabled] = useState(true);
   const [modelType, setModelType] = useState<'expert' | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<'thinking' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -51,7 +52,7 @@ export default function ChatPage() {
 
   // Listen for streaming chunks and incoming text
   useEffect(() => {
-    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean }) => {
+    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean; status?: string }) => {
       if (msg.type === 'CHAT_SET_INPUT_TEXT' && typeof msg.text === 'string') {
         setInputText(msg.text);
         inputRef.current?.focus();
@@ -62,22 +63,33 @@ export default function ChatPage() {
         return;
       }
       if (msg.type === 'CHAT_STREAM_CHUNK') {
+        // 处理处理状态更新
+        if (msg.status === 'thinking') {
+          setProcessingStatus('thinking');
+        }
+        if (msg.status === 'responding') {
+          setProcessingStatus(null);
+        }
         if (msg.error) {
           setError(msg.error);
           setIsStreaming(false);
+          setProcessingStatus(null);
           return;
         }
         if (msg.done) {
           setIsStreaming(false);
+          setProcessingStatus(null);
           return;
         }
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === 'assistant') {
-            return [...prev.slice(0, -1), { role: 'assistant', text: last.text + (msg.text ?? '') }];
-          }
-          return [...prev, { role: 'assistant', text: msg.text ?? '' }];
-        });
+        if (msg.text) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant') {
+              return [...prev.slice(0, -1), { role: 'assistant', text: last.text + (msg.text ?? '') }];
+            }
+            return [...prev, { role: 'assistant', text: msg.text ?? '' }];
+          });
+        }
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -99,6 +111,7 @@ export default function ChatPage() {
     setInputText('');
     setIsStreaming(true);
     setError(null);
+    setProcessingStatus(null);
 
     chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text, thinkingEnabled, searchEnabled, modelType } })
       .catch((err: Error) => {
@@ -112,6 +125,7 @@ export default function ChatPage() {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
+    setProcessingStatus(null);
     inputRef.current?.focus();
   };
 
@@ -214,6 +228,15 @@ export default function ChatPage() {
             isStreaming={isStreaming && i === messages.length - 1 && msg.role === 'assistant'}
           />
         ))}
+        {processingStatus && (
+          <div className="flex items-center justify-center gap-2 py-4 text-xs" style={{ color: 'var(--ds-text-tertiary)' }}>
+            <span className="inline-block w-3 h-3 rounded-full animate-spin" style={{
+              border: '2px solid var(--ds-border)',
+              borderTopColor: 'var(--ds-blue)',
+            }} />
+            <span>思考中...</span>
+          </div>
+        )}
         {error && (
           <div className="text-xs text-red-400 text-center mt-2">{error}</div>
         )}
