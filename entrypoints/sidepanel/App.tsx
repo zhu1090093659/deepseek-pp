@@ -120,14 +120,20 @@ export default function App() {
 
       <main className="flex-1 overflow-y-auto">
         <Suspense fallback={<div className="p-4 text-sm" style={{ color: 'var(--ds-text-tertiary)' }}>加载中...</div>}>
-          {tab === 'chat' && <ChatPage />}
-          {tab === 'memory' && <MemoryPage />}
-          {tab === 'skill' && <SkillPage />}
-          {tab === 'preset' && <PresetPage />}
-          {tab === 'automation' && <AutomationPage />}
-          {tab === 'mcp' && <McpPage />}
-          {tab === 'tools' && <ToolsPage />}
-          {tab === 'settings' && <SettingsPage />}
+          <div style={{ display: tab === 'chat' ? '' : 'none', height: '100%' }}>
+            <ChatPage />
+          </div>
+          {tab !== 'chat' && (
+            <>
+              {tab === 'memory' && <MemoryPage />}
+              {tab === 'skill' && <SkillPage />}
+              {tab === 'preset' && <PresetPage />}
+              {tab === 'automation' && <AutomationPage />}
+              {tab === 'mcp' && <McpPage />}
+              {tab === 'tools' && <ToolsPage />}
+              {tab === 'settings' && <SettingsPage />}
+            </>
+          )}
         </Suspense>
       </main>
     </div>
