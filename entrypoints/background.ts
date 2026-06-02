@@ -53,7 +53,7 @@ import {
 import { buildPromptAugmentation } from '../core/prompt';
 import { extractToolCalls } from '../core/interceptor/tool-parser';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolExecutionRecord, ToolResult } from '../core/types';
+import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
@@ -732,10 +732,12 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
       getRuntimeToolDescriptors(),
     ]);
 
+    const enabledDescriptors = toolDescriptors.filter((t) => t.execution.enabled);
+
     const { augmented } = buildPromptAugmentation(prompt, {
       memories,
       presetContent: activePreset?.content ?? null,
-      toolDescriptors: toolDescriptors.filter((t) => t.execution.enabled),
+      toolDescriptors: enabledDescriptors,
       thinkingEnabled: false,
     });
 
@@ -753,7 +755,7 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
       powHeaders,
     };
 
-    await runSidepanelToolLoop(initialInput, excludeTabId);
+    await runSidepanelToolLoop(initialInput, enabledDescriptors, excludeTabId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
@@ -775,6 +777,7 @@ async function runSidepanelToolLoop(
     clientHeaders: Record<string, string>;
     powHeaders: Record<string, string>;
   },
+  toolDescriptors: ToolDescriptor[],
   excludeTabId?: number,
 ) {
   const MAX_STEPS = 20;
@@ -786,6 +789,7 @@ async function runSidepanelToolLoop(
     const turn = await submitPromptStreaming(currentInput, {
       onTextChunk(_text: string, fullText: string) {
         accumulated = fullText;
+        broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
       },
     });
 
@@ -797,9 +801,7 @@ async function runSidepanelToolLoop(
       return;
     }
 
-    broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
-
-    const toolCalls = extractToolCalls(fullText);
+    const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
       broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
