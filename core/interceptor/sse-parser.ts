@@ -104,6 +104,8 @@ export function extractResponseTextFromParsed(parsed: any): string | null {
       .join('');
     return text.length > 0 ? text : null;
   }
+  // 显式排除 thinking/reasoning 内容的 path（如 reasoning_content, thinking_content）
+  if (isThinkingPatchPath(parsed.p)) return null;
   if (!parsed.p && typeof parsed.v === 'string') {
     return parsed.v;
   }
