@@ -816,6 +816,9 @@ async function runSidepanelToolLoop(
         accumulated = fullText;
         broadcastChatChunk({ text: newText, done: false }, excludeTabId);
       },
+      onStatusChange(status) {
+        broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
+      },
     });
 
     chatParentMessageId = turn.responseMessageId;
@@ -867,7 +870,7 @@ async function runSidepanelToolLoop(
 }
 
 function broadcastChatChunk(
-  chunk: { text: string; done: boolean; error?: string },
+  chunk: { text: string; done: boolean; error?: string; status?: 'thinking' | 'responding' },
   excludeTabId?: number,
 ) {
   chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
