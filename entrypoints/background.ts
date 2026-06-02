@@ -590,6 +590,9 @@ async function handleMessage(
       chatParentMessageId = null;
       return { ok: true };
 
+    case 'GET_CURRENT_SESSION':
+      return { sessionId: chatSessionId };
+
     case 'GET_AUTH_STATUS': {
       const headers = await loadClientHeadersFromStorage();
       return { ok: true, hasToken: !!headers };
