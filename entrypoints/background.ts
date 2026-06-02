@@ -18,6 +18,7 @@ import {
   replaceAllPresets,
 } from '../core/preset/store';
 import { getModelType, setModelType } from '../core/model/store';
+import { getChatModes, setChatModes } from '../core/chat/mode-store';
 import { getDeepSeekTheme, saveDeepSeekTheme } from '../core/theme/store';
 import { getBackgroundConfig, saveBackgroundConfig, clearBackgroundConfig } from '../core/background/store';
 import { getPetConfig, savePetConfig, clearPetConfig } from '../core/pet/store';
@@ -477,6 +478,15 @@ async function handleMessage(
       if (newModelType === current) return { ok: true };
       await setModelType(newModelType);
       await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'GET_CHAT_MODES':
+      return getChatModes();
+
+    case 'SET_CHAT_MODES': {
+      const modes = message.payload as Parameters<typeof setChatModes>[0];
+      await setChatModes(modes);
       return { ok: true };
     }
 

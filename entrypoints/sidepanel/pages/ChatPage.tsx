@@ -9,13 +9,25 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasToken, setHasToken] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [thinkingEnabled, setThinkingEnabled] = useState(false);
-  const [searchEnabled, setSearchEnabled] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [searchEnabled, setSearchEnabled] = useState(true);
   const [modelType, setModelType] = useState<'expert' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Consume pending text from right-click on mount + register live callback
+  // Load persisted mode settings on mount
+  useEffect(() => {
+    chrome.runtime.sendMessage({ type: 'GET_CHAT_MODES' })
+      .then((modes: { thinkingEnabled?: boolean; searchEnabled?: boolean; modelType?: 'expert' | null } | undefined) => {
+        if (modes) {
+          if (modes.thinkingEnabled !== undefined) setThinkingEnabled(modes.thinkingEnabled);
+          if (modes.searchEnabled !== undefined) setSearchEnabled(modes.searchEnabled);
+          if (modes.modelType !== undefined) setModelType(modes.modelType);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     const text = consumePendingText();
     if (text) {
@@ -100,9 +112,6 @@ export default function ChatPage() {
     setMessages([]);
     setError(null);
     setIsStreaming(false);
-    setThinkingEnabled(false);
-    setSearchEnabled(false);
-    setModelType(null);
     inputRef.current?.focus();
   };
 
@@ -133,7 +142,11 @@ export default function ChatPage() {
         <span className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>对话</span>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setThinkingEnabled((p) => !p)}
+            onClick={() => {
+              const next = !thinkingEnabled;
+              setThinkingEnabled(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { thinkingEnabled: next } }).catch(() => {});
+            }}
             className="text-xs px-2 py-0.5 rounded-md"
             style={{
               color: thinkingEnabled ? 'var(--ds-purple)' : 'var(--ds-text-tertiary)',
@@ -145,7 +158,11 @@ export default function ChatPage() {
             思考
           </button>
           <button
-            onClick={() => setSearchEnabled((p) => !p)}
+            onClick={() => {
+              const next = !searchEnabled;
+              setSearchEnabled(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { searchEnabled: next } }).catch(() => {});
+            }}
             className="text-xs px-2 py-0.5 rounded-md"
             style={{
               color: searchEnabled ? 'var(--ds-info)' : 'var(--ds-text-tertiary)',
@@ -157,7 +174,11 @@ export default function ChatPage() {
             搜索
           </button>
           <button
-            onClick={() => setModelType((p) => (p === 'expert' ? null : 'expert'))}
+            onClick={() => {
+              const next = modelType === 'expert' ? null : 'expert';
+              setModelType(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { modelType: next } }).catch(() => {});
+            }}
             className="text-xs px-2 py-0.5 rounded-md"
             style={{
               color: modelType === 'expert' ? 'var(--ds-warning)' : 'var(--ds-text-tertiary)',
