@@ -1,5 +1,6 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { getExtensionVersion } from '../../core/version';
+import { getChatEnabled } from '../../core/chat/store';
 
 type Tab = 'chat' | 'memory' | 'skill' | 'preset' | 'automation' | 'mcp' | 'tools' | 'settings';
 
@@ -24,8 +25,26 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('chat');
+  const [tab, setTab] = useState<Tab>('memory');
   const version = getExtensionVersion();
+  const [chatEnabled, setChatEnabledState] = useState(false);
+
+  useEffect(() => {
+    getChatEnabled().then(setChatEnabledState);
+    const handler = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if ('deepseek_pp_chat_enabled' in changes) {
+        setChatEnabledState(changes.deepseek_pp_chat_enabled.newValue === true);
+      }
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, []);
+
+  useEffect(() => {
+    if (!chatEnabled && tab === 'chat') {
+      setTab('memory');
+    }
+  }, [chatEnabled, tab]);
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--ds-bg)' }}>
@@ -49,7 +68,7 @@ export default function App() {
       </header>
 
       <nav className="side-tabs" aria-label="侧栏导航">
-        {TABS.map((t) => (
+        {TABS.filter(t => chatEnabled || t.key !== 'chat').map((t) => (
           <button
             key={t.key}
             type="button"
