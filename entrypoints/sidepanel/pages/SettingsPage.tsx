@@ -12,6 +12,7 @@ import {
 } from '../../../core/pet/config';
 import type { BackgroundConfig, Memory, PetConfig, PetPosition, SyncConfig, SyncCounts } from '../../../core/types';
 import { SVG_PATHS } from '../constants';
+import { getChatEnabled, setChatEnabled } from '../../../core/chat/store';
 import ScenarioManager from '../components/ScenarioManager';
 
 const DEFAULT_SYNC_CONFIG: SyncConfig = {
@@ -49,6 +50,12 @@ export default function SettingsPage() {
   const [petSize, setPetSize] = useState(DEFAULT_PET_CONFIG.size);
   const [petOpacity, setPetOpacity] = useState(DEFAULT_PET_CONFIG.opacity);
   const [petMotion, setPetMotion] = useState(DEFAULT_PET_CONFIG.motion);
+  const [chatEnabled, setChatEnabledState] = useState(false);
+
+  useEffect(() => {
+    getChatEnabled().then(setChatEnabledState);
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgConfigRef = useRef<BackgroundConfig>(DEFAULT_BACKGROUND_CONFIG);
   const petConfigRef = useRef<PetConfig>(DEFAULT_PET_CONFIG);
@@ -442,6 +449,38 @@ export default function SettingsPage() {
                 className="ds-switch-thumb absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200"
                 style={{
                   transform: expertMode ? 'translateX(18px)' : 'translateX(0)',
+                }}
+              />
+            </button>
+          </div>
+
+          <div
+            className="flex justify-between items-center pt-3 border-t"
+            style={{ borderColor: 'var(--ds-border)' }}
+          >
+            <div>
+              <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                侧边栏对话
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                在侧边栏显示对话标签，支持 DeepSeek API 直连对话
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                const next = !chatEnabled;
+                setChatEnabledState(next);
+                await setChatEnabled(next);
+              }}
+              className="relative shrink-0 w-10 h-[22px] rounded-full transition-colors duration-200"
+              style={{
+                background: chatEnabled ? 'var(--ds-blue)' : 'var(--ds-border)',
+              }}
+            >
+              <span
+                className="ds-switch-thumb absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200"
+                style={{
+                  transform: chatEnabled ? 'translateX(18px)' : 'translateX(0)',
                 }}
               />
             </button>
