@@ -132,7 +132,7 @@ function isFragmentsAppendPatch(parsed: any): boolean {
     Array.isArray(parsed.v);
 }
 
-function isResponseFragmentsAppendPatch(parsed: any): boolean {
+export function isResponseFragmentsAppendPatch(parsed: any): boolean {
   return parsed?.p === 'response/fragments' && parsed.o === 'APPEND' && Array.isArray(parsed.v);
 }
 

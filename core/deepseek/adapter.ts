@@ -2,7 +2,10 @@ import { DEEPSEEK_API_URL } from '../constants';
 import { getChatEnabled } from '../chat/store';
 import {
   extractResponseTextFromParsed,
+  isResponseFragmentsAppendPatch,
+  isResponseTextPatchPath,
   isStreamFinishedFromParsed,
+  isThinkingPatchPath,
   parseSSEChunk,
   parseSSEData,
 } from '../interceptor/sse-parser';
@@ -61,6 +64,7 @@ export interface SubmitPromptInput {
 export interface StreamCallbacks {
   onTextChunk?(text: string, fullText: string): void;
   onFinished?(): void;
+  onStatusChange?(status: 'thinking' | 'searching' | 'responding'): void;
 }
 
 export class DeepSeekAuthError extends Error {
@@ -356,7 +360,10 @@ async function readCompletionStreamWithCallbacks(
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  const summary: ModelTurn = { assistantText: '', responseMessageId: null, requestMessageId: null, finished: false };
+  const summary: ModelTurn & { _phase?: 'thinking' | 'searching' | 'responding' } = {
+    assistantText: '', responseMessageId: null, requestMessageId: null, finished: false,
+  };
+  let lastPhase: string | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -372,6 +379,12 @@ async function readCompletionStreamWithCallbacks(
     const prevLen = summary.assistantText.length;
     consumeSSEText(complete, summary);
     const newText = summary.assistantText.slice(prevLen);
+
+    if (summary._phase && summary._phase !== lastPhase) {
+      lastPhase = summary._phase;
+      callbacks.onStatusChange?.(summary._phase);
+    }
+
     if (newText && callbacks.onTextChunk) {
       callbacks.onTextChunk(newText, summary.assistantText);
     }
@@ -381,6 +394,10 @@ async function readCompletionStreamWithCallbacks(
     const prevLen = summary.assistantText.length;
     consumeSSEText(buffer, summary);
     const newText = summary.assistantText.slice(prevLen);
+    if (summary._phase && summary._phase !== lastPhase) {
+      lastPhase = summary._phase;
+      callbacks.onStatusChange?.(summary._phase);
+    }
     if (newText && callbacks.onTextChunk) {
       callbacks.onTextChunk(newText, summary.assistantText);
     }
@@ -390,14 +407,32 @@ async function readCompletionStreamWithCallbacks(
   return summary;
 }
 
-function consumeSSEText(text: string, summary: ModelTurn) {
+function consumeSSEText(
+  text: string,
+  summary: ModelTurn & { _phase?: 'thinking' | 'searching' | 'responding' },
+) {
   const events = parseSSEChunk(text);
   for (const event of events) {
-    const parsed = parseSSEData(event.data);
+    const parsed: any = parseSSEData(event.data);
     if (!parsed) continue;
 
+    if (isThinkingPatchPath(parsed.p)) {
+      if (summary._phase !== 'thinking') {
+        summary._phase = 'thinking';
+      }
+      continue;
+    }
+
+    if (isResponseTextPatchPath(parsed.p) || isResponseFragmentsAppendPatch(parsed)) {
+      if (summary._phase !== 'responding') {
+        summary._phase = 'responding';
+      }
+    }
+
     const eventText = extractResponseTextFromParsed(parsed);
-    if (eventText) summary.assistantText += eventText;
+    if (eventText && !(summary._phase !== 'responding' && !parsed.p)) {
+      summary.assistantText += eventText;
+    }
     if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
     collectMessageIds(parsed, summary);
   }
