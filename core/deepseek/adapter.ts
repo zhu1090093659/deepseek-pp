@@ -64,7 +64,7 @@ export interface SubmitPromptInput {
 export interface StreamCallbacks {
   onTextChunk?(text: string, fullText: string): void;
   onFinished?(): void;
-  onStatusChange?(status: 'thinking' | 'searching' | 'responding'): void;
+  onStatusChange?(status: 'thinking' | 'responding'): void;
 }
 
 export class DeepSeekAuthError extends Error {
@@ -360,7 +360,7 @@ async function readCompletionStreamWithCallbacks(
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  const summary: ModelTurn & { _phase?: 'thinking' | 'searching' | 'responding' } = {
+  const summary: ModelTurn & { _phase?: 'thinking' | 'responding' } = {
     assistantText: '', responseMessageId: null, requestMessageId: null, finished: false,
   };
   let lastPhase: string | undefined;
@@ -409,7 +409,7 @@ async function readCompletionStreamWithCallbacks(
 
 function consumeSSEText(
   text: string,
-  summary: ModelTurn & { _phase?: 'thinking' | 'searching' | 'responding' },
+  summary: ModelTurn & { _phase?: 'thinking' | 'responding' },
 ) {
   const events = parseSSEChunk(text);
   for (const event of events) {
@@ -430,7 +430,7 @@ function consumeSSEText(
     }
 
     const eventText = extractResponseTextFromParsed(parsed);
-    if (eventText && !(summary._phase !== 'responding' && !parsed.p)) {
+    if (eventText) {
       summary.assistantText += eventText;
     }
     if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
