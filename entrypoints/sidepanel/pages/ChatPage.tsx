@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ChatMessage as ChatMessageType } from '../../../core/types';
 import ChatMessage from '../components/ChatMessage';
+import { consumePendingText } from '../pending-text';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
@@ -10,6 +11,15 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Consume pending text from right-click on mount
+  useEffect(() => {
+    const text = consumePendingText();
+    if (text) {
+      setInputText(text);
+      inputRef.current?.focus();
+    }
+  }, []);
 
   // Check auth status on mount
   useEffect(() => {
@@ -23,6 +33,11 @@ export default function ChatPage() {
   // Listen for streaming chunks and incoming text
   useEffect(() => {
     const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean }) => {
+      if (msg.type === 'CHAT_SET_INPUT_TEXT' && typeof msg.text === 'string') {
+        setInputText(msg.text);
+        inputRef.current?.focus();
+        return;
+      }
       if (msg.type === 'AUTH_STATUS_CHANGED') {
         setHasToken(msg.hasToken ?? false);
         return;
@@ -44,10 +59,6 @@ export default function ChatPage() {
           }
           return [...prev, { role: 'assistant', text: msg.text ?? '' }];
         });
-      }
-      if (msg.type === 'OPEN_CHAT_WITH_TEXT' && typeof msg.text === 'string') {
-        setInputText(msg.text);
-        inputRef.current?.focus();
       }
     };
     chrome.runtime.onMessage.addListener(handler);

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { getExtensionVersion } from '../../core/version';
 import { getChatEnabled } from '../../core/chat/store';
+import { setPendingText } from './pending-text';
 
 type Tab = 'chat' | 'memory' | 'skill' | 'preset' | 'automation' | 'mcp' | 'tools' | 'settings';
 
@@ -45,6 +46,19 @@ export default function App() {
       setTab('memory');
     }
   }, [chatEnabled, tab]);
+
+  useEffect(() => {
+    const handler = (msg: { type: string; text?: string }) => {
+      if (msg.type === 'OPEN_CHAT_WITH_TEXT' && typeof msg.text === 'string') {
+        setPendingText(msg.text);
+        setTab('chat');
+        // 广播到 ChatPage，处理已在对话标签页的情况
+        chrome.runtime.sendMessage({ type: 'CHAT_SET_INPUT_TEXT', text: msg.text }).catch(() => {});
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, []);
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--ds-bg)' }}>
