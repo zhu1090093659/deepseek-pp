@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ChatMessage as ChatMessageType } from '../../../core/types';
 import ChatMessage from '../components/ChatMessage';
-import { consumePendingText } from '../pending-text';
+import { consumePendingText, onPendingText } from '../pending-text';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
@@ -12,13 +12,17 @@ export default function ChatPage() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Consume pending text from right-click on mount
+  // Consume pending text from right-click on mount + register live callback
   useEffect(() => {
     const text = consumePendingText();
     if (text) {
       setInputText(text);
       inputRef.current?.focus();
     }
+    return onPendingText((t) => {
+      setInputText(t);
+      inputRef.current?.focus();
+    });
   }, []);
 
   // Check auth status on mount

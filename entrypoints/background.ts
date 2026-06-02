@@ -787,9 +787,9 @@ async function runSidepanelToolLoop(
   for (let step = 0; step < MAX_STEPS; step++) {
     let accumulated = '';
     const turn = await submitPromptStreaming(currentInput, {
-      onTextChunk(_text: string, fullText: string) {
+      onTextChunk(newText: string, fullText: string) {
         accumulated = fullText;
-        broadcastChatChunk({ text: fullText, done: false }, excludeTabId);
+        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
       },
     });
 

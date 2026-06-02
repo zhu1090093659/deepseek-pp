@@ -26,7 +26,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('memory');
+  const [tab, setTab] = useState<Tab>('chat');
   const version = getExtensionVersion();
   const [chatEnabled, setChatEnabledState] = useState(false);
 
