@@ -28,7 +28,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
 export default function App() {
   const [tab, setTab] = useState<Tab>('chat');
   const version = getExtensionVersion();
-  const [chatEnabled, setChatEnabledState] = useState(false);
+  const [chatEnabled, setChatEnabledState] = useState<boolean | null>(null);
 
   useEffect(() => {
     getChatEnabled().then(setChatEnabledState);
@@ -42,18 +42,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!chatEnabled && tab === 'chat') {
+    if (chatEnabled === false && tab === 'chat') {
       setTab('memory');
     }
   }, [chatEnabled, tab]);
 
+  // 挂载时从 storage 读取待消费文本（处理侧边栏刚打开、message 丢失的情况）
+  useEffect(() => {
+    chrome.storage.local.get('pendingChatText').then((data) => {
+      const text = data.pendingChatText as string | undefined;
+      if (text) {
+        chrome.storage.local.remove('pendingChatText').catch(() => {});
+        setPendingText(text);
+        setTab('chat');
+      }
+    });
+  }, []);
+
   useEffect(() => {
     const handler = (msg: { type: string; text?: string }) => {
       if (msg.type === 'OPEN_CHAT_WITH_TEXT' && typeof msg.text === 'string') {
+        chrome.storage.local.remove('pendingChatText').catch(() => {});
         setPendingText(msg.text);
         setTab('chat');
-        // 广播到 ChatPage，处理已在对话标签页的情况
-        chrome.runtime.sendMessage({ type: 'CHAT_SET_INPUT_TEXT', text: msg.text }).catch(() => {});
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -82,7 +93,7 @@ export default function App() {
       </header>
 
       <nav className="side-tabs" aria-label="侧栏导航">
-        {TABS.filter(t => chatEnabled || t.key !== 'chat').map((t) => (
+        {TABS.filter(t => chatEnabled !== false || t.key !== 'chat').map((t) => (
           <button
             key={t.key}
             type="button"

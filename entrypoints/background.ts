@@ -165,13 +165,17 @@ async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
   const tabId = tab?.id;
   if (!tabId) return;
 
+  // 先写入 storage 作为容灾：message 可能因侧边栏未就绪而丢失
+  try {
+    await chrome.storage.local.set({ pendingChatText: text });
+  } catch {}
+
   try {
     if (chrome.sidePanel?.open) {
       await chrome.sidePanel.open({ tabId }).catch(() => {});
     }
   } catch {}
 
-  // 广播发送到所有侧边栏实例
   chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch(() => {});
 }
 
