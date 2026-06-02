@@ -379,10 +379,6 @@ async function readCompletionStreamWithCallbacks(
     const prevLen = summary.assistantText.length;
     consumeSSEText(complete, summary);
     const newText = summary.assistantText.slice(prevLen);
-
-    if (!summary._phase && newText) {
-      summary._phase = 'responding';
-    }
     if (summary._phase && summary._phase !== lastPhase) {
       lastPhase = summary._phase;
       callbacks.onStatusChange?.(summary._phase);
@@ -397,9 +393,6 @@ async function readCompletionStreamWithCallbacks(
     const prevLen = summary.assistantText.length;
     consumeSSEText(buffer, summary);
     const newText = summary.assistantText.slice(prevLen);
-    if (!summary._phase && newText) {
-      summary._phase = 'responding';
-    }
     if (summary._phase && summary._phase !== lastPhase) {
       lastPhase = summary._phase;
       callbacks.onStatusChange?.(summary._phase);
@@ -436,7 +429,14 @@ function consumeSSEText(
     }
 
     const eventText = extractResponseTextFromParsed(parsed);
-    if (eventText) {
+    // 无 path 且 phase 未确认 → 检查文本是否含思考/搜索标记
+    if (!summary._phase && eventText && !parsed.p) {
+      if (/^(?:[\s\S]*?)?(?:已思考|搜索到)/.test(eventText)) {
+        summary._phase = 'thinking';
+      }
+    }
+    // 仅在确认是响应文本时累加：已在 responding 阶段，或有 path
+    if (eventText && (summary._phase === 'responding' || !!parsed.p)) {
       summary.assistantText += eventText;
     }
     if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
