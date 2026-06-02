@@ -140,7 +140,7 @@ export default function ChatPage() {
               background: thinkingEnabled ? 'var(--ds-purple-bg)' : 'var(--ds-surface)',
               border: thinkingEnabled ? '1px solid var(--ds-purple-border)' : '1px solid transparent',
             }}
-            title="启用深度思考"
+            title="深度思考"
           >
             思考
           </button>
@@ -152,7 +152,7 @@ export default function ChatPage() {
               background: searchEnabled ? 'var(--ds-info-bg)' : 'var(--ds-surface)',
               border: searchEnabled ? '1px solid var(--ds-info-border)' : '1px solid transparent',
             }}
-            title="启用联网搜索"
+            title="联网搜索"
           >
             搜索
           </button>
@@ -164,7 +164,7 @@ export default function ChatPage() {
               background: modelType === 'expert' ? 'var(--ds-warning-bg)' : 'var(--ds-surface)',
               border: modelType === 'expert' ? '1px solid var(--ds-warning-border)' : '1px solid transparent',
             }}
-            title="启用专家模式"
+            title="专家模式"
           >
             专家
           </button>
