@@ -199,6 +199,19 @@ export default function ChatPage() {
           >
             新建
           </button>
+          <button
+            onClick={async () => {
+              const resp = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_SESSION' });
+              if (resp?.sessionId) {
+                chrome.tabs.create({ url: `https://chat.deepseek.com/a/chat/s/${resp.sessionId}` });
+              }
+            }}
+            className="text-xs px-2.5 py-1 rounded-md"
+            style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
+            title="跳转到官网对话"
+          >
+            跳转
+          </button>
         </div>
       </div>
 
