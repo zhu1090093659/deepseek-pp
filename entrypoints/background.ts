@@ -1004,18 +1004,15 @@ async function handleChatSubmitPrompt(
       chatParentMessageId = null;
     }
 
-    const [memories, activePreset, toolDescriptors] = await Promise.all([
+    const [memories, activePreset] = await Promise.all([
       getAllMemories(),
       getActivePreset(),
-      getRuntimeToolDescriptors(),
     ]);
-
-    const enabledDescriptors = toolDescriptors.filter((t) => t.execution.enabled);
 
     const { augmented } = buildPromptAugmentation(prompt, {
       memories,
       presetContent: activePreset?.content ?? null,
-      toolDescriptors: enabledDescriptors,
+      toolDescriptors: [],
       thinkingEnabled: options?.thinkingEnabled ?? false,
     });
 
@@ -1033,7 +1030,16 @@ async function handleChatSubmitPrompt(
       powHeaders,
     };
 
-    await runSidepanelToolLoop(initialInput, enabledDescriptors, excludeTabId);
+    const turn = await submitPromptStreaming(initialInput, {
+      onTextChunk(newText: string, _fullText: string) {
+        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
+      },
+      onStatusChange(status) {
+        broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
+      },
+    });
+    chatParentMessageId = turn.responseMessageId;
+    broadcastChatChunk({ text: '', done: true }, excludeTabId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
