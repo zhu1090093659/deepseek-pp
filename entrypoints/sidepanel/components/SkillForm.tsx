@@ -1,18 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Skill } from '../../../core/types';
 
 interface Props {
+  initialSkill?: Skill | null;
   onSave: (skill: Skill) => void;
   onCancel: () => void;
 }
 
-export default function SkillForm({ onSave, onCancel }: Props) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [instructions, setInstructions] = useState('');
-  const [memoryEnabled, setMemoryEnabled] = useState(false);
+export default function SkillForm({ initialSkill, onSave, onCancel }: Props) {
+  const [name, setName] = useState(initialSkill?.name ?? '');
+  const [description, setDescription] = useState(initialSkill?.description ?? '');
+  const [instructions, setInstructions] = useState(initialSkill?.instructions ?? '');
+  const [memoryEnabled, setMemoryEnabled] = useState(initialSkill?.memoryEnabled ?? false);
 
   const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const isEditing = Boolean(initialSkill);
+
+  useEffect(() => {
+    setName(initialSkill?.name ?? '');
+    setDescription(initialSkill?.description ?? '');
+    setInstructions(initialSkill?.instructions ?? '');
+    setMemoryEnabled(initialSkill?.memoryEnabled ?? false);
+  }, [initialSkill]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,6 +32,7 @@ export default function SkillForm({ onSave, onCancel }: Props) {
       instructions: instructions.trim(),
       source: 'custom',
       memoryEnabled,
+      enabled: initialSkill?.enabled !== false,
     });
   };
 
@@ -87,7 +97,7 @@ export default function SkillForm({ onSave, onCancel }: Props) {
           type="submit"
           className="ds-btn-primary px-4 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150"
         >
-          保存
+          {isEditing ? '保存更改' : '保存'}
         </button>
       </div>
     </form>

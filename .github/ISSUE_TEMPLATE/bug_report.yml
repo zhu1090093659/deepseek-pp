@@ -1,36 +1,33 @@
-name: Request or question
-description: Request an improvement, update documentation, or ask a project question.
-title: "[Issue]: "
+name: Bug report
+description: Report a reproducible bug. Screenshot evidence is required.
+title: "[Bug]: "
 body:
   - type: markdown
     attributes:
       value: |
-        Please keep this template intact and fill every required section. Issues that remove the required sections are closed automatically. Use the Bug report form for bugs.
+        Please keep this template intact and fill every required section. Bug reports without a screenshot are closed automatically.
   - type: dropdown
     id: issue-type
     attributes:
       label: Issue type
-      description: Pick the closest category.
+      description: This form is only for reproducible bugs.
       options:
-        - Feature request
-        - Documentation
-        - Question
-        - Other
+        - Bug report
     validations:
       required: true
   - type: textarea
     id: summary
     attributes:
       label: Summary
-      description: Describe the issue or request in one or two sentences.
-      placeholder: What is the problem or requested change?
+      description: Describe the bug in one or two sentences.
+      placeholder: What is broken?
     validations:
       required: true
   - type: textarea
     id: expected-outcome
     attributes:
       label: Expected outcome
-      description: Describe what should happen when this is resolved.
+      description: Describe what should happen instead.
       placeholder: What result do you expect?
     validations:
       required: true
@@ -38,7 +35,7 @@ body:
     id: details-reproduction
     attributes:
       label: Details / reproduction
-      description: For bugs, include steps to reproduce. For requests, include the use case and any constraints.
+      description: Include clear steps to reproduce the bug.
       placeholder: |
         1. Open ...
         2. Click ...
@@ -49,7 +46,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Browser, extension version, OS, and any relevant settings. Write N/A if this is not environment-specific.
+      description: Browser, extension version, OS, and any relevant settings.
       placeholder: |
         - Browser:
         - Extension version:
@@ -57,9 +54,17 @@ body:
     validations:
       required: true
   - type: textarea
+    id: bug-screenshot
+    attributes:
+      label: Bug screenshot
+      description: Paste or upload a screenshot that shows the bug. Bug reports without screenshot evidence are closed automatically.
+      placeholder: Drag an image here or paste a GitHub image/file URL.
+    validations:
+      required: true
+  - type: textarea
     id: additional-context
     attributes:
       label: Additional context
-      description: Add screenshots, logs, links, or other context if available.
+      description: Add logs, links, or other context if available.
     validations:
       required: false

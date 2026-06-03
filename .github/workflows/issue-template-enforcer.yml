@@ -23,7 +23,7 @@ jobs:
               return;
             }
 
-            const requiredSections = [
+            const baseRequiredSections = [
               'Issue type',
               'Summary',
               'Expected outcome',
@@ -45,8 +45,27 @@ jobs:
               return normalized === '' || normalized === 'no response' || normalized === '_no response_';
             };
 
+            const hasScreenshotEvidence = (value) => {
+              return /!\[[^\]]*]\([^)]+\)/i.test(value)
+                || /https?:\/\/\S*(?:github\.com\/user-attachments\/assets\/|github\.com\/[^)\s]+\/assets\/|githubusercontent\.com\/|[./][^)\s]+\.(?:png|jpe?g|gif|webp))(?:[?#]\S*)?/i.test(value);
+            };
+
+            const issueType = readSection('Issue type').trim().toLowerCase();
+            const bugScreenshot = readSection('Bug screenshot');
+            const requiredSections = issueType === 'bug report'
+              ? [...baseRequiredSections, 'Bug screenshot']
+              : baseRequiredSections;
+
             const missingSections = requiredSections.filter((label) => isBlank(readSection(label)));
-            if (missingSections.length === 0) {
+            const invalidSections = [];
+            if (issueType === 'bug report' && !isBlank(bugScreenshot) && !hasScreenshotEvidence(bugScreenshot)) {
+              invalidSections.push('Bug screenshot must include an uploaded image, Markdown image, or image URL.');
+            }
+            const missingSectionMessages = missingSections.length > 0
+              ? [`Missing or empty section(s): ${missingSections.join(', ')}`]
+              : [];
+
+            if (missingSections.length === 0 && invalidSections.length === 0) {
               return;
             }
 
@@ -57,7 +76,8 @@ jobs:
               '',
               ...requiredSections.map((label) => `- ${label}`),
               '',
-              `Missing or empty section(s): ${missingSections.join(', ')}`,
+              ...missingSectionMessages,
+              ...invalidSections,
             ].join('\n');
 
             await github.rest.issues.createComment({

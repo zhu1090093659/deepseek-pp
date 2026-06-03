@@ -8,7 +8,24 @@ import {
   replaceAllMemories,
   archiveStaleMemories,
 } from '../core/memory/store';
-import { getAllSkills, saveSkill, deleteSkill, replaceAllCustomSkills } from '../core/skill/registry';
+import {
+  deleteGitHubSkillSource,
+  getAllSkillSources,
+  getAllSkills,
+  getSkillLibrary,
+  getUserSkills,
+  replaceAllCustomSkills,
+  replaceAllSkillSources,
+  saveSkill,
+  setSkillEnabled,
+  deleteSkill,
+} from '../core/skill/registry';
+import {
+  checkGitHubSkillSourceUpdates,
+  importGitHubSkillSource,
+  previewGitHubSkillSource,
+  updateGitHubSkillSource,
+} from '../core/skill/github-importer';
 import {
   getAllPresets,
   savePreset,
@@ -46,6 +63,24 @@ import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings
 import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
 import { getChatEnabled } from '../core/chat/store';
 import {
+  createAutomation,
+  deleteAutomation,
+  getAllAutomations,
+  getAutomationById,
+  getAutomationRuns,
+  setAutomationStatus,
+  updateAutomation,
+} from '../core/automation/store';
+import { runDeepSeekAutomation } from '../core/automation/runner';
+import {
+  AUTOMATION_WAKE_ALARM_NAME,
+  AUTOMATION_WAKE_INTERVAL_MINUTES,
+  refreshAutomationNextRunAt,
+  runAutomation,
+  scanDueAutomations,
+} from '../core/automation/scheduler';
+import { validateAutomationSchedule } from '../core/automation/schedule';
+import {
   createChatSession,
   createPowHeaders,
   submitPromptStreaming,
@@ -54,8 +89,9 @@ import {
 import { buildPromptAugmentation } from '../core/prompt';
 import { extractToolCalls } from '../core/interceptor/tool-parser';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, DeepSeekTheme, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolResult } from '../core/types';
+import type { BackgroundConfig, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
+import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 let chatSessionId: string | null = null;
@@ -67,15 +103,19 @@ type SidePanelApi = {
 type SyncDataSnapshot = {
   memories: Omit<Memory, 'id'>[];
   skills: Skill[];
+  skillSources: GitHubSkillSource[];
   presets: SystemPromptPreset[];
 };
 
 export default defineBackground(() => {
   enableSidePanelActionClick();
+  registerAutomationAlarmListener();
 
   archiveStaleMemories().catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error));
   ensureShellMcpPreset().catch((error) => reportBackgroundStartupError('shell_mcp_preset_failed', error));
   createContextMenus().catch((error) => reportBackgroundStartupError('context_menus_failed', error));
+  ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
+  scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error));
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
@@ -90,6 +130,19 @@ export default defineBackground(() => {
     }
   });
 });
+
+function registerAutomationAlarmListener() {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== AUTOMATION_WAKE_ALARM_NAME) return;
+    scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error));
+  });
+}
+
+async function ensureAutomationWakeAlarm() {
+  await chrome.alarms.create(AUTOMATION_WAKE_ALARM_NAME, {
+    periodInMinutes: AUTOMATION_WAKE_INTERVAL_MINUTES,
+  });
+}
 
 function enableSidePanelActionClick() {
   if (import.meta.env.FIREFOX) return;
@@ -264,8 +317,16 @@ async function handleMessage(
     case 'GET_SKILLS':
       return getAllSkills();
 
+    case 'GET_SKILL_LIBRARY':
+      return getSkillLibrary();
+
+    case 'GET_GITHUB_SKILL_SOURCES':
+      return getAllSkillSources();
+
     case 'SAVE_SKILL': {
-      await saveSkill(message.payload as Skill);
+      const payload = message.payload as Skill | { skill: Skill; previousName?: string };
+      const { skill, previousName } = 'skill' in payload ? payload : { skill: payload, previousName: undefined };
+      await saveSkill(skill, previousName);
       await broadcastStateUpdate(sender.tab?.id);
       return { ok: true };
     }
@@ -273,6 +334,43 @@ async function handleMessage(
     case 'DELETE_SKILL': {
       const { name } = message.payload as { name: string };
       await deleteSkill(name);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'SET_SKILL_ENABLED': {
+      const { name, enabled } = message.payload as { name: string; enabled: boolean };
+      await setSkillEnabled(name, enabled);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'PREVIEW_GITHUB_SKILL_SOURCE': {
+      const { url } = message.payload as { url: string };
+      return previewGitHubSkillSource(url);
+    }
+
+    case 'IMPORT_GITHUB_SKILL_SOURCE': {
+      const result = await importGitHubSkillSource(message.payload as GitHubSkillImportRequest);
+      await broadcastStateUpdate(sender.tab?.id);
+      return result;
+    }
+
+    case 'CHECK_GITHUB_SKILL_SOURCE_UPDATES': {
+      const { sourceId } = message.payload as { sourceId: string };
+      return checkGitHubSkillSourceUpdates(sourceId);
+    }
+
+    case 'UPDATE_GITHUB_SKILL_SOURCE': {
+      const { sourceId } = message.payload as { sourceId: string };
+      const result = await updateGitHubSkillSource(sourceId);
+      await broadcastStateUpdate(sender.tab?.id);
+      return result;
+    }
+
+    case 'DELETE_GITHUB_SKILL_SOURCE': {
+      const { sourceId } = message.payload as { sourceId: string };
+      await deleteGitHubSkillSource(sourceId);
       await broadcastStateUpdate(sender.tab?.id);
       return { ok: true };
     }
@@ -560,6 +658,7 @@ async function handleMessage(
       await Promise.all([
         replaceAllMemories(snapshot.memories),
         replaceAllCustomSkills(snapshot.skills),
+        replaceAllSkillSources(snapshot.skillSources),
         replaceAllPresets(snapshot.presets),
       ]);
 
@@ -602,6 +701,56 @@ async function handleMessage(
       const newHeaders = await loadClientHeadersFromStorage();
       broadcastToTabs({ type: 'AUTH_STATUS_CHANGED', hasToken: !!newHeaders }).catch(() => {});
       return { ok: true };
+    }
+
+    case 'GET_AUTOMATIONS':
+      return getAllAutomations();
+
+    case 'GET_AUTOMATION_RUNS': {
+      const { automationId, limit } = message.payload as { automationId: string; limit?: number };
+      return getAutomationRuns({ automationId, limit });
+    }
+
+    case 'CREATE_AUTOMATION': {
+      const input = message.payload as AutomationCreateInput;
+      validateAutomationInput(input);
+      const automation = await createAutomation(input);
+      const refreshed = await refreshAutomationNextRunAt(automation.id);
+      await broadcastAutomationUpdate(sender.tab?.id);
+      return refreshed ?? automation;
+    }
+
+    case 'UPDATE_AUTOMATION': {
+      const { id, patch } = message.payload as { id: string; patch: AutomationUpdateInput };
+      validateAutomationPatch(patch);
+      const automation = await updateAutomation(id, patch);
+      if (!automation) return { ok: false, error: 'automation_not_found' };
+      const refreshed = await refreshAutomationNextRunAt(id);
+      await broadcastAutomationUpdate(sender.tab?.id);
+      return refreshed ?? automation;
+    }
+
+    case 'SET_AUTOMATION_STATUS': {
+      const { id, status } = message.payload as { id: string; status: AutomationStatus };
+      if (!isAutomationStatus(status)) return { ok: false, error: 'invalid_automation_status' };
+      const automation = await setAutomationStatus(id, status);
+      if (!automation) return { ok: false, error: 'automation_not_found' };
+      const refreshed = await refreshAutomationNextRunAt(id);
+      await broadcastAutomationUpdate(sender.tab?.id);
+      return refreshed ?? automation;
+    }
+
+    case 'DELETE_AUTOMATION': {
+      const { id } = message.payload as { id: string };
+      await deleteAutomation(id);
+      await broadcastAutomationUpdate(sender.tab?.id);
+      await broadcastAutomationRunsUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'RUN_AUTOMATION_NOW': {
+      const { id } = message.payload as { id: string };
+      return runAutomationNow(id, sender.tab?.id);
     }
 
     case 'SCENARIOS_UPDATED':
@@ -663,16 +812,112 @@ async function broadcastToolCallHistoryUpdate(excludeTabId?: number) {
   await broadcastToTabs({ type: 'TOOL_CALL_HISTORY_UPDATED' }, excludeTabId);
 }
 
-async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
-  const [memories, allSkills, presets] = await Promise.all([
+async function broadcastAutomationUpdate(excludeTabId?: number) {
+  const automations = await getAllAutomations();
+  await broadcastToTabs({ type: 'AUTOMATIONS_UPDATED', automations }, excludeTabId);
+}
+
+async function broadcastAutomationRunsUpdate(excludeTabId?: number) {
+  await broadcastToTabs({ type: 'AUTOMATION_RUNS_UPDATED' }, excludeTabId);
+}
+
+async function scanDueAutomationsFromWake() {
+  const result = await scanDueAutomations(executeAutomationWithContext);
+  if (result.initialized > 0 || result.started > 0 || result.failed > 0) {
+    await broadcastAutomationUpdate();
+  }
+  if (result.started > 0 || result.failed > 0) {
+    await broadcastAutomationRunsUpdate();
+    await broadcastToolCallHistoryUpdate();
+  }
+  return result;
+}
+
+async function runAutomationNow(id: string, excludeTabId?: number) {
+  const automation = await getAutomationById(id);
+  if (!automation) return { ok: false, error: 'automation_not_found' };
+
+  const run = await runAutomation({
+    automationId: id,
+    trigger: 'manual',
+    scheduledFor: null,
+    executor: executeAutomationWithContext,
+  });
+
+  await broadcastAutomationUpdate(excludeTabId);
+  await broadcastAutomationRunsUpdate(excludeTabId);
+  await broadcastToolCallHistoryUpdate(excludeTabId);
+
+  return run ?? { ok: false, error: 'automation_already_running' };
+}
+
+async function executeAutomationWithContext(
+  request: AutomationRunnerRequest,
+): Promise<AutomationRunnerResult> {
+  const [memories, activePreset, toolDescriptors] = await Promise.all([
     getAllMemories(),
-    getAllSkills(),
+    getActivePreset(),
+    getRuntimeToolDescriptors(),
+  ]);
+  const enabledDescriptors = toolDescriptors.filter((descriptor) => descriptor.execution.enabled);
+
+  return runDeepSeekAutomation({
+    ...request,
+    promptContext: {
+      memories,
+      presetContent: activePreset?.content ?? null,
+      toolDescriptors: enabledDescriptors,
+    },
+  }, {
+    executeToolCall: (call) => executeRuntimeToolCall(call, 'automation'),
+  });
+}
+
+function validateAutomationInput(input: AutomationCreateInput) {
+  if (!input || typeof input !== 'object') throw new Error('Invalid automation input');
+  validateNonEmptyString(input.name, 'Automation name');
+  validateNonEmptyString(input.prompt, 'Automation prompt');
+  validateAutomationScheduleInput(input.schedule);
+}
+
+function validateAutomationPatch(patch: AutomationUpdateInput) {
+  if (!patch || typeof patch !== 'object') throw new Error('Invalid automation patch');
+  if (patch.name !== undefined) validateNonEmptyString(patch.name, 'Automation name');
+  if (patch.prompt !== undefined) validateNonEmptyString(patch.prompt, 'Automation prompt');
+  if (patch.status !== undefined && !isAutomationStatus(patch.status)) {
+    throw new Error('Invalid automation status');
+  }
+  if (patch.schedule !== undefined) validateAutomationScheduleInput(patch.schedule);
+}
+
+function validateAutomationScheduleInput(schedule: AutomationCreateInput['schedule']) {
+  if (!schedule || typeof schedule !== 'object') throw new Error('Invalid automation schedule');
+  const result = validateAutomationSchedule(schedule);
+  if (!result.ok) throw new Error(result.error.message);
+}
+
+function validateNonEmptyString(value: unknown, label: string) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} is required`);
+  }
+}
+
+function isAutomationStatus(status: unknown): status is AutomationStatus {
+  return status === 'active' || status === 'paused' || status === 'archived';
+}
+
+async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
+  const [memories, userSkills, skillSources, presets] = await Promise.all([
+    getAllMemories(),
+    getUserSkills(),
+    getAllSkillSources(),
     getAllPresets(),
   ]);
 
   return {
     memories: memories.map(({ id, ...memory }) => memory),
-    skills: allSkills.filter((skill) => skill.source === 'custom'),
+    skills: userSkills,
+    skillSources,
     presets,
   };
 }
@@ -681,15 +926,17 @@ async function uploadSyncDataSnapshot(config: SyncConfig, snapshot: SyncDataSnap
   await Promise.all([
     webdavPut(config, 'memories.json', JSON.stringify(snapshot.memories)),
     webdavPut(config, 'skills.json', JSON.stringify(snapshot.skills)),
+    webdavPut(config, 'skill-sources.json', JSON.stringify(snapshot.skillSources)),
     webdavPut(config, 'presets.json', JSON.stringify(snapshot.presets)),
   ]);
 }
 
 async function getRemoteSyncDataSnapshot(config: SyncConfig): Promise<SyncDataSnapshot> {
-  const [remoteMemJson, remoteSkillJson, remotePresetJson] = await Promise.all([
+  const [remoteMemJson, remoteSkillJson, remotePresetJson, remoteSkillSourceJson] = await Promise.all([
     webdavGetRequired(config, 'memories.json'),
     webdavGetRequired(config, 'skills.json'),
     webdavGetRequired(config, 'presets.json'),
+    webdavGet(config, 'skill-sources.json'),
   ]);
 
   const memories = parseRemoteArray<Memory>('memories.json', remoteMemJson)
@@ -698,6 +945,9 @@ async function getRemoteSyncDataSnapshot(config: SyncConfig): Promise<SyncDataSn
   return {
     memories,
     skills: parseRemoteArray<Skill>('skills.json', remoteSkillJson),
+    skillSources: remoteSkillSourceJson === null
+      ? []
+      : parseRemoteArray<GitHubSkillSource>('skill-sources.json', remoteSkillSourceJson),
     presets: parseRemoteArray<SystemPromptPreset>('presets.json', remotePresetJson),
   };
 }
@@ -754,15 +1004,18 @@ async function handleChatSubmitPrompt(
       chatParentMessageId = null;
     }
 
-    const [memories, activePreset] = await Promise.all([
+    const [memories, activePreset, toolDescriptors] = await Promise.all([
       getAllMemories(),
       getActivePreset(),
+      getRuntimeToolDescriptors(),
     ]);
+
+    const enabledDescriptors = toolDescriptors.filter((t) => t.execution.enabled);
 
     const { augmented } = buildPromptAugmentation(prompt, {
       memories,
       presetContent: activePreset?.content ?? null,
-      toolDescriptors: [],
+      toolDescriptors: enabledDescriptors,
       thinkingEnabled: options?.thinkingEnabled ?? false,
     });
 
@@ -780,16 +1033,7 @@ async function handleChatSubmitPrompt(
       powHeaders,
     };
 
-    const turn = await submitPromptStreaming(initialInput, {
-      onTextChunk(newText: string, _fullText: string) {
-        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
-      },
-      onStatusChange(status) {
-        broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
-      },
-    });
-    chatParentMessageId = turn.responseMessageId;
-    broadcastChatChunk({ text: '', done: true }, excludeTabId);
+    await runSidepanelToolLoop(initialInput, enabledDescriptors, excludeTabId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
@@ -843,7 +1087,7 @@ async function runSidepanelToolLoop(
     const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
-      broadcastChatChunk({ text: '', done: true }, excludeTabId);
+      broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
       return;
     }
 

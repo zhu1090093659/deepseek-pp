@@ -1,10 +1,47 @@
-# DeepSeek++
+# DeepSeek++ - DeepSeek 浏览器插件与 AI Agent 工具平台
 
-为 [DeepSeek](https://chat.deepseek.com) 网页版注入 **类原生工具调用**、**内置网络工具**、**MCP 工具系统**、**Agentic 记忆系统**、**Skill 技能系统**、**系统提示词预设**、**Agent 式持续执行** 和 **自动化任务** 的 Chrome / Edge / Firefox 扩展。
+DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome / Edge / Firefox 浏览器扩展，为 DeepSeek 注入 **侧边栏对话**、**类原生工具调用**、**内置网络工具**、**MCP 工具系统**、**Agentic 记忆系统**、**Skill 技能系统**、**系统提示词预设**、**Agent 式持续执行** 和 **自动化任务**。
 
-让 DeepSeek 像支持原生 tools 一样自动执行记忆保存、更新、删除、网络搜索、网页获取和 MCP 工具调用，拥有跨对话长期记忆，并通过 `/skill` 指令一键切换专家模式。Agent 式持续执行让模型像 Claude Code / Codex 一样，在工具调用、结果回传和下一步生成之间持续推进任务；自动化任务则负责把固定任务放进独立会话里立即触发或按计划触发。
+English: DeepSeek++ is a DeepSeek browser extension for AI agent workflows, long-term memory, MCP tools, web search, Skills, system prompts, automation, and side-panel chat.
+
+让 DeepSeek 像支持原生 tools 一样自动执行记忆保存、更新、删除、网络搜索、网页获取和 MCP 工具调用，拥有跨对话长期记忆，并通过 `/skill` 指令一键切换专家模式。侧边栏可以直接发起对话，也可以把网页选中文本送入对话；Agent 式持续执行让模型像 Claude Code / Codex 一样，在工具调用、结果回传和下一步生成之间持续推进任务；自动化任务则负责把固定任务放进独立会话里立即触发或按计划触发。
+
+## 目录
+
+- [功能速览](#功能速览)
+- [适合场景](#适合场景)
+- [核心功能](#核心功能)
+- [0.6.0 变更回顾](#060-变更回顾)
+- [安装](#安装)
+- [友情链接](#友情链接)
+
+## 功能速览
+
+| 需求 | DeepSeek++ 提供 |
+|------|----------------|
+| DeepSeek Chrome extension / DeepSeek 浏览器插件 | 在 DeepSeek 网页版中加入侧边栏对话、右键发送文本、工具执行结果展示和多浏览器支持。 |
+| DeepSeek MCP tools | 在侧边栏管理 MCP 服务、工具权限和执行状态，并把工具结果带回同一会话继续生成。 |
+| DeepSeek memory / 长期记忆 | 自动保存、筛选和注入长期记忆，让不同对话可以复用用户偏好、项目背景和常用信息。 |
+| DeepSeek Skills / `/skill` 工作流 | 通过内置、自定义或 GitHub 导入的 Skill 快速切换专家模式和任务模板。 |
+| DeepSeek automation / 自动化任务 | 把固定任务放入独立 DeepSeek 会话，支持立即运行、定时触发、状态追踪和手动停止。 |
+| DeepSeek web search / 网页获取 | 在需要实时信息或指定网页内容时搜索互联网、读取网页文本，并继续生成最终回答。 |
+
+## 适合场景
+
+- 希望把 DeepSeek 网页版扩展成带工具调用、MCP、记忆和自动化能力的 AI agent 工作台。
+- 希望在 Chrome、Edge 或 Firefox 中直接使用 DeepSeek 侧边栏对话、网页文本发送和固定场景 prompt。
+- 希望把项目背景、个人偏好、常用工作流和文档处理能力沉淀为长期记忆与可复用 Skill。
+- 希望让 DeepSeek 处理需要多步工具执行、联网搜索、网页读取或定时跟踪的任务。
 
 ## 核心功能
+
+### 侧边栏对话
+
+- **可选对话入口** — 在设置页启用后，侧边栏会显示「对话」页，可直接向 DeepSeek 发消息
+- **右键发送文本** — 在网页中选中文本后右键发送到侧边栏对话，适合快速解释、总结或改写页面内容
+- **右键场景** — 可以配置常用场景模板，把选中文本套入固定 prompt 后送入对话
+- **独立新会话** — 侧边栏对话支持新建会话，减少和当前页面已有对话互相干扰
+- **流式展示** — 回复会在侧边栏内持续渲染，登录状态缺失时会提示先回到 DeepSeek 页面完成登录
 
 ### 类原生工具调用
 
@@ -55,7 +92,7 @@
 
 ### MCP 工具系统
 
-- **支持多种传输方式** — 支持 Streamable HTTP、SSE、本地 stdio bridge 和浏览器 Native Messaging
+- **灵活接入** — 可添加远程或本机 MCP 服务，适合连接浏览器侧工具、本机命令和团队已有工具
 - **默认自动执行** — 新增 MCP 服务默认自动执行，可在侧边栏按服务或单个工具切换为手动
 - **权限管理** — 侧边栏可直接授权、测试连接、刷新工具和查看状态
 - **结果自动回传** — 工具执行完成后，结果自动发回同一会话继续生成，实现多轮工具调用
@@ -107,6 +144,9 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
 
 - **内置技能** — 预设多组开箱即用的技能，包含通用协作技能和 OfficeCLI 官方文档技能
 - **自定义技能** — 在侧边栏创建专属技能，定义系统指令和参数
+- **GitHub 导入** — 支持从 GitHub 仓库、目录或单个 `SKILL.md` 链接预览并导入第三方 Skill
+- **来源与更新** — GitHub 导入的 Skill 会显示来源仓库、版本、license、同步时间，并支持检查和同步上游更新
+- **启用控制** — 自定义和 GitHub 导入的 Skill 可以单独启用、停用或删除，不影响本地其他 Skill
 - **`/` 触发** — 在聊天框输入 `/` 弹出自动补全面板，选择技能后自动注入对应的 system prompt
 - **记忆联动** — 技能可选择是否同时注入记忆上下文
 
@@ -136,7 +176,25 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
   <img src="assets/screenshot-sidepanel-automation.svg" width="300" alt="自动化任务侧边栏">
 </p>
 
-## 0.5.1 变更回顾
+## 0.6.0 变更回顾
+
+0.6.0 是侧边栏对话和 Skill 工作流增强版本，重点让 DeepSeek++ 从增强网页对话，推进到可在侧边栏直接发起任务、管理自定义 Skill 并从 GitHub 导入 Skill。
+
+| 方向 | 主要变化 |
+|------|----------|
+| 侧边栏对话 | 设置页启用后，侧边栏新增「对话」页，可直接发消息、新建会话并流式查看回复。 |
+| 右键场景 | 选中网页文本后可右键发送到侧边栏对话，也可套用自定义场景模板。 |
+| Skill 管理 | 自定义 Skill 支持编辑、启用、停用和删除，便于持续维护本地技能库。 |
+| GitHub 导入 | 支持从 GitHub 仓库、目录或单个 `SKILL.md` 预览并导入第三方 Skill。 |
+| 网页获取权限 | `web_fetch` 支持在需要时按站点授权，也可以在工具页批量授权网页来源。 |
+| 工具结果展示 | 修复工具输出归属到错误回复节点的问题，减少续跑过程中的结果错位。 |
+
+感谢本版本贡献者：[@todayzhou](https://github.com/todayzhou) 贡献侧边栏对话与右键场景，[@IjalG](https://github.com/IjalG) 贡献 `web_fetch` 授权体验。
+
+<details>
+<summary>展开 0.5.1 变更回顾</summary>
+
+### 0.5.1 变更回顾
 
 0.5.1 是内置网络工具版本，重点让 DeepSeek 在需要实时信息或网页内容时能直接搜索、获取并继续生成。
 
@@ -148,6 +206,8 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
 | 搜索稳定性 | 搜索结果为空时会继续尝试可用搜索源，避免把不可解析页面误判为成功。 |
 | 提示一致性 | 只有启用 `web_search` 时才注入搜索规则，关闭工具后不会继续诱导模型调用。 |
 | 输出展示 | 修复工具续跑完成后的重复正文渲染，保留步骤记录并只展示一次最终回答。 |
+
+</details>
 
 <details>
 <summary>展开 0.5.0 变更回顾</summary>

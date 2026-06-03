@@ -48,6 +48,12 @@ assertContains('entrypoints/sidepanel/App.tsx', "import('./pages/AutomationPage'
 assertContains('entrypoints/sidepanel/pages/AutomationPage.tsx', 'export default function AutomationPage');
 assertContains('core/automation/runner.ts', 'runDeepSeekAutomation');
 assertContains('core/automation/scheduler.ts', 'runAutomation');
+assertContains('wxt.config.ts', "'alarms'");
+assertContains('entrypoints/background.ts', 'chrome.alarms.create');
+assertContains('entrypoints/background.ts', 'chrome.alarms.onAlarm.addListener');
+assertContains('entrypoints/background.ts', 'scanDueAutomations');
+assertContains('entrypoints/background.ts', "case 'CREATE_AUTOMATION'");
+assertContains('entrypoints/background.ts', "case 'RUN_AUTOMATION_NOW'");
 assertContains('entrypoints/content.ts', 'START_INLINE_AGENT_LOOP');
 assertContains('entrypoints/content.ts', 'restorePersistedInlineAgentTraces');
 assertContains('entrypoints/main-world.content.ts', 'runInlineAgentLoop');

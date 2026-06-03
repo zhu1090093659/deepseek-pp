@@ -28,6 +28,7 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
+  // Consume pending text from right-click on mount + register live callback
   useEffect(() => {
     const text = consumePendingText();
     if (text) {

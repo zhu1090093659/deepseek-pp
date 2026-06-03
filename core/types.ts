@@ -120,7 +120,33 @@ export interface SyncCounts {
   presets: number;
 }
 
-export type SkillSource = 'builtin' | 'official' | 'custom';
+export type SkillSource = 'builtin' | 'official' | 'custom' | 'remote';
+
+export interface RemoteSkillFile {
+  path: string;
+  bytes: number;
+}
+
+export interface RemoteSkillMetadata {
+  provider: 'github';
+  sourceId: string;
+  sourceUrl: string;
+  repository: string;
+  ref: string;
+  commitSha: string;
+  path: string;
+  originalName: string;
+  importedAt: number;
+  updatedAt: number;
+  lastCheckedAt?: number;
+  licenseName?: string;
+  licenseSpdxId?: string;
+  upstreamVersion?: string;
+  upstreamUpdatedAt?: string;
+  includedFiles: RemoteSkillFile[];
+  omittedFiles: RemoteSkillFile[];
+  warnings: string[];
+}
 
 export interface Skill {
   name: string;
@@ -128,7 +154,84 @@ export interface Skill {
   instructions: string;
   source: SkillSource;
   memoryEnabled: boolean;
+  enabled?: boolean;
   metadata?: Record<string, string>;
+  remote?: RemoteSkillMetadata;
+}
+
+export type SaveSkillPayload = Skill | { skill: Skill; previousName?: string };
+
+export interface GitHubSkillSource {
+  id: string;
+  provider: 'github';
+  url: string;
+  owner: string;
+  repo: string;
+  repository: string;
+  ref: string;
+  rootPath: string;
+  commitSha: string;
+  defaultBranch: string;
+  repoUrl: string;
+  licenseName?: string;
+  licenseSpdxId?: string;
+  packageVersion?: string;
+  description?: string;
+  skillPaths: string[];
+  importedSkillNames: string[];
+  importedAt: number;
+  updatedAt: number;
+  lastCheckedAt?: number;
+}
+
+export interface GitHubSkillPreviewItem {
+  path: string;
+  name: string;
+  importName: string;
+  description: string;
+  version?: string;
+  lastUpdated?: string;
+  bytes: number;
+  bodyBytes: number;
+  includedFiles: RemoteSkillFile[];
+  omittedFiles: RemoteSkillFile[];
+  warnings: string[];
+  nameChanged: boolean;
+  existingSkillName?: string;
+  existingSourceId?: string;
+}
+
+export interface GitHubSkillPreview {
+  source: GitHubSkillSource;
+  skills: GitHubSkillPreviewItem[];
+  warnings: string[];
+  truncated: boolean;
+}
+
+export interface GitHubSkillImportRequest {
+  url: string;
+  selectedPaths: string[];
+}
+
+export interface GitHubSkillImportResult {
+  ok: true;
+  source: GitHubSkillSource;
+  imported: Skill[];
+  replaced: number;
+  renamed: number;
+  warnings: string[];
+}
+
+export interface GitHubSkillUpdatePreview {
+  source: GitHubSkillSource;
+  latestCommitSha: string;
+  latestVersion?: string;
+  hasUpdates: boolean;
+  changedPaths: string[];
+  missingPaths: string[];
+  newPaths: string[];
+  warnings: string[];
+  checkedAt: number;
 }
 
 export interface SkillInvocation {
@@ -189,11 +292,19 @@ export type MessageAction =
   | { type: 'GET_MEMORIES' }
   | { type: 'GET_MEMORY_BY_ID'; payload: { id: number } }
   | { type: 'GET_SKILLS' }
+  | { type: 'GET_SKILL_LIBRARY' }
+  | { type: 'GET_GITHUB_SKILL_SOURCES' }
+  | { type: 'PREVIEW_GITHUB_SKILL_SOURCE'; payload: { url: string } }
+  | { type: 'IMPORT_GITHUB_SKILL_SOURCE'; payload: GitHubSkillImportRequest }
+  | { type: 'CHECK_GITHUB_SKILL_SOURCE_UPDATES'; payload: { sourceId: string } }
+  | { type: 'UPDATE_GITHUB_SKILL_SOURCE'; payload: { sourceId: string } }
+  | { type: 'DELETE_GITHUB_SKILL_SOURCE'; payload: { sourceId: string } }
   | { type: 'SAVE_MEMORY'; payload: NewMemory }
   | { type: 'DELETE_MEMORY'; payload: { id: number } }
   | { type: 'UPDATE_MEMORY'; payload: Memory }
-  | { type: 'SAVE_SKILL'; payload: Skill }
+  | { type: 'SAVE_SKILL'; payload: SaveSkillPayload }
   | { type: 'DELETE_SKILL'; payload: { name: string } }
+  | { type: 'SET_SKILL_ENABLED'; payload: { name: string; enabled: boolean } }
   | { type: 'GET_PRESETS' }
   | { type: 'SAVE_PRESET'; payload: SystemPromptPreset }
   | { type: 'DELETE_PRESET'; payload: { id: string } }
