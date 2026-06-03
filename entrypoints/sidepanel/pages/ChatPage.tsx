@@ -9,8 +9,24 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [hasToken, setHasToken] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [searchEnabled, setSearchEnabled] = useState(true);
+  const [modelType, setModelType] = useState<'expert' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load persisted mode settings on mount
+  useEffect(() => {
+    chrome.runtime.sendMessage({ type: 'GET_CHAT_MODES' })
+      .then((modes: { thinkingEnabled?: boolean; searchEnabled?: boolean; modelType?: 'expert' | null } | undefined) => {
+        if (modes) {
+          if (modes.thinkingEnabled !== undefined) setThinkingEnabled(modes.thinkingEnabled);
+          if (modes.searchEnabled !== undefined) setSearchEnabled(modes.searchEnabled);
+          if (modes.modelType !== undefined) setModelType(modes.modelType);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Consume pending text from right-click on mount + register live callback
   useEffect(() => {
@@ -36,7 +52,7 @@ export default function ChatPage() {
 
   // Listen for streaming chunks and incoming text
   useEffect(() => {
-    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean }) => {
+    const handler = (msg: { type: string; text?: string; done?: boolean; error?: string; hasToken?: boolean; status?: string }) => {
       if (msg.type === 'CHAT_SET_INPUT_TEXT' && typeof msg.text === 'string') {
         setInputText(msg.text);
         inputRef.current?.focus();
@@ -56,13 +72,15 @@ export default function ChatPage() {
           setIsStreaming(false);
           return;
         }
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === 'assistant') {
-            return [...prev.slice(0, -1), { role: 'assistant', text: last.text + (msg.text ?? '') }];
-          }
-          return [...prev, { role: 'assistant', text: msg.text ?? '' }];
-        });
+        if (msg.text) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant') {
+              return [...prev.slice(0, -1), { role: 'assistant', text: last.text + (msg.text ?? '') }];
+            }
+            return [...prev, { role: 'assistant', text: msg.text ?? '' }];
+          });
+        }
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -85,7 +103,7 @@ export default function ChatPage() {
     setIsStreaming(true);
     setError(null);
 
-    chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text } })
+    chrome.runtime.sendMessage({ type: 'CHAT_SUBMIT_PROMPT', payload: { text, thinkingEnabled, searchEnabled, modelType } })
       .catch((err: Error) => {
         setError(err.message);
         setIsStreaming(false);
@@ -125,14 +143,79 @@ export default function ChatPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid var(--ds-border)' }}>
         <span className="text-sm font-medium" style={{ color: 'var(--ds-text)' }}>对话</span>
-        <button
-          onClick={newSession}
-          className="text-xs px-2.5 py-1 rounded-md"
-          style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
-          title="新建会话"
-        >
-          新建
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              const next = !thinkingEnabled;
+              setThinkingEnabled(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { thinkingEnabled: next } }).catch(() => {});
+            }}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: thinkingEnabled ? 'var(--ds-purple)' : 'var(--ds-text-tertiary)',
+              background: thinkingEnabled ? 'var(--ds-purple-bg)' : 'var(--ds-surface)',
+              border: thinkingEnabled ? '1px solid var(--ds-purple-border)' : '1px solid transparent',
+            }}
+            title="深度思考"
+          >
+            思考
+          </button>
+          <button
+            onClick={() => {
+              const next = !searchEnabled;
+              setSearchEnabled(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { searchEnabled: next } }).catch(() => {});
+            }}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: searchEnabled ? 'var(--ds-info)' : 'var(--ds-text-tertiary)',
+              background: searchEnabled ? 'var(--ds-info-bg)' : 'var(--ds-surface)',
+              border: searchEnabled ? '1px solid var(--ds-info-border)' : '1px solid transparent',
+            }}
+            title="联网搜索"
+          >
+            搜索
+          </button>
+          <button
+            onClick={() => {
+              const next = modelType === 'expert' ? null : 'expert';
+              setModelType(next);
+              chrome.runtime.sendMessage({ type: 'SET_CHAT_MODES', payload: { modelType: next } }).catch(() => {});
+            }}
+            className="text-xs px-2 py-0.5 rounded-md"
+            style={{
+              color: modelType === 'expert' ? 'var(--ds-warning)' : 'var(--ds-text-tertiary)',
+              background: modelType === 'expert' ? 'var(--ds-warning-bg)' : 'var(--ds-surface)',
+              border: modelType === 'expert' ? '1px solid var(--ds-warning-border)' : '1px solid transparent',
+            }}
+            title="专家模式"
+          >
+            专家
+          </button>
+          <button
+            onClick={newSession}
+            className="text-xs px-2.5 py-1 rounded-md"
+            style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
+            title="新建会话"
+          >
+            新建
+          </button>
+          <button
+            onClick={async () => {
+              const resp = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_SESSION' }).catch(() => ({}));
+              if (resp?.sessionId) {
+                chrome.tabs.create({ url: `https://chat.deepseek.com/a/chat/s/${resp.sessionId}` });
+              } else {
+                setError('请先发送一条消息');
+              }
+            }}
+            className="text-xs px-2.5 py-1 rounded-md"
+            style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-surface)' }}
+            title="跳转到官网对话"
+          >
+            跳转
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -149,6 +232,15 @@ export default function ChatPage() {
             isStreaming={isStreaming && i === messages.length - 1 && msg.role === 'assistant'}
           />
         ))}
+        {isStreaming && messages[messages.length - 1]?.role === 'user' && (
+          <div className="flex items-center justify-center gap-2 py-4 text-xs" style={{ color: 'var(--ds-text-tertiary)' }}>
+            <span className="inline-block w-3 h-3 rounded-full animate-spin" style={{
+              border: '2px solid var(--ds-border)',
+              borderTopColor: 'var(--ds-blue)',
+            }} />
+            <span>思考中...</span>
+          </div>
+        )}
         {error && (
           <div className="text-xs text-red-400 text-center mt-2">{error}</div>
         )}

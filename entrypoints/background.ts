@@ -35,6 +35,7 @@ import {
   replaceAllPresets,
 } from '../core/preset/store';
 import { getModelType, setModelType } from '../core/model/store';
+import { getChatModes, setChatModes } from '../core/chat/mode-store';
 import { getDeepSeekTheme, saveDeepSeekTheme } from '../core/theme/store';
 import { getBackgroundConfig, saveBackgroundConfig, clearBackgroundConfig } from '../core/background/store';
 import { getPetConfig, savePetConfig, clearPetConfig } from '../core/pet/store';
@@ -578,6 +579,15 @@ async function handleMessage(
       return { ok: true };
     }
 
+    case 'GET_CHAT_MODES':
+      return getChatModes();
+
+    case 'SET_CHAT_MODES': {
+      const modes = message.payload as Parameters<typeof setChatModes>[0];
+      await setChatModes(modes);
+      return { ok: true };
+    }
+
     case 'GET_BACKGROUND':
       return getBackgroundConfig();
 
@@ -659,13 +669,18 @@ async function handleMessage(
     }
 
     case 'CHAT_SUBMIT_PROMPT': {
-      const { text } = message.payload as { text: string };
+      const { text, thinkingEnabled, searchEnabled, modelType } = message.payload as {
+        text: string;
+        thinkingEnabled?: boolean;
+        searchEnabled?: boolean;
+        modelType?: string | null;
+      };
       if (!(await getChatEnabled())) {
         return { ok: false, error: 'chat_disabled' };
       }
       if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
       // Fire and forget — the streaming response is broadcast
-      handleChatSubmitPrompt(text, sender.tab?.id).catch(() => {});
+      handleChatSubmitPrompt(text, sender.tab?.id, { thinkingEnabled, searchEnabled, modelType }).catch(() => {});
       return { ok: true };
     }
 
@@ -673,6 +688,9 @@ async function handleMessage(
       chatSessionId = null;
       chatParentMessageId = null;
       return { ok: true };
+
+    case 'GET_CURRENT_SESSION':
+      return { sessionId: chatSessionId };
 
     case 'GET_AUTH_STATUS': {
       const headers = await loadClientHeadersFromStorage();
@@ -965,7 +983,15 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
   };
 }
 
-async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
+async function handleChatSubmitPrompt(
+  prompt: string,
+  excludeTabId?: number,
+  options?: {
+    thinkingEnabled?: boolean;
+    searchEnabled?: boolean;
+    modelType?: string | null;
+  },
+) {
   const headers = await loadClientHeadersFromStorage();
   if (!headers) {
     broadcastChatChunk({ text: '', done: true, error: '请先在 chat.deepseek.com 登录并发送一条消息以获取认证信息' }, excludeTabId);
@@ -978,19 +1004,16 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
       chatParentMessageId = null;
     }
 
-    const [memories, activePreset, toolDescriptors] = await Promise.all([
+    const [memories, activePreset] = await Promise.all([
       getAllMemories(),
       getActivePreset(),
-      getRuntimeToolDescriptors(),
     ]);
-
-    const enabledDescriptors = toolDescriptors.filter((t) => t.execution.enabled);
 
     const { augmented } = buildPromptAugmentation(prompt, {
       memories,
       presetContent: activePreset?.content ?? null,
-      toolDescriptors: enabledDescriptors,
-      thinkingEnabled: false,
+      toolDescriptors: [],
+      thinkingEnabled: options?.thinkingEnabled ?? false,
     });
 
     const powHeaders = await createPowHeaders(headers);
@@ -998,16 +1021,25 @@ async function handleChatSubmitPrompt(prompt: string, excludeTabId?: number) {
     const initialInput = {
       chatSessionId,
       parentMessageId: chatParentMessageId,
-      modelType: null,
+      modelType: options?.modelType ?? null,
       prompt: augmented,
       refFileIds: [],
-      thinkingEnabled: false,
-      searchEnabled: false,
+      thinkingEnabled: options?.thinkingEnabled ?? false,
+      searchEnabled: options?.searchEnabled ?? false,
       clientHeaders: headers,
       powHeaders,
     };
 
-    await runSidepanelToolLoop(initialInput, enabledDescriptors, excludeTabId);
+    const turn = await submitPromptStreaming(initialInput, {
+      onTextChunk(newText: string, _fullText: string) {
+        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
+      },
+      onStatusChange(status) {
+        broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
+      },
+    });
+    chatParentMessageId = turn.responseMessageId;
+    broadcastChatChunk({ text: '', done: true }, excludeTabId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
@@ -1043,6 +1075,9 @@ async function runSidepanelToolLoop(
         accumulated = fullText;
         broadcastChatChunk({ text: newText, done: false }, excludeTabId);
       },
+      onStatusChange(status) {
+        broadcastChatChunk({ text: '', done: false, status }, excludeTabId);
+      },
     });
 
     chatParentMessageId = turn.responseMessageId;
@@ -1053,6 +1088,8 @@ async function runSidepanelToolLoop(
       return;
     }
 
+
+    // 从完整文本中检测工具调用（思考部分也可能包含工具调用）
     const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
 
     if (toolCalls.length === 0) {
@@ -1094,7 +1131,7 @@ async function runSidepanelToolLoop(
 }
 
 function broadcastChatChunk(
-  chunk: { text: string; done: boolean; error?: string },
+  chunk: { text: string; done: boolean; error?: string; status?: 'thinking' | 'responding' },
   excludeTabId?: number,
 ) {
   chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});

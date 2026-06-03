@@ -327,6 +327,8 @@ export type MessageAction =
   | { type: 'SET_DEEPSEEK_THEME'; payload: { theme: DeepSeekTheme } }
   | { type: 'GET_MODEL_TYPE' }
   | { type: 'SET_MODEL_TYPE'; payload: ModelType }
+  | { type: 'GET_CHAT_MODES' }
+  | { type: 'SET_CHAT_MODES'; payload: Partial<import('./chat/mode-store').ChatModes> }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
   | { type: 'MEMORIES_UPDATED' }
   | { type: 'WEBDAV_TEST'; payload: Omit<SyncConfig, 'lastSyncAt'> }
