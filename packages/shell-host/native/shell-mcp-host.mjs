@@ -311,8 +311,10 @@ function execCommand(command, { cwd, env, timeoutMs }) {
 }
 
 function createChildEnv(extraEnv) {
+  const explicitPath = getExplicitPathOverride(extraEnv);
   const env = extraEnv && typeof extraEnv === 'object' ? { ...process.env, ...extraEnv } : { ...process.env };
-  setEnvironmentPath(env, getEnvironmentPath(env) || getEnvironmentPath(process.env));
+  const pathValue = explicitPath !== null ? explicitPath : (getEnvironmentPath(env) || getEnvironmentPath(process.env));
+  setEnvironmentPath(env, pathValue);
   if (platform() === 'win32') {
     env.PYTHONUTF8 ??= '1';
     env.PYTHONIOENCODING ??= 'utf-8';
@@ -345,15 +347,28 @@ function splitPath(value) {
 }
 
 function getEnvironmentPath(env) {
+  const canonicalKey = platform() === 'win32' ? 'Path' : 'PATH';
+  if (typeof env[canonicalKey] === 'string') return env[canonicalKey];
   const key = Object.keys(env).find(name => name.toLowerCase() === 'path');
   return key ? env[key] || '' : '';
 }
 
 function setEnvironmentPath(env, value) {
-  const existingKey = Object.keys(env).find(name => name.toLowerCase() === 'path');
-  if (existingKey && existingKey !== 'PATH') delete env[existingKey];
-  env.PATH = value;
-  if (platform() === 'win32') env.Path = value;
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'path') delete env[key];
+  }
+  env[platform() === 'win32' ? 'Path' : 'PATH'] = value;
+}
+
+function getExplicitPathOverride(env) {
+  if (!env || typeof env !== 'object') return null;
+  let value = null;
+  for (const [key, candidate] of Object.entries(env)) {
+    if (key.toLowerCase() === 'path' && typeof candidate === 'string') {
+      value = candidate;
+    }
+  }
+  return value;
 }
 
 function dedupePathDirs(dirs) {

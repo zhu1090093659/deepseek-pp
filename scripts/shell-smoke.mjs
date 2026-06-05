@@ -166,6 +166,34 @@ await testMethod('tools/call shell_exec (unicode stdout)', 'tools/call', {
   assert(data.stdout.trim() === '中文路径-123', `expected unicode output, got "${data.stdout.trim()}"`);
 });
 
+{
+  const inheritedPath = process.env.Path || process.env.PATH || '';
+  const expectedPrefix = platform() === 'win32' ? 'C:\\deepseek-expected' : '/tmp/deepseek-expected';
+  const wrongPrefix = platform() === 'win32' ? 'C:\\deepseek-wrong' : '/tmp/deepseek-wrong';
+  const pathSep = platform() === 'win32' ? ';' : ':';
+  const command = platform() === 'win32'
+    ? 'Write-Output $env:Path'
+    : 'printf "%s\\n" "$PATH"';
+  const env = platform() === 'win32'
+    ? {
+        PATH: `${wrongPrefix}${pathSep}${inheritedPath}`,
+        Path: `${expectedPrefix}${pathSep}${inheritedPath}`,
+      }
+    : {
+        PATH: `${expectedPrefix}${pathSep}${inheritedPath}`,
+      };
+
+  await testMethod('tools/call shell_exec (PATH env override)', 'tools/call', {
+    name: 'shell_exec',
+    arguments: { command, env },
+  }, (res) => {
+    assert(res.result, 'expected result');
+    const data = res.result.structuredContent?.data;
+    assert(data?.exitCode === 0, `expected exitCode 0, got ${data?.exitCode}`);
+    assert(data.stdout.trim().startsWith(expectedPrefix), `expected PATH to start with ${expectedPrefix}, got "${data.stdout.trim()}"`);
+  });
+}
+
 if (platform() !== 'win32') {
   await testMethod('tools/call shell_exec (PATH order)', 'tools/call', {
     name: 'shell_exec',
