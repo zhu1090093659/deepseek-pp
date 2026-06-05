@@ -16,7 +16,7 @@ export const BUILTIN_SKILLS: Skill[] = [
 - 如果 shell 工具已出现在 Available Tools / MCP 工具列表中，直接输出对应 XML 工具标签调用。
 - 不要输出伪 JSON 调用；DeepSeek++ 只执行 <shell_exec>{"command":"..."}</shell_exec> 这种 XML 标签格式。
 - 不要猜测文件路径，先用 shell_status 判断平台和 shell，再用对应 shell 的目录命令确认实际路径。
-- Windows 默认 shell 是 PowerShell：列目录用 Get-ChildItem -Name "D:\\Documents\\Downloads"，不要把 CMD 的 dir /b 直接当 PowerShell 命令；确实需要 CMD 语法时显式运行 cmd.exe /c "..."。
+- Windows 默认 shell 是 PowerShell：列目录用 Get-ChildItem -LiteralPath "D:\\Documents\\Downloads\\CN" -File | Select-Object -ExpandProperty FullName，不要把 CMD 的 dir /b 直接当 PowerShell 命令；确实需要 CMD 语法时显式运行 cmd.exe /c "..."。
 - Windows 路径在 JSON 中使用双反斜杠或正斜杠，并在命令字符串里只包一层引号，例如 <shell_exec>{"command":"officecli view \\\"D:\\\\Documents\\\\Downloads\\\\123.docx\\\" text"}</shell_exec>。
 
 ## 使用流程

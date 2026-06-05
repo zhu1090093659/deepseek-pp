@@ -66,7 +66,12 @@ assertContains('scripts/shell-mcp-host.mjs', '../packages/shell-host/native/shel
 assertContains('scripts/install-shell-host.mjs', '../packages/shell-host/lib/installer.mjs');
 assertContains('packages/shell-host/package.json', 'deepseek-pp-shell-host');
 assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'shell_exec');
+assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'readWindowsUserMachinePathDirs');
+assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'WINDOWS_POWERSHELL_UTF8_PREAMBLE');
+assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'windowsVersion');
 assertContains('packages/shell-host/lib/installer.mjs', 'OFFICECLI_REQUIRED_HELP_PATTERNS');
+assertContains('.github/workflows/release.yml', 'npm publish --workspace packages/shell-host --access public');
+assertContains('.github/workflows/release.yml', 'NPM_TOKEN secret is required');
 assertNotContains('README.md', ['Agent', '任务'].join(' '));
 assertNotContains('README.md', ['screenshot-sidepanel', 'agent.svg'].join('-'));
 

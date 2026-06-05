@@ -136,6 +136,11 @@ await testMethod('tools/call shell_status', 'tools/call', {
   assert(data?.platform, 'expected platform in status');
   assert(data?.nodeVersion, 'expected nodeVersion');
   assert(data?.shell, 'expected shell in status');
+  assert(data?.osRelease, 'expected osRelease in status');
+  assert(Array.isArray(data?.pathEntries), 'expected pathEntries in status');
+  if (data.platform === 'win32') {
+    assert(data.windowsVersion, 'expected windowsVersion on Windows');
+  }
   reportedShell = data.shell;
 });
 
@@ -149,6 +154,16 @@ await testMethod('tools/call shell_exec (echo)', 'tools/call', {
   assert(data.exitCode === 0, `expected exitCode 0, got ${data.exitCode}`);
   assert(data.shell === reportedShell, `expected shell_exec shell ${data.shell} to match shell_status ${reportedShell}`);
   assert(data.stdout.trim() === 'hello_world', `expected hello_world, got "${data.stdout.trim()}"`);
+});
+
+await testMethod('tools/call shell_exec (unicode stdout)', 'tools/call', {
+  name: 'shell_exec',
+  arguments: { command: platform() === 'win32' ? 'Write-Output "中文路径-123"' : 'printf "中文路径-123\\n"' },
+}, (res) => {
+  assert(res.result, 'expected result');
+  const data = res.result.structuredContent?.data;
+  assert(data?.exitCode === 0, `expected exitCode 0, got ${data?.exitCode}`);
+  assert(data.stdout.trim() === '中文路径-123', `expected unicode output, got "${data.stdout.trim()}"`);
 });
 
 if (platform() !== 'win32') {

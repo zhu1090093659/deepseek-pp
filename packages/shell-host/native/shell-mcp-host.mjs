@@ -1,8 +1,16 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir, hostname, platform, arch } from 'node:os';
+import {
+  arch,
+  homedir,
+  hostname,
+  platform,
+  release as osRelease,
+  type as osType,
+  version as osVersion,
+} from 'node:os';
 import { existsSync } from 'node:fs';
 
 // Resolve package root from this script's location (native/ -> package root).
@@ -17,8 +25,8 @@ const localBinDirs = [
   resolve(PROJECT_ROOT, 'node_modules', '.bin'),
   resolve(PROJECT_ROOT, '..', '..', 'node_modules', '.bin'),
 ].filter(existsSync);
-const sep = platform() === 'win32' ? ';' : ':';
-const currentPath = process.env.PATH || (platform() === 'win32' ? '' : '/usr/bin:/bin');
+const PATH_SEPARATOR = platform() === 'win32' ? ';' : ':';
+const currentPath = getEnvironmentPath(process.env) || (platform() === 'win32' ? '' : '/usr/bin:/bin');
 const localAppData = process.env.LOCALAPPDATA || resolve(homedir(), 'AppData', 'Local');
 const userBinDirs = platform() === 'win32'
   ? [resolve(localAppData, 'OfficeCLI')]
@@ -28,13 +36,26 @@ const userBinDirs = platform() === 'win32'
       '/usr/local/bin',
     ];
 const managedPathDirs = new Set([nodeBinDir, ...localBinDirs, ...userBinDirs]);
-const existingPathDirs = currentPath.split(sep).filter(d => d && !managedPathDirs.has(d));
-process.env.PATH = [...new Set([nodeBinDir, ...userBinDirs, ...existingPathDirs, ...localBinDirs])].join(sep);
+const existingPathDirs = splitPath(currentPath).filter(d => !managedPathDirs.has(d));
+const hostPath = dedupePathDirs([
+  nodeBinDir,
+  ...userBinDirs,
+  ...readWindowsUserMachinePathDirs(),
+  ...existingPathDirs,
+  ...localBinDirs,
+]).join(PATH_SEPARATOR);
+setEnvironmentPath(process.env, hostPath);
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_BYTES = 128_000;
 const DEFAULT_SHELL = platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/sh';
+const WINDOWS_POWERSHELL_UTF8_PREAMBLE = [
+  '[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  '$OutputEncoding = [Console]::OutputEncoding',
+  'try { chcp.com 65001 > $null } catch {}',
+].join('; ');
 
 const TOOL_DEFINITIONS = [
   {
@@ -175,10 +196,16 @@ async function handleCallTool(id, params) {
         data: {
           platform: platform(),
           arch: arch(),
+          osType: osType(),
+          osRelease: osRelease(),
+          osVersion: osVersion(),
+          windowsVersion: getWindowsVersionLabel(),
           shell: DEFAULT_SHELL,
           cwd: homedir(),
           nodeVersion: process.version,
           hostname: hostname(),
+          path: getEnvironmentPath(process.env),
+          pathEntries: splitPath(getEnvironmentPath(process.env)),
         },
       },
     });
@@ -194,7 +221,7 @@ async function handleCallTool(id, params) {
     }
 
     const cwd = typeof args.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : homedir();
-    const env = args.env && typeof args.env === 'object' ? { ...process.env, ...args.env } : process.env;
+    const env = createChildEnv(args.env);
     const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms >= 1000
       ? Math.min(args.timeout_ms, 600_000)
       : DEFAULT_TIMEOUT_MS;
@@ -283,6 +310,16 @@ function execCommand(command, { cwd, env, timeoutMs }) {
   });
 }
 
+function createChildEnv(extraEnv) {
+  const env = extraEnv && typeof extraEnv === 'object' ? { ...process.env, ...extraEnv } : { ...process.env };
+  setEnvironmentPath(env, getEnvironmentPath(env) || getEnvironmentPath(process.env));
+  if (platform() === 'win32') {
+    env.PYTHONUTF8 ??= '1';
+    env.PYTHONIOENCODING ??= 'utf-8';
+  }
+  return env;
+}
+
 function createShellInvocation(command) {
   if (platform() === 'win32') {
     return {
@@ -292,12 +329,83 @@ function createShellInvocation(command) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        command,
+        `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${command}`,
       ],
     };
   }
 
   return { shellBin: DEFAULT_SHELL, shellArgs: ['-c', command] };
+}
+
+function splitPath(value) {
+  return (value || '')
+    .split(PATH_SEPARATOR)
+    .map(entry => entry.trim())
+    .filter(Boolean);
+}
+
+function getEnvironmentPath(env) {
+  const key = Object.keys(env).find(name => name.toLowerCase() === 'path');
+  return key ? env[key] || '' : '';
+}
+
+function setEnvironmentPath(env, value) {
+  const existingKey = Object.keys(env).find(name => name.toLowerCase() === 'path');
+  if (existingKey && existingKey !== 'PATH') delete env[existingKey];
+  env.PATH = value;
+  if (platform() === 'win32') env.Path = value;
+}
+
+function dedupePathDirs(dirs) {
+  const seen = new Set();
+  const result = [];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const key = platform() === 'win32'
+      ? dir.replace(/[\\/]+$/, '').toLowerCase()
+      : dir.replace(/\/+$/, '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(dir);
+  }
+  return result;
+}
+
+function readWindowsUserMachinePathDirs() {
+  if (platform() !== 'win32') return [];
+  const command = [
+    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+    "$paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User'))",
+    "$paths | Where-Object { $_ } | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) }",
+  ].join('; ');
+  try {
+    const out = execFileSync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      command,
+    ], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    return splitPath(out.replace(/\r?\n/g, PATH_SEPARATOR));
+  } catch (err) {
+    process.stderr.write(`[shell-mcp-host] Could not read Windows User/Machine PATH: ${err.message}\n`);
+    return [];
+  }
+}
+
+function getWindowsVersionLabel() {
+  if (platform() !== 'win32') return null;
+  const release = osRelease();
+  const parts = release.split('.').map(part => Number.parseInt(part, 10));
+  const build = parts[2] || 0;
+  if (parts[0] === 10 && build >= 22000) return `Windows 11 (${release})`;
+  if (parts[0] === 10) return `Windows 10 (${release})`;
+  return `Windows (${release})`;
 }
 
 function formatExecSummary(result) {

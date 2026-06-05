@@ -251,7 +251,7 @@ const DEEPSEEK_OFFICECLI_EXECUTION_GUARDRAILS = `你正在 DeepSeek++ 内使用 
 - 所有 OfficeCLI 操作都通过 shell_exec 执行，例如 <shell_exec>{"command":"${OFFICECLI_BIN_PATH} --version"}</shell_exec>。
 - 不要输出伪 JSON 调用；DeepSeek++ 只执行 <shell_exec>{"command":"..."}</shell_exec> 这种 XML 标签格式。
 - 首次处理 Office 文档时先调用 shell_status，之后必须使用返回的 shell 对应的命令语法。
-- Windows 默认 shell 是 PowerShell：列目录用 Get-ChildItem -Name，不要把 CMD 的 dir /b 或 Unix 的 which/sed/find 直接当 PowerShell 命令。
+- Windows 默认 shell 是 PowerShell：列目录用 Get-ChildItem -LiteralPath "D:\\Documents\\Downloads\\CN" -File | Select-Object -ExpandProperty FullName，不要把 CMD 的 dir /b 或 Unix 的 which/sed/find 直接当 PowerShell 命令。
 - Windows 路径在 JSON 中使用双反斜杠或正斜杠，并在命令字符串里只包一层引号，例如 <shell_exec>{"command":"${OFFICECLI_BIN_PATH} view \\\"D:\\\\Documents\\\\Downloads\\\\123.docx\\\" text"}</shell_exec>。
 - 禁止使用 \`officecli new pptx/docx/xlsx "标题" --prompt "..."\`、\`--mode fast\`、\`login\`、\`set-key\`、\`whoami\` 等 hosted AI 生成/账号命令。
 - 如果 \`${OFFICECLI_BIN_PATH} --help\` 只显示 \`new\`、\`doctor\`、\`login\`、\`set-key\`、\`config\`、\`upgrade\`，说明当前二进制是生成额度版；必须停止并说明需要安装/切换到命令版 OfficeCLI。

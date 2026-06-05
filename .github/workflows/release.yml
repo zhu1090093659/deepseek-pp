@@ -34,6 +34,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          registry-url: https://registry.npmjs.org
 
       - name: Setup Go for actionlint
         uses: actions/setup-go@v5
@@ -50,6 +51,44 @@ jobs:
 
       - name: Run release quality gates
         run: npm run ci:quality
+
+      - name: Publish Shell Host npm package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          VERSION="${TAG#v}"
+          ROOT_VERSION="$(node -p "require('./package.json').version")"
+          SHELL_VERSION="$(node -p "require('./packages/shell-host/package.json').version")"
+
+          if [ "$ROOT_VERSION" != "$VERSION" ]; then
+            echo "package.json version $ROOT_VERSION does not match release tag $TAG" >&2
+            exit 1
+          fi
+          if [ "$SHELL_VERSION" != "$VERSION" ]; then
+            echo "packages/shell-host/package.json version $SHELL_VERSION does not match release tag $TAG" >&2
+            exit 1
+          fi
+
+          PUBLISHED_VERSION="$(npm view "deepseek-pp-shell-host@$VERSION" version 2>/dev/null || true)"
+          if [ "$PUBLISHED_VERSION" = "$VERSION" ]; then
+            echo "deepseek-pp-shell-host@$VERSION is already published"
+            exit 0
+          fi
+
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN secret is required because deepseek-pp-shell-host@$VERSION is not published." >&2
+            exit 1
+          fi
+
+          npm publish --workspace packages/shell-host --access public
+          PUBLISHED_VERSION="$(npm view "deepseek-pp-shell-host@$VERSION" version 2>/dev/null || true)"
+          if [ "$PUBLISHED_VERSION" != "$VERSION" ]; then
+            echo "npm publish completed but registry does not expose deepseek-pp-shell-host@$VERSION" >&2
+            exit 1
+          fi
 
       - name: Locate packages
         id: package
