@@ -27,7 +27,7 @@
   <a href="#功能速览">功能速览</a> ·
   <a href="#适合场景">适合场景</a> ·
   <a href="#安装">安装</a> ·
-  <a href="#060-变更回顾">0.6.0 变更</a>
+  <a href="#061-变更回顾">0.6.1 变更</a>
 </p>
 
 DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome / Edge / Firefox 浏览器扩展，提供侧边栏对话、类原生工具调用、内置网络工具、MCP 工具系统、长期记忆、Skill、系统提示词预设、Agent 式持续执行和自动化任务。
@@ -39,7 +39,7 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome /
 - [功能速览](#功能速览)
 - [适合场景](#适合场景)
 - [核心功能](#核心功能)
-- [0.6.0 变更回顾](#060-变更回顾)
+- [0.6.1 变更回顾](#061-变更回顾)
 - [安装](#安装)
 - [友情链接](#友情链接)
 
@@ -204,7 +204,22 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
   <img src="assets/screenshot-sidepanel-automation.svg" width="300" alt="自动化任务侧边栏">
 </p>
 
-## 0.6.0 变更回顾
+## 0.6.1 变更回顾
+
+0.6.1 是自动化、Shell MCP 和侧边栏整理版本，重点提升定时任务可靠性、本机命令执行体验，以及侧边栏能力入口的可发现性。
+
+| 方向 | 主要变化 |
+|------|----------|
+| 自动化任务 | 定时任务现在会接入浏览器后台调度，适合持续追踪主题、固定提醒和周期性检查。 |
+| Shell MCP | Windows 环境下的命令执行和 OfficeCLI / Shell 技能提示更一致，减少跨平台使用时的路径与命令差异。 |
+| 侧边栏导航 | 能力相关入口整合到统一页面，侧边栏结构更清晰，查找 MCP、工具、Skill 和自动化能力更直接。 |
+| 多语言文档 | README 增加英文入口，便于英文用户快速了解安装方式和核心能力。 |
+| 发布保障 | 多浏览器发布包和源码包的校验更完整，降低缺包或版本不一致的发布风险。 |
+
+<details>
+<summary>展开 0.6.0 变更回顾</summary>
+
+### 0.6.0 变更回顾
 
 0.6.0 是侧边栏对话和 Skill 工作流增强版本，重点让 DeepSeek++ 从增强网页对话，推进到可在侧边栏直接发起任务、管理自定义 Skill 并从 GitHub 导入 Skill。
 
@@ -218,6 +233,8 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
 | 工具结果展示 | 修复工具输出归属到错误回复节点的问题，减少续跑过程中的结果错位。 |
 
 感谢本版本贡献者：[@todayzhou](https://github.com/todayzhou) 贡献侧边栏对话与右键场景，[@IjalG](https://github.com/IjalG) 贡献 `web_fetch` 授权体验。
+
+</details>
 
 <details>
 <summary>展开 0.5.1 变更回顾</summary>

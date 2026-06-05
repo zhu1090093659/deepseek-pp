@@ -2,7 +2,7 @@
   "name": "deepseek-plus-plus",
   "description": "Agentic memory, skills, agentic execution, automation, and MCP tools for DeepSeek",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "workspaces": [
     "packages/*"

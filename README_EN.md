@@ -27,7 +27,7 @@
   <a href="#feature-overview">Feature Overview</a> ·
   <a href="#use-cases">Use Cases</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="#060-release-highlights">0.6.0 Highlights</a>
+  <a href="#061-release-highlights">0.6.1 Highlights</a>
 </p>
 
 DeepSeek++ is a Chrome / Edge / Firefox browser extension for [DeepSeek Web](https://chat.deepseek.com). It adds side-panel chat, native-feeling tool execution, built-in web tools, MCP tools, long-term memory, Skills, system prompt presets, agentic continuation, and automation tasks.
@@ -39,7 +39,7 @@ It can send selected web-page text to DeepSeek, keep working through multi-step 
 - [Feature Overview](#feature-overview)
 - [Use Cases](#use-cases)
 - [Core Features](#core-features)
-- [0.6.0 Release Highlights](#060-release-highlights)
+- [0.6.1 Release Highlights](#061-release-highlights)
 - [Installation](#installation)
 - [Friendly Links](#friendly-links)
 
@@ -204,7 +204,22 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
   <img src="assets/screenshot-sidepanel-automation.svg" width="300" alt="Automation task side panel">
 </p>
 
-## 0.6.0 Release Highlights
+## 0.6.1 Release Highlights
+
+0.6.1 focuses on automation, Shell MCP, and side-panel organization. It improves scheduled task reliability, local command execution on Windows, and the discoverability of side-panel capabilities.
+
+| Area | Main changes |
+|------|--------------|
+| Automation tasks | Scheduled tasks now connect to browser background scheduling, making recurring tracking, reminders, and periodic checks more reliable. |
+| Shell MCP | Command execution and OfficeCLI / Shell Skill guidance are more consistent on Windows, reducing path and command differences across platforms. |
+| Side-panel navigation | Capability-related entries are consolidated into one page, making MCP, tools, Skills, and automation easier to find. |
+| Multilingual docs | The README now includes an English entry point for users who prefer English installation and feature guidance. |
+| Release safeguards | Chrome, Edge, Firefox, and source packages receive stronger checks to reduce missing-asset or version-mismatch release risk. |
+
+<details>
+<summary>Show 0.6.0 release highlights</summary>
+
+### 0.6.0 Release Highlights
 
 0.6.0 focuses on side-panel chat and Skill workflow improvements. DeepSeek++ now moves beyond enhancing the page conversation: it can start tasks directly from the side panel, manage custom Skills, and import Skills from GitHub.
 
@@ -218,6 +233,8 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
 | Tool result display | Fixes tool output being attached to the wrong response node, reducing result misplacement during continuation. |
 
 Thanks to this release's contributors: [@todayzhou](https://github.com/todayzhou) for side-panel chat and right-click scenarios, and [@IjalG](https://github.com/IjalG) for the `web_fetch` authorization experience.
+
+</details>
 
 <details>
 <summary>Show 0.5.1 release highlights</summary>
