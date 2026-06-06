@@ -92,16 +92,24 @@ import {
   submitPromptStreaming,
   loadClientHeadersFromStorage,
 } from '../core/deepseek/adapter';
+import { createDeepSeekConversationExportTransport } from '../core/deepseek/conversation-export';
+import {
+  buildConversationExportArtifactsCancellable,
+  runConversationExport,
+} from '../core/export/service';
+import { normalizeConversationExportRequest } from '../core/export/schema';
 import { buildPromptAugmentation } from '../core/prompt';
 import { extractToolCalls } from '../core/interceptor/tool-parser';
 import type { WebSearchToolName } from '../core/tool/web-search';
 import type { BackgroundConfig, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, Memory, ModelType, NewMemory, PetConfig, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
+import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 let chatSessionId: string | null = null;
 let chatParentMessageId: number | null = null;
+const conversationExportControllers = new Map<string, AbortController>();
 type SidePanelApi = {
   setPanelBehavior?: (options: { openPanelOnActionClick: boolean }) => Promise<void>;
 };
@@ -686,6 +694,27 @@ async function handleMessage(
       return { ok: true, hasToken: !!headers };
     }
 
+    case 'EXPORT_DEEPSEEK_CONVERSATIONS':
+      return handleConversationExport(message.payload, sender.tab?.id);
+
+    case 'CANCEL_DEEPSEEK_EXPORT': {
+      const { exportId } = message.payload as { exportId?: string };
+      if (!exportId) return { ok: false, error: 'missing_export_id' };
+      const controller = conversationExportControllers.get(exportId);
+      if (!controller) return { ok: false, error: 'export_not_running' };
+      controller.abort();
+      conversationExportControllers.delete(exportId);
+      await broadcastConversationExportProgress({
+        exportId,
+        phase: 'cancelled',
+        status: 'cancelled',
+        current: 0,
+        total: 0,
+        message: '导出已取消',
+      }, sender.tab?.id);
+      return { ok: true };
+    }
+
     case 'AUTH_STATUS_CHANGED': {
       const newHeaders = await loadClientHeadersFromStorage();
       broadcastToTabs({ type: 'AUTH_STATUS_CHANGED', hasToken: !!newHeaders }).catch(() => {});
@@ -808,6 +837,92 @@ async function broadcastAutomationUpdate(excludeTabId?: number) {
 
 async function broadcastAutomationRunsUpdate(excludeTabId?: number) {
   await broadcastToTabs({ type: 'AUTOMATION_RUNS_UPDATED' }, excludeTabId);
+}
+
+async function broadcastConversationExportProgress(
+  progress: ConversationExportProgress,
+  excludeTabId?: number,
+) {
+  await broadcastToTabs({ type: 'DEEPSEEK_EXPORT_PROGRESS', progress }, excludeTabId);
+}
+
+async function handleConversationExport(
+  payload: unknown,
+  excludeTabId?: number,
+): Promise<ConversationExportResult | { ok: false; exportId?: string; error: string }> {
+  const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const exportId = typeof value.exportId === 'string' && value.exportId.trim()
+    ? value.exportId.trim()
+    : crypto.randomUUID();
+  const request = normalizeConversationExportRequest(value.request);
+  const headers = await loadClientHeadersFromStorage();
+  if (!headers) {
+    return {
+      ok: false,
+      exportId,
+      error: '请先在 chat.deepseek.com 登录并发送一条消息，让 DeepSeek++ 捕获官方网页认证信息。',
+    };
+  }
+
+  const controller = new AbortController();
+  conversationExportControllers.set(exportId, controller);
+
+  try {
+    const baseUrl = new URL(DEEPSEEK_HOME_URL).origin;
+    const exportData = await runConversationExport({
+      exportId,
+      request,
+      baseUrl,
+      extensionVersion: getExtensionVersion(),
+      signal: controller.signal,
+      transport: createDeepSeekConversationExportTransport({
+        baseUrl,
+        clientHeaders: headers,
+        fetchImpl: fetch,
+      }),
+      onProgress: (progress) => broadcastConversationExportProgress(progress, excludeTabId),
+    });
+
+    await broadcastConversationExportProgress({
+      exportId,
+      phase: 'formatting',
+      status: 'running',
+      current: 0,
+      total: request.formats.length,
+      message: '生成导出文件',
+    }, excludeTabId);
+
+    assertConversationExportNotCancelled(controller.signal);
+    const artifacts = await buildConversationExportArtifactsCancellable(exportData, controller.signal);
+    assertConversationExportNotCancelled(controller.signal);
+    return {
+      ok: true,
+      exportId,
+      summary: exportData.stats,
+      artifacts,
+    };
+  } catch (error) {
+    const aborted = error instanceof DOMException && error.name === 'AbortError';
+    await broadcastConversationExportProgress({
+      exportId,
+      phase: aborted ? 'cancelled' : 'failed',
+      status: aborted ? 'cancelled' : 'failed',
+      current: 0,
+      total: 0,
+      message: aborted ? '导出已取消' : error instanceof Error ? error.message : String(error),
+    }, excludeTabId);
+    return {
+      ok: false,
+      exportId,
+      error: aborted ? '导出已取消' : error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    conversationExportControllers.delete(exportId);
+  }
+}
+
+function assertConversationExportNotCancelled(signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException('Conversation export was cancelled.', 'AbortError');
 }
 
 async function scanDueAutomationsFromWake() {

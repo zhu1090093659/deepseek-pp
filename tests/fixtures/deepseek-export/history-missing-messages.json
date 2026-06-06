@@ -1,0 +1,11 @@
+{
+  "data": {
+    "biz_code": 0,
+    "biz_data": {
+      "chat_session": {
+        "id": "session-empty",
+        "title": "Missing Messages"
+      }
+    }
+  }
+}

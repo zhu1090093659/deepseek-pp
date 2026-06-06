@@ -34,4 +34,7 @@ native-host/
 .playwright-mcp
 openspec
 docs/superpowers
-docs/archives
+docs/archives/*
+!docs/archives/README.md
+!docs/archives/deepseek-official-conversation-export/
+!docs/archives/deepseek-official-conversation-export/**

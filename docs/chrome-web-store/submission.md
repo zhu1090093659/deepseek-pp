@@ -1,6 +1,6 @@
 # Chrome Web Store Submission Runbook
 
-Last updated: 2026-05-31
+Last updated: 2026-06-06
 
 This runbook covers the parts that can be prepared from the repository and the parts that must be confirmed in the Chrome Web Store Developer Dashboard.
 
@@ -72,7 +72,7 @@ Productivity
 ### Single Purpose
 
 ```text
-Enhance the DeepSeek web chat experience with user-controlled memory, skills, prompt presets, MCP tool execution, and scheduled automation inside chat.deepseek.com.
+Enhance the DeepSeek web chat experience with user-controlled memory, skills, prompt presets, MCP tool execution, local conversation export, and scheduled automation inside chat.deepseek.com.
 ```
 
 ### Data Type Disclosures
@@ -86,7 +86,7 @@ Conservative selections for the Chrome Web Store privacy form:
 Rationale:
 
 - Website content: the extension runs on and reads/modifies the DeepSeek web chat UI to provide user-facing features.
-- Personal communications: DeepSeek chat prompts and responses may include user communications and are processed to inject memory, skills, and tool results.
+- Personal communications: DeepSeek chat prompts and responses may include user communications and are processed to inject memory, skills, tool results, and user-requested local conversation exports.
 - Authentication information: optional WebDAV credentials, MCP headers, and native/local tool settings may be stored when the user configures them.
 
 Do not select financial/payment, health, location, or browsing history unless a future version adds those data types explicitly.
@@ -98,7 +98,7 @@ Use these in the dashboard permission fields.
 #### `storage`
 
 ```text
-Stores extension data locally, including memories, custom skills, prompt presets, settings, automation tasks, MCP server configuration, and tool execution history.
+Stores extension data locally, including memories, custom skills, prompt presets, settings, automation tasks, MCP server configuration, and tool execution history. User-started conversation export artifacts are generated locally and saved through the browser download flow.
 ```
 
 #### `alarms`
@@ -116,13 +116,13 @@ Connects to a user-configured local Native Messaging host for local MCP tools. T
 #### `sidePanel`
 
 ```text
-Provides the extension's management UI in Chrome's side panel for memories, skills, presets, MCP tools, automation, sync, and settings.
+Provides the extension's management UI in Chrome's side panel for memories, skills, presets, MCP tools, conversation export, automation, sync, and settings.
 ```
 
 #### Host permission: `*://chat.deepseek.com/*`
 
 ```text
-Runs the extension on the DeepSeek web app so it can inject user-selected context, detect tool-call markup, render tool results, and support automation inside DeepSeek conversations.
+Runs the extension on the DeepSeek web app so it can inject user-selected context, detect tool-call markup, render tool results, export user-requested conversation history, and support automation inside DeepSeek conversations.
 ```
 
 #### Optional host permissions: `http://*/*`, `https://*/*`
@@ -151,7 +151,8 @@ Use this reviewer note:
 3. Click the extension action to open the side panel.
 4. Create a memory or skill in the side panel.
 5. Send a DeepSeek message that uses the saved memory/skill. The extension should inject selected context and render tool execution results inline.
-6. Optional MCP/WebDAV/native messaging features require user-provided endpoints or a user-installed local Shell host and are disabled until configured by the user.
+6. Open the Export page in the side panel and start a sanitized JSON/Markdown export. The extension should save local export files after reading the reviewer's own DeepSeek session.
+7. Optional MCP/WebDAV/native messaging features require user-provided endpoints or a user-installed local Shell host and are disabled until configured by the user.
 ```
 
 No test account is included because the extension works with the reviewer's own DeepSeek session.

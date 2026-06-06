@@ -30,7 +30,7 @@
   <a href="#061-变更回顾">0.6.1 变更</a>
 </p>
 
-DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome / Edge / Firefox 浏览器扩展，提供侧边栏对话、类原生工具调用、内置网络工具、MCP 工具系统、长期记忆、Skill、系统提示词预设、Agent 式持续执行和自动化任务。
+DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome / Edge / Firefox 浏览器扩展，提供侧边栏对话、类原生工具调用、内置网络工具、MCP 工具系统、长期记忆、Skill、系统提示词预设、对话导出、Agent 式持续执行和自动化任务。
 
 它可以把网页选中文本送入 DeepSeek，对需要多步工具执行、联网搜索、网页读取或定时跟踪的任务持续推进，并把项目背景、个人偏好和常用工作流沉淀为可复用的记忆与 Skill。
 
@@ -51,6 +51,7 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome /
 | DeepSeek MCP tools | 在侧边栏管理 MCP 服务、工具权限和执行状态，并把工具结果带回同一会话继续生成。 |
 | DeepSeek memory / 长期记忆 | 自动保存、筛选和注入长期记忆，让不同对话可以复用用户偏好、项目背景和常用信息。 |
 | DeepSeek Skills / `/skill` 工作流 | 通过内置、自定义或 GitHub 导入的 Skill 快速切换专家模式和任务模板。 |
+| DeepSeek conversation export / 对话导出 | 在侧边栏把 DeepSeek 对话记录导出为 JSON、Markdown 或可打印 HTML，并保留附件引用和元数据。 |
 | DeepSeek automation / 自动化任务 | 把固定任务放入独立 DeepSeek 会话，支持立即运行、定时触发、状态追踪和手动停止。 |
 | DeepSeek web search / 网页获取 | 在需要实时信息或指定网页内容时搜索互联网、读取网页文本，并继续生成最终回答。 |
 
@@ -59,6 +60,7 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome /
 - 希望把 DeepSeek 网页版扩展成带工具调用、MCP、记忆和自动化能力的 AI agent 工作台。
 - 希望在 Chrome、Edge 或 Firefox 中直接使用 DeepSeek 侧边栏对话、网页文本发送和固定场景 prompt。
 - 希望把项目背景、个人偏好、常用工作流和文档处理能力沉淀为长期记忆与可复用 Skill。
+- 希望把自己的 DeepSeek 对话记录本地备份为可读文件，便于归档、迁移或后续检索。
 - 希望让 DeepSeek 处理需要多步工具执行、联网搜索、网页读取或定时跟踪的任务。
 
 ## 核心功能
@@ -83,6 +85,14 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的 Chrome /
 <p align="center">
   <img src="assets/yuansheng.jpg" width="300" alt="工具调用效果">
 </p>
+
+### 对话导出
+
+- **全量记录导出** — 在侧边栏「导出」页导出当前账号可访问的 DeepSeek 对话记录
+- **多格式输出** — 默认生成 JSON 和 Markdown，也可以生成可打印 HTML 作为 PDF 归档底稿
+- **两种模式** — 可读模式隐藏扩展内部提示和工具调用标记；原始模式保留官方原始 payload 便于自留备份
+- **附件清单** — 导出消息中的文件引用、文件名、大小、状态和引用关系；文件正文导出会在下载链路验证完成后再启用
+- **本地保存** — 导出文件通过浏览器本地下载保存，DeepSeek++ 不运营用于收集导出数据的后台服务
 
 ### 内置网络工具
 

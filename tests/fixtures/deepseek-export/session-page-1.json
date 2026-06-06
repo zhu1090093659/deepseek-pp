@@ -1,0 +1,19 @@
+{
+  "data": {
+    "biz_code": 0,
+    "biz_data": {
+      "has_more": true,
+      "chat_sessions": [
+        {
+          "id": "session-alpha",
+          "title": "Synthetic Alpha",
+          "updated_at": 1760000000,
+          "created_at": 1759990000,
+          "pinned": false,
+          "title_type": "USER",
+          "model_type": "default"
+        }
+      ]
+    }
+  }
+}

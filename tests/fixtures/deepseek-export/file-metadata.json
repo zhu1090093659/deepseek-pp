@@ -1,0 +1,18 @@
+{
+  "data": {
+    "biz_code": 0,
+    "biz_data": {
+      "files": [
+        {
+          "id": "file-1",
+          "file_name": "memo.txt",
+          "file_size": 2048,
+          "mime_type": "text/plain",
+          "status": "SUCCESS",
+          "signed_path": "https://example.invalid/signed/memo.txt",
+          "audit_result": "PASS"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "data": {
+    "biz_code": 0,
+    "biz_data": {
+      "chat_session": {
+        "id": "session-alpha",
+        "title": "Synthetic Alpha",
+        "updated_at": 1760000000,
+        "pinned": false
+      },
+      "chat_messages": [
+        {
+          "message_id": 1001,
+          "message_role": "user",
+          "content": "<!-- deepseek-pp-visible-user-prompt:start -->\nPlease summarize the attached memo.\n<!-- deepseek-pp-visible-user-prompt:end -->",
+          "created_at": 1760000001,
+          "ref_file_ids": ["file-1"],
+          "thinking_enabled": false,
+          "search_enabled": false
+        },
+        {
+          "message_role": "assistant",
+          "content": "Here is the summary.\n\n<memory_save>\n{\"type\":\"topic\",\"name\":\"fixture\",\"content\":\"synthetic\",\"tags\":[\"test\"]}\n</memory_save>",
+          "parent_message_id": 1001,
+          "created_at": 1760000002
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "data": {
+    "biz_code": 0,
+    "biz_data": {
+      "has_more": false,
+      "chat_sessions": [
+        {
+          "id": "session-beta",
+          "title": "Synthetic Beta",
+          "updated_at": 1759900000,
+          "created_at": 1759890000,
+          "pinned": false,
+          "title_type": "AUTO",
+          "model_type": "expert"
+        }
+      ]
+    }
+  }
+}

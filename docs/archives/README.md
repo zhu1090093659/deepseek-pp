@@ -47,3 +47,13 @@
 - Tracking mode: GITHUB_STANDARD
 - Archived progress: [MASTER.md](officecli-productization/progress/MASTER.md)
 - GitHub repository: `zhu1090093659/deepseek-pp`
+
+### deepseek-official-conversation-export
+
+- Description: Official DeepSeek conversation export with raw/sanitized modes, JSON/Markdown defaults, print-ready HTML, metadata-first attachments, background RPC, and sidepanel download UX.
+- Date range: 2026-06-06 - 2026-06-06
+- Tracking mode: GITHUB_STANDARD
+- Archived progress: [MASTER.md](deepseek-official-conversation-export/progress/MASTER.md)
+- GitHub repository: `zhu1090093659/deepseek-pp`
+- GitHub milestones: #21-#25
+- GitHub issues: #111-#130

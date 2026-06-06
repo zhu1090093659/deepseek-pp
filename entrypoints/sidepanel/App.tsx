@@ -3,7 +3,7 @@ import { getExtensionVersion } from '../../core/version';
 import { getChatEnabled } from '../../core/chat/store';
 import { setPendingText } from './pending-text';
 
-type Tab = 'chat' | 'memory' | 'capabilities' | 'preset' | 'automation' | 'settings';
+type Tab = 'chat' | 'memory' | 'capabilities' | 'preset' | 'automation' | 'export' | 'settings';
 
 const MemoryPage = lazy(() => import('./pages/MemoryPage'));
 const PresetPage = lazy(() => import('./pages/PresetPage'));
@@ -11,6 +11,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const AutomationPage = lazy(() => import('./pages/AutomationPage'));
 const CapabilitiesPage = lazy(() => import('./pages/CapabilitiesPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
+const ExportPage = lazy(() => import('./pages/ExportPage'));
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'chat', label: '对话', icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
@@ -18,6 +19,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'capabilities', label: '能力', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
   { key: 'preset', label: '预设', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
   { key: 'automation', label: '自动化', icon: 'M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z' },
+  { key: 'export', label: '导出', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
   { key: 'settings', label: '设置', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 ];
 
@@ -121,6 +123,7 @@ export default function App() {
           {tab === 'capabilities' && <CapabilitiesPage />}
           {tab === 'preset' && <PresetPage />}
           {tab === 'automation' && <AutomationPage />}
+          {tab === 'export' && <ExportPage />}
           {tab === 'settings' && <SettingsPage />}
         </Suspense>
       </main>
