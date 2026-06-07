@@ -13,6 +13,7 @@ const USER_LOCAL_BIN_DIR = resolve(homedir(), '.local', 'bin');
 let passed = 0;
 let failed = 0;
 let reportedShell = null;
+let pythonAvailable = false;
 
 function sendNativeMessage(child, message) {
   const json = JSON.stringify(message);
@@ -121,10 +122,12 @@ await testMethod('initialize', 'initialize', {
 await testMethod('tools/list', 'tools/list', undefined, (res) => {
   assert(res.result, 'expected result');
   assert(Array.isArray(res.result.tools), 'expected tools array');
-  assert(res.result.tools.length === 2, `expected 2 tools, got ${res.result.tools.length}`);
+  assert(res.result.tools.length === 4, `expected 4 tools, got ${res.result.tools.length}`);
   const names = res.result.tools.map(t => t.name);
   assert(names.includes('shell_exec'), 'expected shell_exec');
   assert(names.includes('shell_status'), 'expected shell_status');
+  assert(names.includes('python_status'), 'expected python_status');
+  assert(names.includes('python_exec'), 'expected python_exec');
 });
 
 await testMethod('tools/call shell_status', 'tools/call', {
@@ -143,6 +146,30 @@ await testMethod('tools/call shell_status', 'tools/call', {
   }
   reportedShell = data.shell;
 });
+
+await testMethod('tools/call python_status', 'tools/call', {
+  name: 'python_status',
+  arguments: {},
+}, (res) => {
+  assert(res.result, 'expected result');
+  const data = res.result.structuredContent?.data;
+  assert(typeof data?.available === 'boolean', 'expected boolean available in python status');
+  assert(data?.limits?.timeoutMsDefault === 10000, 'expected python timeout default');
+  assert(data?.packages && typeof data.packages === 'object', 'expected package availability map');
+  pythonAvailable = data.available === true;
+});
+
+if (pythonAvailable) {
+  await testMethod('tools/call python_exec (calculation)', 'tools/call', {
+    name: 'python_exec',
+    arguments: { code: 'import json, math\nprint(json.dumps({"sqrt2": round(math.sqrt(2), 6)}))' },
+  }, (res) => {
+    assert(res.result, 'expected result');
+    const data = res.result.structuredContent?.data;
+    assert(data?.exitCode === 0, `expected exitCode 0, got ${data?.exitCode}`);
+    assert(data.stdout.includes('1.414214'), `expected sqrt output, got "${data.stdout}"`);
+  });
+}
 
 await testMethod('tools/call shell_exec (echo)', 'tools/call', {
   name: 'shell_exec',

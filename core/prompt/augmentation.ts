@@ -63,10 +63,11 @@ export function buildPromptAugmentation(
 export function renderToolSchemas(descriptors: readonly ToolDescriptor[] = DEFAULT_TOOL_DESCRIPTORS): string {
   const catalog = createToolInvocationCatalog(descriptors);
   const shellHint = renderShellMcpHint(descriptors, catalog);
+  const pythonHint = renderPythonMcpHint(descriptors, catalog);
   const schemas = descriptors
     .map((descriptor) => renderToolSchema(descriptor, catalog))
     .join('\n\n');
-  return [shellHint, schemas].filter(Boolean).join('\n\n');
+  return [shellHint, pythonHint, schemas].filter(Boolean).join('\n\n');
 }
 
 function renderWebSearchGuidance(descriptors: readonly ToolDescriptor[]): string {
@@ -103,6 +104,30 @@ function renderWebSearchGuidance(descriptors: readonly ToolDescriptor[]): string
     '- 如果一次搜索不够，可以继续调用 web_search 搜索不同关键词',
     '- 不要在没有搜索的情况下编造实时信息',
   ].join('\n');
+}
+
+function renderPythonMcpHint(
+  descriptors: readonly ToolDescriptor[],
+  catalog: ToolInvocationCatalog,
+): string {
+  const pythonExec = descriptors.find((descriptor) => descriptor.name === 'python_exec');
+  const pythonStatus = descriptors.find((descriptor) => descriptor.name === 'python_status');
+  if (!pythonExec && !pythonStatus) return '';
+
+  const execName = pythonExec ? getPreferredToolInvocationName(pythonExec, catalog) : null;
+  const statusName = pythonStatus ? getPreferredToolInvocationName(pythonStatus, catalog) : null;
+
+  return [
+    '### Python Quick Validation Capability',
+    execName
+      ? `Use <${execName}> for short Python snippets that verify an idea, perform complex calculations, or transform small data. Treat it as a scratchpad, not as a general local execution environment.`
+      : '',
+    statusName
+      ? `Use <${statusName}>{}</${statusName}> when you need to know the Python version or whether numpy, pandas, or sympy are available.`
+      : '',
+    'Assume the Python standard library is available. Only use numpy, pandas, or sympy after python_status reports them as available.',
+    'Do not install packages, access sensitive local files, run long jobs, or use network access through Python. Keep code short and return concise text or JSON.',
+  ].filter(Boolean).join('\n');
 }
 
 function renderToolSchema(descriptor: ToolDescriptor, catalog: ToolInvocationCatalog): string {

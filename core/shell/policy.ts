@@ -30,7 +30,7 @@ export function createShellMcpPresetInput(
     },
     allowlist: {
       mode: 'allow',
-      toolNames: ['shell_status'],
+      toolNames: ['shell_status', 'python_status'],
     },
     execution: {
       enabled: options.executionEnabled ?? false,

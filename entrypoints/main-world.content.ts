@@ -52,8 +52,8 @@ export default defineContentScript({
 
     updateHookState({
       onRequestBody: requestAugmentedBody,
-      onHeadersCaptured() {
-        postToContent({ type: 'HEADERS_CAPTURED' });
+      onHeadersCaptured(headers: Record<string, string> | null) {
+        postToContent({ type: 'HEADERS_CAPTURED', headers });
       },
       onToolCall(call: ToolCall) {
         postToContent({ type: 'TOOL_CALL', data: call });

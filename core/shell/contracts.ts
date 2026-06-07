@@ -5,7 +5,7 @@ export const SHELL_MCP_NATIVE_HOST = 'com.deepseek_pp.shell';
 
 export const OFFICECLI_BIN_PATH = 'officecli';
 
-export const SHELL_TOOL_NAMES = ['shell_exec', 'shell_status'] as const;
+export const SHELL_TOOL_NAMES = ['shell_exec', 'shell_status', 'python_status', 'python_exec'] as const;
 export type ShellToolName = typeof SHELL_TOOL_NAMES[number];
 
 export interface ShellToolSpec {
@@ -27,5 +27,17 @@ export const SHELL_TOOL_SPECS: readonly ShellToolSpec[] = [
     title: '主机状态',
     description: '报告 Native Host 健康状态、平台、shell 类型和工作目录。',
     risk: 'low',
+  },
+  {
+    name: 'python_status',
+    title: 'Python 状态',
+    description: '报告本机 Python 解释器、版本和可导入的快速验证库。',
+    risk: 'low',
+  },
+  {
+    name: 'python_exec',
+    title: '执行 Python',
+    description: '执行短 Python 代码，用于快速验证想法、复杂计算和小型数据处理。',
+    risk: 'high',
   },
 ] as const;

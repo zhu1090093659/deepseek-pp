@@ -1,5 +1,4 @@
 import { DEEPSEEK_API_URL } from '../constants';
-import { rememberDeepSeekClientHeaders, saveClientHeadersToStorage } from '../deepseek/adapter';
 import type { ToolCall, ToolCallRestoreRecord, ToolDescriptor } from '../types';
 import { sanitizeInternalPromptText } from '../prompt';
 import {
@@ -21,6 +20,8 @@ const HISTORY_PATH = '/api/v0/chat/history_messages';
 const BYPASS_HOOK_HEADER = 'X-DPP-Bypass-Hook';
 const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 const INITIAL_HOOK_STATE_WAIT_MS = 1_500;
+const DEFAULT_APP_VERSION = '2.0.0';
+const DEEPSEEK_CLIENT_PLATFORM = 'web';
 
 let originalFetch: typeof window.fetch;
 let initialHookStateWaitComplete = false;
@@ -33,7 +34,7 @@ const initialHookStateReady = new Promise<void>((resolve) => {
 interface HookState {
   toolDescriptors: ToolDescriptor[];
   onRequestBody: (body: string) => Promise<RequestBodyModification | null>;
-  onHeadersCaptured: () => void;
+  onHeadersCaptured: (headers: Record<string, string> | null) => void;
   onToolCall: (call: ToolCall) => void;
   onToolCallsRestored: (records: ToolCallRestoreRecord[]) => void;
   onResponseTokenSpeed: (progress: ResponseTokenSpeedPayload) => void;
@@ -119,9 +120,7 @@ function hookFetch() {
     }
 
     await waitForInitialHookState();
-    rememberDeepSeekClientHeaders(init.headers);
-    saveClientHeadersToStorage();
-    hookState.onHeadersCaptured();
+    hookState.onHeadersCaptured(captureDeepSeekClientHeaders(init.headers));
     const originalContext = createRequestContext(init.body);
     const modified = await hookState.onRequestBody(init.body);
     const requestBody = modified?.body ?? init.body;
@@ -158,9 +157,7 @@ function hookXHR() {
     if (url && isChatStreamURL(url) && typeof body === 'string') {
       const xhr = this;
       const sendChatRequest = async () => {
-        rememberDeepSeekClientHeaders(xhrHeaders.get(xhr));
-        saveClientHeadersToStorage();
-        hookState.onHeadersCaptured();
+        hookState.onHeadersCaptured(captureDeepSeekClientHeaders(xhrHeaders.get(xhr)));
         const originalContext = createRequestContext(body);
         const modified = await hookState.onRequestBody(body);
         const requestBody = modified?.body ?? body;
@@ -182,6 +179,36 @@ function hookXHR() {
     }
     return origSend.call(this, body);
   };
+}
+
+function captureDeepSeekClientHeaders(headersInit: HeadersInit | undefined): Record<string, string> | null {
+  const headers = normalizeHeaders(headersInit);
+  if (!headers) return null;
+
+  const authorization = headers.get('authorization');
+  if (!authorization) return null;
+
+  return {
+    Authorization: authorization,
+    'X-App-Version': headers.get('x-app-version') || DEFAULT_APP_VERSION,
+    'x-client-platform': headers.get('x-client-platform') || DEEPSEEK_CLIENT_PLATFORM,
+    'x-client-version': headers.get('x-client-version') || DEFAULT_APP_VERSION,
+    'x-client-locale': headers.get('x-client-locale') || getDeepSeekLocale(),
+    'x-client-timezone-offset': headers.get('x-client-timezone-offset') || String(-new Date().getTimezoneOffset() * 60),
+  };
+}
+
+function normalizeHeaders(headersInit: HeadersInit | undefined): Headers | null {
+  if (!headersInit) return null;
+  try {
+    return new Headers(headersInit);
+  } catch {
+    return null;
+  }
+}
+
+function getDeepSeekLocale(): string {
+  return document.documentElement.lang || navigator.language || 'en-US';
 }
 
 function markInitialHookStateReady() {

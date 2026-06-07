@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../../../core/shell';
+import type { McpServerConfig, McpToolAllowlist, McpToolCacheEntry, ToolDescriptor } from '../../../core/types';
 
 type PermissionState = 'idle' | 'granting' | 'granted' | 'denied' | 'error';
 type DiagState = 'idle' | 'running' | 'done' | 'err';
 type DiagResult = Record<string, { status: number; length: number; error?: string; preview?: string }>;
+type PythonBusyState = 'idle' | 'creating' | 'refreshing' | 'toggling';
 
 function DiagSearch() {
   const [query, setQuery] = useState('橘鸦 up主');
@@ -89,6 +92,121 @@ const TOOLS = [
 
 type ToolKey = typeof TOOLS[number]['key'];
 
+function PythonToolCard({
+  server,
+  cache,
+  busy,
+  message,
+  onCreate,
+  onRefresh,
+  onToggle,
+}: {
+  server: McpServerConfig | null;
+  cache: McpToolCacheEntry | null;
+  busy: PythonBusyState;
+  message: string;
+  onCreate: () => void;
+  onRefresh: () => void;
+  onToggle: () => void;
+}) {
+  const pythonStatus = cache?.descriptors.find((tool) => tool.name === 'python_status') ?? null;
+  const pythonExec = cache?.descriptors.find((tool) => tool.name === 'python_exec') ?? null;
+  const enabled = Boolean(server && pythonExec && isMcpToolEnabled(server, pythonExec));
+  const hasShell = Boolean(server);
+  const canToggle = Boolean(server && pythonExec && busy === 'idle');
+  const statusText = !server
+    ? '未创建 Shell Native Host'
+    : !cache
+      ? '尚未刷新工具'
+      : pythonExec
+        ? enabled ? '已开启' : '已发现，未开启'
+        : '未发现 python_exec';
+
+  return (
+    <div className="ds-surface-panel rounded-xl p-4 flex items-start gap-3">
+      <svg
+        className="w-5 h-5 shrink-0 mt-0.5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        style={{ color: enabled ? 'var(--ds-blue)' : 'var(--ds-text-tertiary)' }}
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+      </svg>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-xs font-medium truncate" style={{ color: 'var(--ds-text)' }}>
+              Python 解释器 (python_exec)
+            </div>
+            <div className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--ds-text-tertiary)' }}>
+              {statusText}
+            </div>
+          </div>
+          <button
+            onClick={onToggle}
+            disabled={!canToggle}
+            className="relative shrink-0 w-10 h-[22px] rounded-full transition-colors duration-200 disabled:opacity-50"
+            style={{
+              background: enabled ? 'var(--ds-blue)' : 'var(--ds-border)',
+            }}
+          >
+            <span
+              className="ds-switch-thumb absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200"
+              style={{
+                transform: enabled ? 'translateX(18px)' : 'translateX(0)',
+              }}
+            />
+          </button>
+        </div>
+
+        <div className="text-[11px] mt-1 leading-relaxed" style={{ color: 'var(--ds-text-secondary)' }}>
+          用本机 Python 执行短代码，适合快速验证想法、复杂计算和小型数据处理。
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {!hasShell && (
+            <button
+              onClick={onCreate}
+              disabled={busy !== 'idle'}
+              className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md disabled:opacity-50"
+            >
+              {busy === 'creating' ? '创建中' : '创建 Shell'}
+            </button>
+          )}
+          {hasShell && (
+            <button
+              onClick={onRefresh}
+              disabled={busy !== 'idle'}
+              className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md disabled:opacity-50"
+            >
+              {busy === 'refreshing' ? '刷新中' : '刷新工具'}
+            </button>
+          )}
+          {pythonStatus && (
+            <span className="px-2 py-1 text-[10px] rounded-md" style={{ color: 'var(--ds-success)', background: 'var(--ds-success-bg)' }}>
+              python_status 可用
+            </span>
+          )}
+        </div>
+
+        {message && (
+          <div className="text-[11px] mt-2 px-2 py-1.5 rounded-lg" style={{ color: 'var(--ds-text-secondary)', background: 'var(--ds-surface)' }}>
+            {message}
+          </div>
+        )}
+        {server && cache && !pythonExec && (
+          <div className="text-[11px] mt-2 px-2 py-1.5 rounded-lg" style={{ color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)' }}>
+            当前 Shell Native Host 版本没有返回 python_exec。重装 Shell Native Host 并重启浏览器后再刷新。
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ToolsPage() {
   const [settings, setSettings] = useState<Record<ToolKey, boolean>>({
     web_search: true,
@@ -97,6 +215,10 @@ export default function ToolsPage() {
   const [permState, setPermState] = useState<PermissionState>('idle');
   const [permUrl, setPermUrl] = useState('');
   const [allSitesState, setAllSitesState] = useState<PermissionState>('idle');
+  const [pythonServer, setPythonServer] = useState<McpServerConfig | null>(null);
+  const [pythonCache, setPythonCache] = useState<McpToolCacheEntry | null>(null);
+  const [pythonBusy, setPythonBusy] = useState<PythonBusyState>('idle');
+  const [pythonMessage, setPythonMessage] = useState('');
 
   useEffect(() => {
     chrome.runtime.sendMessage({ type: 'GET_WEB_TOOL_SETTINGS' }).then((result: Record<string, boolean>) => {
@@ -105,6 +227,111 @@ export default function ToolsPage() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    void loadPythonTool();
+
+    const handler = (msg: { type?: string }) => {
+      if (msg.type === 'MCP_SERVERS_UPDATED' || msg.type === 'TOOL_DESCRIPTORS_UPDATED') {
+        void loadPythonTool();
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, []);
+
+  const loadPythonTool = async () => {
+    const servers: McpServerConfig[] = await chrome.runtime.sendMessage({ type: 'GET_MCP_SERVERS' });
+    const shell = (servers ?? []).find(isShellServer) ?? null;
+    setPythonServer(shell);
+
+    if (!shell) {
+      setPythonCache(null);
+      return;
+    }
+
+    const cache: McpToolCacheEntry | null = await chrome.runtime.sendMessage({
+      type: 'GET_MCP_TOOL_CACHE',
+      payload: { serverId: shell.id },
+    });
+    setPythonCache(cache ?? null);
+  };
+
+  const handleCreatePythonShell = async () => {
+    setPythonBusy('creating');
+    setPythonMessage('');
+    try {
+      const existing = pythonServer;
+      if (existing) {
+        setPythonMessage('Shell MCP 已存在，请刷新工具或重装 Native Host。');
+        return;
+      }
+      await chrome.runtime.sendMessage({
+        type: 'CREATE_MCP_SERVER',
+        payload: createShellMcpPresetInput(),
+      });
+      setPythonMessage('已创建 Shell MCP。安装或重装 Shell Native Host 后点击刷新工具。');
+      await loadPythonTool();
+    } finally {
+      setPythonBusy('idle');
+    }
+  };
+
+  const handleRefreshPythonTools = async () => {
+    if (!pythonServer) return;
+    setPythonBusy('refreshing');
+    setPythonMessage('');
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: 'REFRESH_MCP_SERVER_TOOLS',
+        payload: { serverId: pythonServer.id },
+      });
+      const cache: McpToolCacheEntry | null = result?.cache ?? result ?? null;
+      setPythonCache(cache);
+      if (cache?.descriptors.some((tool) => tool.name === 'python_exec')) {
+        setPythonMessage('已发现 Python 解释器工具。');
+      } else {
+        setPythonMessage('未发现 python_exec。请重装 Shell Native Host 后重启浏览器，再刷新工具。');
+      }
+      await loadPythonTool();
+    } finally {
+      setPythonBusy('idle');
+    }
+  };
+
+  const handleTogglePython = async () => {
+    if (!pythonServer) return;
+    const pythonExec = pythonCache?.descriptors.find((tool) => tool.name === 'python_exec');
+    if (!pythonExec) {
+      setPythonMessage('未发现 python_exec。请先刷新工具，必要时重装 Shell Native Host。');
+      return;
+    }
+
+    setPythonBusy('toggling');
+    setPythonMessage('');
+    try {
+      const shouldEnable = !isMcpToolEnabled(pythonServer, pythonExec);
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_MCP_SERVER',
+        payload: {
+          id: pythonServer.id,
+          patch: {
+            enabled: shouldEnable ? true : pythonServer.enabled,
+            execution: {
+              ...pythonServer.execution,
+              enabled: shouldEnable ? true : pythonServer.execution.enabled,
+              mode: shouldEnable ? 'auto' : pythonServer.execution.mode,
+            },
+            allowlist: nextAllowlistForTool(pythonServer.allowlist, pythonExec, shouldEnable),
+          },
+        },
+      });
+      setPythonMessage(shouldEnable ? 'Python 解释器已开启。' : 'Python 解释器已关闭。');
+      await loadPythonTool();
+    } finally {
+      setPythonBusy('idle');
+    }
+  };
 
   const handleToggle = async (key: ToolKey, enabled: boolean) => {
     setSettings((prev) => ({ ...prev, [key]: enabled }));
@@ -205,6 +432,15 @@ export default function ToolsPage() {
             </div>
           </div>
         ))}
+        <PythonToolCard
+          server={pythonServer}
+          cache={pythonCache}
+          busy={pythonBusy}
+          message={pythonMessage}
+          onCreate={handleCreatePythonShell}
+          onRefresh={handleRefreshPythonTools}
+          onToggle={handleTogglePython}
+        />
       </div>
 
       <div
@@ -320,4 +556,45 @@ export default function ToolsPage() {
       </section>
     </div>
   );
+}
+
+function isShellServer(server: McpServerConfig): boolean {
+  return server.displayName === SHELL_MCP_SERVER_NAME || server.transport.nativeHost === SHELL_MCP_NATIVE_HOST;
+}
+
+function isMcpToolEnabled(server: McpServerConfig, tool: ToolDescriptor): boolean {
+  if (!server.enabled || !server.execution.enabled || server.execution.mode !== 'auto') return false;
+  const selected = server.allowlist.toolNames.includes(tool.name) || server.allowlist.toolNames.includes(tool.invocationName);
+  if (server.allowlist.mode === 'allow') return selected;
+  if (server.allowlist.mode === 'deny') return !selected;
+  return true;
+}
+
+function nextAllowlistForTool(
+  allowlist: McpToolAllowlist,
+  tool: ToolDescriptor,
+  shouldEnable: boolean,
+): McpToolAllowlist {
+  const names = new Set(allowlist.toolNames);
+  const removeTool = () => {
+    names.delete(tool.name);
+    names.delete(tool.invocationName);
+  };
+
+  if (allowlist.mode === 'allow') {
+    if (shouldEnable) names.add(tool.name);
+    else removeTool();
+    return { mode: 'allow', toolNames: [...names] };
+  }
+
+  if (allowlist.mode === 'deny') {
+    if (shouldEnable) removeTool();
+    else names.add(tool.name);
+    return { mode: names.size === 0 ? 'all' : 'deny', toolNames: [...names] };
+  }
+
+  if (!shouldEnable) {
+    return { mode: 'deny', toolNames: [tool.name] };
+  }
+  return allowlist;
 }

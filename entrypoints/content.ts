@@ -225,7 +225,7 @@ export default defineContentScript({
             break;
           }
           case 'HEADERS_CAPTURED': {
-            await persistDeepSeekClientHeaders();
+            await persistDeepSeekClientHeaders(normalizeCapturedClientHeaders(data.headers));
             break;
           }
           case 'RESPONSE_COMPLETE': {
@@ -495,10 +495,10 @@ function invalidateExtensionContext() {
   stopConversationExportActionInjector();
 }
 
-/** 主世界捕获到 DeepSeek 请求头后，隔离世界从 localStorage 读取 token 并持久化到 chrome.storage */
-async function persistDeepSeekClientHeaders(): Promise<boolean> {
+/** 主世界捕获到 DeepSeek 请求头后，隔离世界负责写入 chrome.storage */
+async function persistDeepSeekClientHeaders(capturedHeaders?: Record<string, string> | null): Promise<boolean> {
   try {
-    const headers = createClientHeaders();
+    const headers = capturedHeaders ?? createClientHeaders();
     if (headers) {
       rememberDeepSeekClientHeaders(headers);
       const saved = await saveClientHeadersToStorage();
@@ -1244,6 +1244,20 @@ function injectConversationExportActionStyles() {
     }
   `;
   document.head.appendChild(style);
+}
+
+function normalizeCapturedClientHeaders(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object') return null;
+  const headers = value as Record<string, unknown>;
+  const authorization = headers.Authorization;
+  if (typeof authorization !== 'string' || !authorization) return null;
+
+  const normalized: Record<string, string> = { Authorization: authorization };
+  for (const [key, entry] of Object.entries(headers)) {
+    if (key === 'Authorization') continue;
+    if (typeof entry === 'string' && entry) normalized[key] = entry;
+  }
+  return normalized;
 }
 
 async function sendRuntimeMessage<T>(message: unknown): Promise<T | undefined> {
@@ -3027,6 +3041,7 @@ function extractReadableError(jsonText: string): string | null {
 }
 
 function formatToolExecutionName(exec: ToolExecutionRecord): string {
+  if (exec.name === 'python_exec') return 'Python 解释器';
   return exec.provider?.displayName
     ? `${exec.provider.displayName} / ${exec.name}`
     : exec.name;

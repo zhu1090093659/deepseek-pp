@@ -264,6 +264,11 @@ export function createMcpInvocationName(serverId: string, toolName: string): str
   return `mcp_${sanitizeName(serverId)}_${sanitizeName(toolName)}`.slice(0, 96);
 }
 
+function getMcpToolResultSummary(call: ToolCall, result: McpCallToolResult): string {
+  if (call.name === 'python_exec') return result.isError ? '工具返回错误' : '工具已执行';
+  return result.isError ? 'MCP 工具返回错误' : 'MCP 工具已执行';
+}
+
 function normalizeMcpToolResult(
   server: McpServerConfig,
   call: ToolCall,
@@ -281,7 +286,7 @@ function normalizeMcpToolResult(
 
   return {
     ok: result.isError !== true,
-    summary: result.isError ? 'MCP 工具返回错误' : 'MCP 工具已执行',
+    summary: getMcpToolResultSummary(call, result),
     detail: result.isError ? (errorMessage || detail) : detail,
     name: call.name,
     provider: call.provider,

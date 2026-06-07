@@ -1195,18 +1195,30 @@ function ShellSetupHint({ server, cache }: { server: McpServerConfig; cache: Mcp
         <div>{message}</div>
       )}
       <div className="mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
-        打开终端，执行以下命令（只需一次）：
+        {setup.mode === 'local'
+          ? '打开终端，在项目根目录执行以下命令：'
+          : '打开终端，执行以下命令（只需一次）：'}
       </div>
       <div className="mt-1 font-mono break-all select-all rounded px-2 py-1" style={{ color: 'var(--ds-text)', background: 'var(--ds-surface)' }}>
         {setup.command}
       </div>
+      {setup.fallbackCommand && (
+        <>
+          <div className="mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
+            如果你使用的是已发布扩展而不是本地源码版，执行：
+          </div>
+          <div className="mt-1 font-mono break-all select-all rounded px-2 py-1" style={{ color: 'var(--ds-text)', background: 'var(--ds-surface)' }}>
+            {setup.fallbackCommand}
+          </div>
+        </>
+      )}
       <div className="mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
         {setup.usesExtensionId
           ? `已自动检测 ${browserLabel(setup.browser)} 扩展 ID。安装需要本机已安装 Node.js/npm。`
           : 'Firefox 使用固定扩展 ID，不需要额外填写 extension id。安装需要本机已安装 Node.js/npm。'}
       </div>
       <div className="mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
-        Shell MCP 会启用本机命令执行能力，并默认安装命令版 OfficeCLI。
+        命令会安装或更新 Shell Native Host；默认跳过 OfficeCLI，如需 OfficeCLI 可去掉 --skip-officecli。
       </div>
       <div className="mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
         {!server.enabled
@@ -1219,18 +1231,29 @@ function ShellSetupHint({ server, cache }: { server: McpServerConfig; cache: Mcp
 
 type NativeHostBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox';
 
-function shellInstallCommand(): { browser: NativeHostBrowser; command: string; usesExtensionId: boolean } {
+function shellInstallCommand(): {
+  browser: NativeHostBrowser;
+  command: string;
+  fallbackCommand?: string;
+  usesExtensionId: boolean;
+  mode: 'local' | 'published';
+} {
   const browser = currentNativeHostBrowser();
-  const base = `npx deepseek-pp-shell-host install --browser ${browser}`;
-  if (browser === 'firefox') {
-    return { browser, command: base, usesExtensionId: false };
+  const usesExtensionId = browser !== 'firefox';
+  const extensionArg = usesExtensionId ? ` --extension-id ${chrome.runtime.id || '<扩展ID>'}` : '';
+  const installArgs = `install --browser ${browser}${extensionArg} --skip-officecli`;
+  const localCommand = `npm run shell:install -- ${installArgs}`;
+  const publishedCommand = `npx deepseek-pp-shell-host ${installArgs}`;
+
+  if (isUnpackedExtension()) {
+    return { browser, command: localCommand, fallbackCommand: publishedCommand, usesExtensionId, mode: 'local' };
   }
 
-  return {
-    browser,
-    command: `${base} --extension-id ${chrome.runtime.id || '<扩展ID>'}`,
-    usesExtensionId: true,
-  };
+  return { browser, command: publishedCommand, usesExtensionId, mode: 'published' };
+}
+
+function isUnpackedExtension(): boolean {
+  return !chrome.runtime.getManifest().update_url;
 }
 
 function currentNativeHostBrowser(): NativeHostBrowser {
