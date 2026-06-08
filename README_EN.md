@@ -28,7 +28,7 @@
   <a href="#feature-overview">Feature Overview</a> ·
   <a href="#use-cases">Use Cases</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="#063-release-highlights">0.6.3 Highlights</a>
+  <a href="#064-release-highlights">0.6.4 Highlights</a>
 </p>
 
 ## Product Positioning
@@ -43,7 +43,7 @@ In plain terms, it is a DeepSeek Chrome extension, DeepSeek MCP tools extension,
 - [Feature Overview](#feature-overview)
 - [Use Cases](#use-cases)
 - [Core Features](#core-features)
-- [0.6.3 Release Highlights](#063-release-highlights)
+- [0.6.4 Release Highlights](#064-release-highlights)
 - [Installation](#installation)
 - [Friendly Links](#friendly-links)
 
@@ -220,7 +220,24 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
   <img src="assets/screenshot-sidepanel-automation.svg" width="300" alt="Automation task side panel">
 </p>
 
-## 0.6.3 Release Highlights
+## 0.6.4 Release Highlights
+
+0.6.4 strengthens side-panel chat and local tool workflows. It makes DeepSeek++ chat usable on normal web pages with an official API Key and adds Python interpreter support through Shell MCP.
+
+| Area | Main changes |
+|------|--------------|
+| Official API Key chat | After configuring an API Key, side-panel chat and right-click scenarios can work on normal web pages instead of depending only on the DeepSeek page session. |
+| Right-click scenarios | Selected text can be sent to side-panel chat directly or wrapped with custom scenarios for cross-page summarizing, explaining, and rewriting. |
+| Python interpreter tool | Shell MCP adds the `python_exec` capability, with clearer enablement, permission, and status controls in the side-panel Tools page. |
+| Local tool reliability | Shell Host tool contracts, execution policy, and smoke coverage are aligned to reduce state differences between command tools and interpreter tools. |
+| Release safeguards | Dev dependency vulnerabilities are fixed, while release checks continue to cover cross-browser packaging, MCP, automation, prompt freeze, workflows, and assets. |
+
+Thanks to this release's contributor: [@IjalG](https://github.com/IjalG) for the Python interpreter / `python_exec` capability.
+
+<details>
+<summary>Show 0.6.3 release highlights</summary>
+
+### 0.6.3 Release Highlights
 
 0.6.3 focuses the conversation export flow around the DeepSeek reply toolbar, making current-conversation archiving fit the normal reading and review workflow.
 
@@ -231,6 +248,8 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
 | Archive quality | File names, attachment references, message metadata, and readable mode are refined for easier search and long-term storage. |
 | Privacy copy | Store listing and privacy copy now match the local-download flow, making it clear that export files are saved through the browser. |
 | Test coverage | Conversation export tests cover the reply-toolbar entry point, format selection, naming, and PDF export path. |
+
+</details>
 
 <details>
 <summary>Show 0.6.2 release highlights</summary>
