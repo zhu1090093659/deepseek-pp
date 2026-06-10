@@ -32,6 +32,8 @@ native-host/
 *.sln
 *.sw?
 .playwright-mcp
+CLAUDE.md
+QWEN-API-RESEARCH.md
 openspec
 docs/superpowers
 docs/archives/*
