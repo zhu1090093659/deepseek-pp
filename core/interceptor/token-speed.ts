@@ -18,15 +18,22 @@ export function createResponseTokenSpeedTracker(
   emitIntervalMs: number,
 ): ResponseTokenSpeedTracker {
   const startedAt = performance.now();
+  let firstTokenAt: number | null = null;
+  let firstChunkTokenUnits = 0;
   let lastEmitAt = 0;
   let totalTokenUnits = 0;
   let textLength = 0;
   let finished = false;
   let tickTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Decode speed measured from the first streamed chunk, so queueing /
+  // prefill latency before the stream starts does not drag the rate down.
+  // The first chunk's tokens are excluded because no time has elapsed for
+  // them yet (otherwise the first emit would show a huge spike).
   const getAverageTokensPerSecond = (now: number): number => {
-    const elapsedMs = Math.max(now - startedAt, 1);
-    return totalTokenUnits / (elapsedMs / 1000);
+    if (firstTokenAt === null) return 0;
+    const elapsedMs = Math.max(now - firstTokenAt, 1);
+    return ((totalTokenUnits - firstChunkTokenUnits) / elapsedMs) * 1000;
   };
 
   const emit = (active: boolean, force = false) => {
@@ -53,6 +60,10 @@ export function createResponseTokenSpeedTracker(
     append(text: string) {
       if (!text) return;
       const tokenUnits = estimateTokenUnits(text);
+      if (firstTokenAt === null) {
+        firstTokenAt = performance.now();
+        firstChunkTokenUnits = tokenUnits;
+      }
       textLength += text.length;
       totalTokenUnits += tokenUnits;
       emit(true);
