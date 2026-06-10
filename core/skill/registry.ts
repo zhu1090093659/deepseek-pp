@@ -1,6 +1,7 @@
 import type { GitHubSkillSource, Skill } from '../types';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../i18n';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from './builtin';
+import { normalizeSkillName } from './normalize';
 
 const STORAGE_KEY = 'deepseek_pp_skills';
 const SOURCES_STORAGE_KEY = 'deepseek_pp_skill_sources';
@@ -202,12 +203,6 @@ function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): s
     if (!occupiedNames.has(candidate)) return candidate;
   }
   throw new Error(`Unable to generate a unique name for remote Skill: ${preferred}`);
-}
-
-function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9一-鿿-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  if (!normalized) throw new Error('Skill name cannot be empty');
-  return normalized;
 }
 
 function isGitHubSkillSource(value: unknown): value is GitHubSkillSource {

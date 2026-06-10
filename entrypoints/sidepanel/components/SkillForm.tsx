@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Skill } from '../../../core/types';
+import { normalizeSkillName } from '../../../core/skill/normalize';
 import { useI18n } from '../i18n';
 
 interface Props {
@@ -16,7 +17,8 @@ export default function SkillForm({ initialSkill, onSave, onCancel }: Props) {
   const [memoryEnabled, setMemoryEnabled] = useState(initialSkill?.memoryEnabled ?? false);
   const [submitted, setSubmitted] = useState(false);
 
-  const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9一-鿿-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  let normalizedName = '';
+  try { normalizedName = normalizeSkillName(name); } catch { /* empty name */ }
   const nameError = submitted && name.trim() && !normalizedName;
   const isEditing = Boolean(initialSkill);
 

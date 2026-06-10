@@ -99,7 +99,7 @@ export const en = {
         deleteSkill: 'Delete {name}',
       },
       form: {
-        namePlaceholder: 'Name, e.g. my-skill or 翻译助手',
+        namePlaceholder: 'Name, e.g. my-skill',
         nameError: 'Invalid name: only letters, digits, Chinese characters, and hyphens are allowed',
         triggerCommand: 'Trigger command:',
         descriptionPlaceholder: 'Description, when to use this skill',
