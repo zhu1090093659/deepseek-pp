@@ -205,7 +205,7 @@ function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): s
 }
 
 function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9一-鿿-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (!normalized) throw new Error('Skill name cannot be empty');
   return normalized;
 }

@@ -860,7 +860,7 @@ function parentDirectory(path: string): string {
 }
 
 function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9一-鿿-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (!normalized) throw new Error('GitHub Skill 缺少有效名称');
   return normalized;
 }
