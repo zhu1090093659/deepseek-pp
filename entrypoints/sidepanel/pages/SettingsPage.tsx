@@ -62,12 +62,20 @@ export default function SettingsPage() {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [apiKeyStatus, setApiKeyStatus] = useState<'idle' | 'saving' | 'clearing' | 'success' | 'error'>('idle');
   const [apiKeyMessage, setApiKeyMessage] = useState('');
+  const [tavilyKeyConfigured, setTavilyKeyConfigured] = useState(false);
+  const [tavilyKeyInput, setTavilyKeyInput] = useState('');
+  const [tavilyKeyStatus, setTavilyKeyStatus] = useState<'idle' | 'saving' | 'clearing' | 'success' | 'error'>('idle');
+  const [tavilyKeyMessage, setTavilyKeyMessage] = useState('');
 
   useEffect(() => {
     getChatEnabled().then(setChatEnabledState);
     chrome.runtime.sendMessage({ type: 'GET_DEEPSEEK_API_KEY_STATUS' })
       .then((result: { configured?: boolean } | undefined) => {
         setApiKeyConfigured(result?.configured === true);
+      });
+    chrome.runtime.sendMessage({ type: 'GET_TAVILY_API_KEY_STATUS' })
+      .then((result: { configured?: boolean } | undefined) => {
+        setTavilyKeyConfigured(result?.configured === true);
       })
       .catch(() => setApiKeyConfigured(false));
   }, []);
@@ -326,6 +334,47 @@ export default function SettingsPage() {
     } catch (error) {
       setApiKeyStatus('error');
       setApiKeyMessage(error instanceof Error ? error.message : t('sidepanel.settings.clearFailed'));
+    }
+  };
+
+  const handleSaveTavilyKey = async () => {
+    const key = tavilyKeyInput.trim();
+    if (!key) {
+      setTavilyKeyStatus('error');
+      setTavilyKeyMessage(t('sidepanel.settings.apiKeyRequired'));
+      return;
+    }
+    setTavilyKeyStatus('saving');
+    setTavilyKeyMessage('');
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: 'SAVE_TAVILY_API_KEY',
+        payload: { apiKey: key },
+      });
+      if (!result?.ok) throw new Error(result?.error || t('sidepanel.settings.saveFailed'));
+      setTavilyKeyConfigured(true);
+      setTavilyKeyInput('');
+      setTavilyKeyStatus('success');
+      setTavilyKeyMessage(t('sidepanel.settings.apiKeySaved'));
+    } catch (error) {
+      setTavilyKeyStatus('error');
+      setTavilyKeyMessage(error instanceof Error ? error.message : t('sidepanel.settings.saveFailed'));
+    }
+  };
+
+  const handleClearTavilyKey = async () => {
+    setTavilyKeyStatus('clearing');
+    setTavilyKeyMessage('');
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'CLEAR_TAVILY_API_KEY' });
+      if (!result?.ok) throw new Error(result?.error || t('sidepanel.settings.clearFailed'));
+      setTavilyKeyConfigured(false);
+      setTavilyKeyInput('');
+      setTavilyKeyStatus('success');
+      setTavilyKeyMessage(t('sidepanel.settings.apiKeyCleared'));
+    } catch (error) {
+      setTavilyKeyStatus('error');
+      setTavilyKeyMessage(error instanceof Error ? error.message : t('sidepanel.settings.clearFailed'));
     }
   };
 
@@ -623,6 +672,72 @@ export default function SettingsPage() {
                 }}
               >
                 {apiKeyMessage}
+              </div>
+            )}
+          </div>
+
+          <div
+            className="pt-3 border-t space-y-2"
+            style={{ borderColor: 'var(--ds-border)' }}
+          >
+            <div className="flex justify-between items-center gap-3">
+              <div>
+                <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                  Tavily API Key
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                  Optional. Enables Tavily as web search provider (replaces Bing scraping when set).
+                </div>
+              </div>
+              <span
+                className="shrink-0 text-[10px] px-2 py-0.5 rounded-full"
+                style={{
+                  color: tavilyKeyConfigured ? 'var(--ds-success)' : 'var(--ds-text-tertiary)',
+                  background: tavilyKeyConfigured ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
+                }}
+              >
+                {tavilyKeyConfigured ? t('sidepanel.settings.configured') : t('sidepanel.settings.notConfigured')}
+              </span>
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={tavilyKeyInput}
+                onChange={(e) => setTavilyKeyInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveTavilyKey()}
+                placeholder={tavilyKeyConfigured ? t('sidepanel.settings.apiKeyReplacePlaceholder') : 'tvly-...'}
+                className={inputClass}
+                style={inputStyle}
+              />
+              <button
+                onClick={handleSaveTavilyKey}
+                disabled={!tavilyKeyInput.trim() || tavilyKeyStatus === 'saving'}
+                className="ds-btn-secondary shrink-0 px-3 py-2 text-[11px] font-medium rounded-lg transition-all duration-150 disabled:opacity-40"
+              >
+                {tavilyKeyStatus === 'saving' ? t('sidepanel.settings.saving') : t('common.save')}
+              </button>
+            </div>
+
+            {tavilyKeyConfigured && (
+              <button
+                onClick={handleClearTavilyKey}
+                disabled={tavilyKeyStatus === 'clearing'}
+                className="ds-btn-secondary w-full py-2 text-[11px] font-medium rounded-lg transition-all duration-150 disabled:opacity-40"
+              >
+                {tavilyKeyStatus === 'clearing' ? t('sidepanel.settings.clearing') : t('sidepanel.settings.clearApiKey')}
+              </button>
+            )}
+
+            {tavilyKeyMessage && (
+              <div
+                className="text-[11px] px-3 py-2 rounded-lg"
+                style={{
+                  color: tavilyKeyStatus === 'error' ? 'var(--ds-danger)' : 'var(--ds-success)',
+                  background: tavilyKeyStatus === 'error' ? 'var(--ds-danger-bg)' : 'var(--ds-success-bg)',
+                }}
+              >
+                {tavilyKeyMessage}
               </div>
             )}
           </div>

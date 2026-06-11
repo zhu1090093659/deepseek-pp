@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
+import { getTavilyApiKey } from '../chat/tavily-api-key';
 import type {
   JsonValue,
   ToolCall,
@@ -117,6 +118,56 @@ interface SearchResult {
   snippet: string;
 }
 
+async function tavilySearch(
+  apiKey: string,
+  query: string,
+  topK: number,
+): Promise<SearchResult[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+  let response: Response;
+  try {
+    response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        max_results: topK,
+        search_depth: 'basic',
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Tavily API returned status ${response.status}`);
+  }
+
+  const data = await response.json() as {
+    results?: Array<{ title?: string; url?: string; content?: string }>;
+  };
+
+  if (!Array.isArray(data.results)) {
+    throw new Error('Tavily API returned unexpected response format');
+  }
+
+  return data.results
+    .filter((r): r is { title: string; url: string; content?: string } =>
+      typeof r.title === 'string' && typeof r.url === 'string')
+    .slice(0, topK)
+    .map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.content ?? '',
+    }));
+}
+
 async function performWebSearch(call: ToolCall, locale: SupportedLocale): Promise<ToolResult> {
   const query = typeof call.payload.query === 'string' ? call.payload.query.trim() : '';
   if (!query) {
@@ -132,6 +183,28 @@ async function performWebSearch(call: ToolCall, locale: SupportedLocale): Promis
   const topK = typeof call.payload.topK === 'number'
     ? Math.min(Math.max(1, Math.floor(call.payload.topK)), 10)
     : 5;
+
+  // Try Tavily first if an API key is configured.
+  try {
+    const tavilyKey = await getTavilyApiKey();
+    if (tavilyKey) {
+      const results = await tavilySearch(tavilyKey, query, topK);
+      if (results.length > 0) {
+        return {
+          ok: true,
+          name: call.name,
+          provider: call.provider ?? createWebSearchToolProviderIdentity(locale),
+          summary: translate(locale, 'tool.web.searchComplete', { count: results.length }),
+          output: results as unknown as JsonValue,
+          detail: results
+            .map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`)
+            .join('\n'),
+        };
+      }
+    }
+  } catch {
+    // Tavily failed — fall through to Bing scraper.
+  }
 
   // Try multiple Bing domains as fallback.
   // Each domain times out in 8s; total stays under 20s.

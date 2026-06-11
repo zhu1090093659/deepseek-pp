@@ -324,6 +324,41 @@ async function main() {
   check(continuationPrompt.includes('结果一'), '包含搜索结果');
   check(continuationPrompt.includes('</tool_results>'), '正确闭合');
 
+  // ── 测试 7（条件联网）：Tavily 搜索 ──
+  console.log('\n=== 测试 7: Tavily 搜索 (需要 TAVILY_API_KEY) ===');
+  const tavilyApiKey = process.env.TAVILY_API_KEY;
+  if (tavilyApiKey) {
+    try {
+      const tavilyResponse = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: tavilyApiKey,
+          query: 'DeepSeek AI',
+          max_results: 3,
+          search_depth: 'basic',
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!tavilyResponse.ok) throw new Error(`Tavily API returned status ${tavilyResponse.status}`);
+      const tavilyData = await tavilyResponse.json();
+      const tavilyResults = tavilyData.results || [];
+      check(Array.isArray(tavilyResults), `Tavily 返回结果是数组`);
+      check(tavilyResults.length > 0, `Tavily 返回 ${tavilyResults.length} 条结果`);
+      if (tavilyResults.length > 0) {
+        check(typeof tavilyResults[0].title === 'string', `结果包含 title`);
+        check(typeof tavilyResults[0].url === 'string', `结果包含 url`);
+        tavilyResults.forEach((r, i) => {
+          console.log(`     ${i+1}. ${(r.title || '').slice(0, 50)}`);
+        });
+      }
+    } catch (e) {
+      check(false, `Tavily 搜索异常: ${e.message}`);
+    }
+  } else {
+    console.log('  ⏭️  TAVILY_API_KEY 未设置，跳过 Tavily 测试');
+  }
+
   // ── 汇总 ──
   const total = passed + failed;
   console.log(`\n========================================`);

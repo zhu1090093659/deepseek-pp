@@ -118,6 +118,11 @@ import {
   saveDeepSeekApiKey,
 } from '../core/chat/api-key';
 import {
+  clearTavilyApiKey,
+  hasTavilyApiKey,
+  saveTavilyApiKey,
+} from '../core/chat/tavily-api-key';
+import {
   createAutomation,
   deleteAutomation,
   getAllAutomations,
@@ -829,6 +834,19 @@ async function handleMessage(
       officialApiChatMessages = [];
       await createContextMenus();
       await broadcastChatAuthStatus(sender.tab?.id);
+      return { ok: true, configured: false };
+
+    case 'GET_TAVILY_API_KEY_STATUS':
+      return { ok: true, configured: await hasTavilyApiKey() };
+
+    case 'SAVE_TAVILY_API_KEY': {
+      const { apiKey: tavilyKey } = message.payload as { apiKey?: string };
+      await saveTavilyApiKey(tavilyKey ?? '');
+      return { ok: true, configured: true };
+    }
+
+    case 'CLEAR_TAVILY_API_KEY':
+      await clearTavilyApiKey();
       return { ok: true, configured: false };
 
     case 'GET_DEEPSEEK_THEME':
