@@ -99,7 +99,8 @@ export const zhCN = {
         deleteSkill: '删除 {name}',
       },
       form: {
-        namePlaceholder: '名称（如 my-skill）',
+        namePlaceholder: '名称（如 my-skill 或 翻译助手）',
+        nameError: '名称无效，仅支持英文、数字、中文和连字符',
         triggerCommand: '触发命令：',
         descriptionPlaceholder: '描述（何时使用这个 skill）',
         instructionsLabel: '指令（Markdown 格式，告诉 AI 如何执行）',

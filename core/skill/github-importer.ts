@@ -8,6 +8,7 @@ import type {
   RemoteSkillFile,
   Skill,
 } from '../types';
+import { normalizeSkillName } from './normalize';
 import {
   getAllSkillSources,
   getSkillLibrary,
@@ -857,12 +858,6 @@ function parentDirectory(path: string): string {
   const parts = path.split('/');
   parts.pop();
   return parts.join('/');
-}
-
-function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  if (!normalized) throw new Error('GitHub Skill 缺少有效名称');
-  return normalized;
 }
 
 function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): string {

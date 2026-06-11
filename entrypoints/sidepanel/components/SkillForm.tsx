@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Skill } from '../../../core/types';
+import { normalizeSkillName } from '../../../core/skill/normalize';
 import { useI18n } from '../i18n';
 
 interface Props {
@@ -14,8 +15,11 @@ export default function SkillForm({ initialSkill, onSave, onCancel }: Props) {
   const [description, setDescription] = useState(initialSkill?.description ?? '');
   const [instructions, setInstructions] = useState(initialSkill?.instructions ?? '');
   const [memoryEnabled, setMemoryEnabled] = useState(initialSkill?.memoryEnabled ?? false);
+  const [submitted, setSubmitted] = useState(false);
 
-  const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  let normalizedName = '';
+  try { normalizedName = normalizeSkillName(name); } catch { /* empty name */ }
+  const nameError = submitted && name.trim() && !normalizedName;
   const isEditing = Boolean(initialSkill);
 
   useEffect(() => {
@@ -27,6 +31,7 @@ export default function SkillForm({ initialSkill, onSave, onCancel }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitted(true);
     if (!normalizedName || !instructions.trim()) return;
     onSave({
       name: normalizedName,
@@ -47,8 +52,14 @@ export default function SkillForm({ initialSkill, onSave, onCancel }: Props) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="ds-input w-full px-3 py-2 text-sm rounded-lg transition-all duration-150"
+          style={nameError ? { borderColor: '#ef4444' } : undefined}
         />
-        {normalizedName && (
+        {nameError && (
+          <p className="text-[11px] mt-1" style={{ color: '#ef4444' }}>
+            {t('sidepanel.skill.form.nameError')}
+          </p>
+        )}
+        {!nameError && normalizedName && (
           <p className="text-[11px] mt-1" style={{ color: 'var(--ds-text-tertiary)' }}>
             {t('sidepanel.skill.form.triggerCommand')} <code className="font-mono" style={{ color: 'var(--ds-blue)' }}>/{normalizedName}</code>
           </p>
