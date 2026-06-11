@@ -72,12 +72,13 @@ export default function SettingsPage() {
     chrome.runtime.sendMessage({ type: 'GET_DEEPSEEK_API_KEY_STATUS' })
       .then((result: { configured?: boolean } | undefined) => {
         setApiKeyConfigured(result?.configured === true);
-      });
+      })
+      .catch(() => setApiKeyConfigured(false));
     chrome.runtime.sendMessage({ type: 'GET_TAVILY_API_KEY_STATUS' })
       .then((result: { configured?: boolean } | undefined) => {
         setTavilyKeyConfigured(result?.configured === true);
       })
-      .catch(() => setApiKeyConfigured(false));
+      .catch(() => setTavilyKeyConfigured(false));
   }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);

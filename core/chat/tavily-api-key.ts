@@ -14,6 +14,9 @@ export async function saveTavilyApiKey(apiKey: string): Promise<void> {
   if (!normalized) {
     throw new Error('Tavily API Key cannot be empty');
   }
+  if (!normalized.startsWith('tvly-')) {
+    throw new Error('Invalid Tavily API Key format (expected tvly-…)');
+  }
   await chrome.storage.local.set({ [TAVILY_API_KEY_STORAGE_KEY]: normalized });
 }
 

@@ -331,9 +331,11 @@ async function main() {
     try {
       const tavilyResponse = await fetch('https://api.tavily.com/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tavilyApiKey}`,
+        },
         body: JSON.stringify({
-          api_key: tavilyApiKey,
           query: 'DeepSeek AI',
           max_results: 3,
           search_depth: 'basic',

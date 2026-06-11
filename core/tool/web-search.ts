@@ -132,9 +132,9 @@ async function tavilySearch(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        api_key: apiKey,
         query,
         max_results: topK,
         search_depth: 'basic',
