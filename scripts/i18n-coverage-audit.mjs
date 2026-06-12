@@ -61,6 +61,21 @@ const lineAllowlist = [
     reason: 'legacy managed-agent prompt marker detection',
   },
   {
+    path: 'core/interceptor/history-cleanup.ts',
+    includes: '工具续跑任务',
+    reason: 'inline-agent historical continuation prompt marker detection',
+  },
+  {
+    path: 'core/interceptor/history-cleanup.ts',
+    includes: '工具结果',
+    reason: 'inline-agent historical continuation prompt marker detection',
+  },
+  {
+    path: 'core/interceptor/history-cleanup.ts',
+    includes: '不要调用任何工具',
+    reason: 'inline-agent historical continuation prompt marker detection',
+  },
+  {
     path: 'core/interceptor/tool-parser.ts',
     includes: '格式错误',
     reason: 'unused legacy DSML summary renderer retained for compatibility',
