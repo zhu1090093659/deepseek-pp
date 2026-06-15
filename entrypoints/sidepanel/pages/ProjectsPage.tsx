@@ -1,60 +1,130 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ProjectContext, ProjectContextState, ProjectFile } from '../../../core/types';
+import { useEffect, useMemo, useState } from 'react';
+import type {
+  CurrentDeepSeekConversation,
+  Memory,
+  NewMemory,
+  ProjectContext,
+  ProjectContextState,
+  ProjectConversation,
+} from '../../../core/types';
+import { PROJECT_CONTEXT_SCHEMA_VERSION } from '../../../core/project';
+import MemoryCard from '../components/MemoryCard';
+import MemoryForm from '../components/MemoryForm';
 import PageIntro from '../components/PageIntro';
-import { requestGitHubProjectImportPermission } from '../github-permission';
 import { useI18n } from '../i18n';
 import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 
-type ImportState = 'idle' | 'running' | 'error' | 'done';
+const EMPTY_PROJECT_STATE: ProjectContextState = {
+  schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
+  projects: [],
+  conversations: [],
+  pendingProjectId: null,
+};
 
 export default function ProjectsPage() {
   const { t } = useI18n();
-  const [state, setState] = useState<ProjectContextState | null>(null);
+  const [state, setState] = useState<ProjectContextState>(EMPTY_PROJECT_STATE);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [githubUrl, setGithubUrl] = useState('');
-  const [githubToken, setGithubToken] = useState('');
-  const [manualPath, setManualPath] = useState('notes.md');
-  const [manualContent, setManualContent] = useState('');
-  const [importState, setImportState] = useState<ImportState>('idle');
-  const [message, setMessage] = useState('');
+  const [editing, setEditing] = useState<ProjectContext | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editInstructions, setEditInstructions] = useState('');
+  const [showMemoryForm, setShowMemoryForm] = useState(false);
+  const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [currentConversation, setCurrentConversation] = useState<CurrentDeepSeekConversation | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    void load().catch(showProjectError);
-    const handler = (msg: { type?: string; state?: ProjectContextState }) => {
-      if (msg.type === 'PROJECT_CONTEXT_UPDATED') {
-        if (isProjectContextState(msg.state)) {
-          setState(msg.state);
-          setStatusMessage('');
-        }
+    void loadAll().catch(showProjectError);
+    void refreshCurrentConversation();
+    const handler = (msg: { type?: string; state?: ProjectContextState; memories?: Memory[] }) => {
+      if (msg.type === 'PROJECT_CONTEXT_UPDATED' && isProjectContextState(msg.state)) {
+        applyState(msg.state);
+        return;
+      }
+      if (msg.type === 'STATE_UPDATED' && Array.isArray(msg.memories)) {
+        setMemories(msg.memories);
       }
     };
     chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
+    window.addEventListener('focus', refreshCurrentConversation);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handler);
+      window.removeEventListener('focus', refreshCurrentConversation);
+    };
   }, []);
 
-  const activeProject = useMemo(
-    () => state?.projects.find((project) => project.id === state.activeProjectId) ?? null,
-    [state],
+  const selectedProject = useMemo(
+    () => state.projects.find((project) => project.id === selectedProjectId) ?? state.projects[0] ?? null,
+    [selectedProjectId, state.projects],
   );
-  const activeFiles = useMemo(
-    () => state?.files.filter((file) => file.projectId === activeProject?.id) ?? [],
-    [activeProject?.id, state],
+  const projectConversations = useMemo(
+    () => selectedProject
+      ? state.conversations
+        .filter((conversation) => conversation.projectId === selectedProject.id)
+        .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      : [],
+    [selectedProject, state.conversations],
   );
+  const projectMemories = useMemo(
+    () => selectedProject
+      ? memories.filter((memory) => memory.scope === 'project' && memory.projectId === selectedProject.id)
+      : [],
+    [memories, selectedProject],
+  );
+  const currentConversationProject = currentConversation
+    ? state.conversations.find((item) => item.conversationId === currentConversation.conversationId)
+    : null;
 
-  async function load() {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' });
+  useEffect(() => {
+    if (!selectedProject) {
+      setEditing(null);
+      return;
+    }
+    setSelectedProjectId(selectedProject.id);
+    setEditing(selectedProject);
+    setEditName(selectedProject.name);
+    setEditDescription(selectedProject.description);
+    setEditInstructions(selectedProject.instructions);
+  }, [selectedProject]);
+
+  async function loadAll() {
+    const [projectState, memoryList] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
+      chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
+    ]);
     const next = unwrapProjectResponse<ProjectContextState>(
-      response,
+      projectState,
       t('sidepanel.projectsPage.backendUnavailable'),
     );
-    if (!isProjectContextState(next)) {
-      throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
-    }
+    if (!isProjectContextState(next)) throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
+    applyState(next);
+    setMemories(Array.isArray(memoryList) ? memoryList : []);
+  }
+
+  function applyState(next: ProjectContextState) {
     setState(next);
-    return next;
+    setSelectedProjectId((current) => {
+      if (current && next.projects.some((project) => project.id === current)) return current;
+      return next.projects[0]?.id ?? null;
+    });
+    setStatusMessage('');
+  }
+
+  async function refreshCurrentConversation() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_DEEPSEEK_CONVERSATION' });
+      if (response?.ok && response.conversation) {
+        setCurrentConversation(response.conversation as CurrentDeepSeekConversation);
+        return;
+      }
+      setCurrentConversation(null);
+    } catch {
+      setCurrentConversation(null);
+    }
   }
 
   async function createProject() {
@@ -69,24 +139,31 @@ export default function ProjectsPage() {
         response,
         t('sidepanel.projectsPage.backendUnavailable'),
       );
-      if (!isProjectContext(project)) {
-        throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
-      }
       setName('');
       setInstructions('');
-      await load();
+      setSelectedProjectId(project.id);
+      await loadAll();
     } catch (error) {
       showProjectError(error);
     }
   }
 
-  async function setActive(projectId: string | null) {
+  async function saveProject() {
+    if (!editing || !editName.trim()) return;
     try {
-      unwrapProjectResponse(await chrome.runtime.sendMessage({
-        type: 'SET_ACTIVE_PROJECT_CONTEXT',
-        payload: { projectId },
-      }), t('sidepanel.projectsPage.backendUnavailable'));
-      await load();
+      setStatusMessage('');
+      await runProjectMutation({
+        type: 'UPDATE_PROJECT_CONTEXT',
+        payload: {
+          projectId: editing.id,
+          patch: {
+            name: editName,
+            description: editDescription,
+            instructions: editInstructions,
+          },
+        },
+      });
+      await loadAll();
     } catch (error) {
       showProjectError(error);
     }
@@ -95,92 +172,118 @@ export default function ProjectsPage() {
   async function deleteProject(project: ProjectContext) {
     if (!confirm(t('sidepanel.projectsPage.deleteConfirm', { name: project.name }))) return;
     try {
-      unwrapProjectResponse(await chrome.runtime.sendMessage({
+      await runProjectMutation({
         type: 'DELETE_PROJECT_CONTEXT',
         payload: { projectId: project.id },
-      }), t('sidepanel.projectsPage.backendUnavailable'));
-      await load();
+      });
+      await loadAll();
     } catch (error) {
       showProjectError(error);
     }
   }
 
-  async function addManualFile() {
-    if (!activeProject || !manualPath.trim() || !manualContent.trim()) return;
+  async function addCurrentConversation() {
+    if (!selectedProject || !currentConversation) return;
     try {
-      setMessage('');
-      unwrapProjectResponse(await chrome.runtime.sendMessage({
-        type: 'ADD_PROJECT_FILES',
+      await runProjectMutation({
+        type: 'ADD_CONVERSATION_TO_PROJECT',
         payload: {
-          projectId: activeProject.id,
-          files: [{ path: manualPath, content: manualContent, sourceKind: 'manual' }],
+          projectId: selectedProject.id,
+          conversation: currentConversation,
         },
-      }), t('sidepanel.projectsPage.backendUnavailable'));
-      setManualContent('');
-      await load();
+      });
+      await loadAll();
     } catch (error) {
-      setMessage(t('sidepanel.projectsPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+      showProjectError(error);
     }
   }
 
-  async function importGithub() {
-    if (!activeProject || !githubUrl.trim()) return;
-    setImportState('running');
-    setMessage('');
+  async function removeConversation(conversation: ProjectConversation) {
     try {
-      const granted = await requestGitHubProjectImportPermission();
-      if (!granted) {
-        setImportState('error');
-        setMessage(t('sidepanel.projectsPage.permissionError'));
-        return;
+      await runProjectMutation({
+        type: 'REMOVE_CONVERSATION_FROM_PROJECT',
+        payload: { conversationId: conversation.conversationId },
+      });
+      await loadAll();
+    } catch (error) {
+      showProjectError(error);
+    }
+  }
+
+  async function setPending(projectId: string | null) {
+    try {
+      await runProjectMutation({
+        type: 'SET_PENDING_PROJECT_CONTEXT',
+        payload: { projectId },
+      });
+      await loadAll();
+    } catch (error) {
+      showProjectError(error);
+    }
+  }
+
+  async function saveProjectMemory(memory: NewMemory) {
+    if (!selectedProject) return;
+    try {
+      if (editingMemory?.id) {
+        await runProjectMutation({
+          type: 'UPDATE_MEMORY',
+          payload: {
+            ...editingMemory,
+            ...memory,
+            scope: 'project',
+            projectId: selectedProject.id,
+            updatedAt: Date.now(),
+          },
+        });
+      } else {
+        await runProjectMutation({
+          type: 'SAVE_MEMORY',
+          payload: {
+            ...memory,
+            scope: 'project',
+            projectId: selectedProject.id,
+          },
+        });
       }
-      const result = unwrapProjectResponse<{
-        files?: ProjectFile[];
-        warnings?: string[];
-      }>(await chrome.runtime.sendMessage({
-        type: 'IMPORT_GITHUB_PROJECT_CONTEXT',
-        payload: {
-          projectId: activeProject.id,
-          url: githubUrl,
-          token: githubToken.trim() || undefined,
-        },
-      }), t('sidepanel.projectsPage.backendUnavailable'));
-      const warnings = result.warnings?.length ?? 0;
-      setImportState('done');
-      setMessage(warnings > 0
-        ? t('sidepanel.projectsPage.importCompleteWithWarnings', { count: result.files?.length ?? 0, warnings })
-        : t('sidepanel.projectsPage.importComplete', { count: result.files?.length ?? 0 }));
-      await load();
+      setShowMemoryForm(false);
+      setEditingMemory(null);
+      await loadAll();
     } catch (error) {
-      setImportState('error');
-      setMessage(error instanceof Error ? error.message : String(error));
+      showProjectError(error);
     }
   }
 
-  async function importLocalFiles(files: FileList | null) {
-    if (!activeProject || !files?.length) return;
-    const inputs = [];
-    for (const file of Array.from(files)) {
-      if (file.size > 512 * 1024) continue;
-      const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      inputs.push({ path, content: await file.text(), sourceKind: 'local_folder' });
-    }
-    if (inputs.length === 0) return;
+  async function deleteMemory(id: number) {
     try {
-      setMessage('');
-      unwrapProjectResponse(await chrome.runtime.sendMessage({
-        type: 'ADD_PROJECT_FILES',
-        payload: { projectId: activeProject.id, files: inputs },
-      }), t('sidepanel.projectsPage.backendUnavailable'));
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      await load();
+      await runProjectMutation({ type: 'DELETE_MEMORY', payload: { id } });
+      await loadAll();
     } catch (error) {
-      setMessage(t('sidepanel.projectsPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+      showProjectError(error);
+    }
+  }
+
+  async function toggleMemoryPin(memory: Memory) {
+    try {
+      await runProjectMutation({
+        type: 'UPDATE_MEMORY',
+        payload: { ...memory, pinned: !memory.pinned },
+      });
+      await loadAll();
+    } catch (error) {
+      showProjectError(error);
     }
   }
 
   function showProjectError(error: unknown) {
     setStatusMessage(t('sidepanel.projectsPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+  }
+
+  async function runProjectMutation(message: unknown): Promise<void> {
+    unwrapProjectResponse(
+      await chrome.runtime.sendMessage(message),
+      t('sidepanel.projectsPage.backendUnavailable'),
+    );
   }
 
   return (
@@ -189,8 +292,8 @@ export default function ProjectsPage() {
         title={t('sidepanel.projectsPage.title')}
         description={t('sidepanel.projectsPage.description')}
         meta={t('sidepanel.projectsPage.summary', {
-          projects: state?.projects.length ?? 0,
-          files: state?.files.length ?? 0,
+          projects: state.projects.length,
+          conversations: state.conversations.length,
         })}
       />
 
@@ -220,150 +323,204 @@ export default function ProjectsPage() {
         >
           {t('sidepanel.projectsPage.createProject')}
         </button>
-        {statusMessage && (
-          <div className="text-[11px] rounded-lg px-2 py-1.5" style={{ color: 'var(--ds-text-secondary)', background: 'var(--ds-surface)' }}>
-            {statusMessage}
-          </div>
-        )}
       </section>
 
-      <section className="space-y-2">
-        {(state?.projects ?? []).map((project) => (
-          <div key={project.id} className="ds-surface-panel rounded-xl p-3 flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => setActive(project.id)}
-              className="mt-1 w-4 h-4 rounded-full border"
-              style={{
-                background: project.id === state?.activeProjectId ? 'var(--ds-blue)' : 'transparent',
-                borderColor: 'var(--ds-border)',
-              }}
-              aria-label={t('sidepanel.projectsPage.activateProject', { name: project.name })}
-            />
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium truncate" style={{ color: 'var(--ds-text)' }}>{project.name}</div>
-              <div className="text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
-                {t('sidepanel.projectsPage.fileCount', {
-                  count: (state?.files ?? []).filter((file) => file.projectId === project.id).length,
-                })}
-              </div>
-            </div>
-            <button type="button" onClick={() => deleteProject(project)} className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md">
-              {t('sidepanel.projectsPage.deleteProject')}
-            </button>
-          </div>
-        ))}
-        {(state?.projects.length ?? 0) === 0 && (
-          <div className="ds-empty-state">
-            <div className="ds-empty-state-icon">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-              </svg>
-            </div>
-            <div className="ds-empty-state-title">{t('sidepanel.projectsPage.empty')}</div>
-            <div className="ds-empty-state-description">{t('sidepanel.projectsPage.emptyHelp')}</div>
-          </div>
-        )}
-      </section>
+      {statusMessage && (
+        <div className="text-[11px] rounded-lg px-3 py-2" style={{ color: 'var(--ds-text-secondary)', background: 'var(--ds-surface)' }}>
+          {statusMessage}
+        </div>
+      )}
 
-      {activeProject && (
-        <section className="ds-surface-panel rounded-xl p-4 space-y-3">
-          <div className="text-xs font-semibold" style={{ color: 'var(--ds-text)' }}>
-            {t('sidepanel.projectsPage.activeProject', { name: activeProject.name })}
+      {state.projects.length === 0 ? (
+        <div className="ds-empty-state">
+          <div className="ds-empty-state-icon">
+            <FolderIcon />
           </div>
-          <div className="grid grid-cols-1 gap-2">
-            <input
-              value={githubUrl}
-              onChange={(event) => setGithubUrl(event.target.value)}
-              placeholder={t('sidepanel.projectsPage.githubPlaceholder')}
-              className="px-3 py-2 text-xs rounded-lg border outline-none"
-              style={inputStyle}
-            />
-            <input
-              value={githubToken}
-              onChange={(event) => setGithubToken(event.target.value)}
-              placeholder={t('sidepanel.projectsPage.githubTokenPlaceholder')}
-              type="password"
-              autoComplete="off"
-              className="px-3 py-2 text-xs rounded-lg border outline-none"
-              style={inputStyle}
-            />
-            <div className="text-[10px] leading-relaxed" style={{ color: 'var(--ds-text-tertiary)' }}>
-              {t('sidepanel.projectsPage.githubTokenHelp')}
-            </div>
-            <button
-              type="button"
-              onClick={importGithub}
-              disabled={importState === 'running' || !githubUrl.trim()}
-              className="ds-btn-secondary px-3 py-2 text-xs rounded-lg disabled:opacity-40"
-            >
-              {importState === 'running' ? t('sidepanel.projectsPage.importingGithub') : t('sidepanel.projectsPage.importGithub')}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              // Chromium supports folder import through this non-standard attribute.
-              {...{ webkitdirectory: '' }}
-              onChange={(event) => void importLocalFiles(event.target.files)}
-              className="text-xs"
-              style={{ color: 'var(--ds-text-secondary)' }}
-            />
-          </div>
-          {message && (
-            <div className="text-[11px] rounded-lg px-2 py-1.5" style={{ color: 'var(--ds-text-secondary)', background: 'var(--ds-surface)' }}>
-              {message}
-            </div>
-          )}
-          <div className="space-y-2">
-            <input
-              value={manualPath}
-              onChange={(event) => setManualPath(event.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border outline-none"
-              style={inputStyle}
-              placeholder={t('sidepanel.projectsPage.manualPathPlaceholder')}
-            />
-            <textarea
-              value={manualContent}
-              onChange={(event) => setManualContent(event.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border outline-none min-h-[90px]"
-              style={inputStyle}
-              placeholder={t('sidepanel.projectsPage.manualContentPlaceholder')}
-            />
-            <button
-              type="button"
-              onClick={addManualFile}
-              disabled={!manualPath.trim() || !manualContent.trim()}
-              className="ds-btn-secondary px-3 py-2 text-xs rounded-lg disabled:opacity-40"
-            >
-              {t('sidepanel.projectsPage.addManualFile')}
-            </button>
-          </div>
-          <div className="space-y-1 max-h-52 overflow-y-auto">
-            {activeFiles.map((file) => (
-              <label key={file.id} className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--ds-text-secondary)' }}>
-                <input
-                  type="checkbox"
-                  checked={(state?.activeFileIds.length ?? 0) === 0 || state?.activeFileIds.includes(file.id)}
-                  onChange={(event) => {
-                    const current = new Set(state?.activeFileIds.length ? state.activeFileIds : activeFiles.map((item) => item.id));
-                    if (event.target.checked) current.add(file.id);
-                    else current.delete(file.id);
-                    void chrome.runtime.sendMessage({
-                      type: 'SET_ACTIVE_PROJECT_FILES',
-                      payload: { projectId: activeProject.id, fileIds: [...current] },
-                    })
-                      .then((response) => unwrapProjectResponse(response, t('sidepanel.projectsPage.backendUnavailable')))
-                      .then(load)
-                      .catch((error) => setMessage(t('sidepanel.projectsPage.operationFailed', { error: getRuntimeErrorMessage(error) })));
+          <div className="ds-empty-state-title">{t('sidepanel.projectsPage.empty')}</div>
+          <div className="ds-empty-state-description">{t('sidepanel.projectsPage.emptyHelp')}</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          <section className="space-y-2">
+            {state.projects.map((project) => {
+              const count = state.conversations.filter((conversation) => conversation.projectId === project.id).length;
+              const selected = project.id === selectedProject?.id;
+              const pending = project.id === state.pendingProjectId;
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => setSelectedProjectId(project.id)}
+                  className="w-full ds-surface-panel p-3 rounded-xl flex items-center gap-3 text-left transition-all duration-150"
+                  style={{
+                    borderColor: selected ? 'var(--ds-selected-border)' : 'var(--ds-border)',
+                    background: selected ? 'var(--ds-blue-light)' : 'var(--ds-surface-panel)',
                   }}
+                >
+                  <span className="shrink-0" style={{ color: selected ? 'var(--ds-blue)' : 'var(--ds-text-tertiary)' }}>
+                    <FolderIcon />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium truncate" style={{ color: 'var(--ds-text)' }}>{project.name}</span>
+                    <span className="block text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
+                      {t('sidepanel.projectsPage.conversationCount', { count })}
+                    </span>
+                  </span>
+                  {pending && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: 'var(--ds-blue)', background: 'var(--ds-bg)' }}>
+                      {t('sidepanel.projectsPage.pendingBadge')}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </section>
+
+          {selectedProject && editing && (
+            <section className="ds-surface-panel rounded-xl p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate" style={{ color: 'var(--ds-text)' }}>{selectedProject.name}</div>
+                  <div className="text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
+                    {t('sidepanel.projectsPage.detailMeta', {
+                      conversations: projectConversations.length,
+                      memories: projectMemories.length,
+                    })}
+                  </div>
+                </div>
+                <button type="button" onClick={() => deleteProject(selectedProject)} className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md">
+                  {t('sidepanel.projectsPage.deleteProject')}
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <input
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                  placeholder={t('sidepanel.projectsPage.namePlaceholder')}
+                  className="w-full px-3 py-2 text-xs rounded-lg border outline-none"
+                  style={inputStyle}
                 />
-                <span className="truncate">{file.path}</span>
-                <span className="shrink-0">{file.sizeBytes} B</span>
-              </label>
-            ))}
-          </div>
-        </section>
+                <input
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.target.value)}
+                  placeholder={t('sidepanel.projectsPage.descriptionPlaceholder')}
+                  className="w-full px-3 py-2 text-xs rounded-lg border outline-none"
+                  style={inputStyle}
+                />
+                <textarea
+                  value={editInstructions}
+                  onChange={(event) => setEditInstructions(event.target.value)}
+                  placeholder={t('sidepanel.projectsPage.instructionsPlaceholder')}
+                  className="w-full px-3 py-2 text-xs rounded-lg border outline-none min-h-[96px]"
+                  style={inputStyle}
+                />
+                <button type="button" onClick={saveProject} disabled={!editName.trim()} className="ds-btn-secondary px-3 py-2 text-xs rounded-lg disabled:opacity-40">
+                  {t('common.saveChanges')}
+                </button>
+              </div>
+
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold" style={{ color: 'var(--ds-text)' }}>{t('sidepanel.projectsPage.currentConversation')}</div>
+                  <button type="button" onClick={refreshCurrentConversation} className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md">
+                    {t('common.refresh')}
+                  </button>
+                </div>
+                <div className="rounded-lg border px-3 py-2 space-y-2" style={{ borderColor: 'var(--ds-border)', background: 'var(--ds-bg)' }}>
+                  <div className="text-[11px] truncate" style={{ color: 'var(--ds-text-secondary)' }}>
+                    {currentConversation
+                      ? currentConversation.title
+                      : t('sidepanel.projectsPage.noCurrentConversation')}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={addCurrentConversation}
+                      disabled={!currentConversation}
+                      className="ds-btn-primary px-3 py-1.5 text-[11px] rounded-md disabled:opacity-40"
+                    >
+                      {currentConversationProject
+                        ? t('sidepanel.projectsPage.moveCurrentConversation')
+                        : t('sidepanel.projectsPage.addCurrentConversation')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPending(state.pendingProjectId === selectedProject.id ? null : selectedProject.id)}
+                      className="ds-btn-secondary px-3 py-1.5 text-[11px] rounded-md"
+                    >
+                      {state.pendingProjectId === selectedProject.id
+                        ? t('sidepanel.projectsPage.cancelNextConversation')
+                        : t('sidepanel.projectsPage.useNextConversation')}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <div className="text-xs font-semibold" style={{ color: 'var(--ds-text)' }}>{t('sidepanel.projectsPage.conversationsTitle')}</div>
+                {projectConversations.length === 0 ? (
+                  <div className="text-[11px] rounded-lg px-3 py-2" style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-bg)' }}>
+                    {t('sidepanel.projectsPage.emptyConversations')}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {projectConversations.map((conversation) => (
+                      <div key={conversation.conversationId} className="flex items-center gap-2 rounded-lg border px-2.5 py-2" style={{ borderColor: 'var(--ds-border)', background: 'var(--ds-bg)' }}>
+                        <a href={conversation.url || '#'} target="_blank" rel="noreferrer" className="flex-1 min-w-0 text-[11px] truncate" style={{ color: 'var(--ds-text)' }}>
+                          {conversation.title}
+                        </a>
+                        <span className="text-[10px] shrink-0" style={{ color: 'var(--ds-text-tertiary)' }}>
+                          {formatAge(conversation.lastSeenAt, t)}
+                        </span>
+                        <button type="button" onClick={() => removeConversation(conversation)} className="ds-btn-secondary px-2 py-1 text-[10px] rounded-md">
+                          {t('common.remove')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold" style={{ color: 'var(--ds-text)' }}>{t('sidepanel.projectsPage.memoriesTitle')}</div>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingMemory(null); setShowMemoryForm(!showMemoryForm); }}
+                    className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md"
+                  >
+                    {t('common.add')}
+                  </button>
+                </div>
+                {showMemoryForm && (
+                  <MemoryForm
+                    initial={editingMemory}
+                    onSave={saveProjectMemory}
+                    onCancel={() => { setShowMemoryForm(false); setEditingMemory(null); }}
+                  />
+                )}
+                {projectMemories.length === 0 ? (
+                  <div className="text-[11px] rounded-lg px-3 py-2" style={{ color: 'var(--ds-text-tertiary)', background: 'var(--ds-bg)' }}>
+                    {t('sidepanel.projectsPage.emptyMemories')}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {projectMemories.map((memory) => (
+                      <MemoryCard
+                        key={memory.id}
+                        memory={memory}
+                        onDelete={() => deleteMemory(memory.id!)}
+                        onEdit={() => { setEditingMemory(memory); setShowMemoryForm(true); }}
+                        onTogglePin={() => toggleMemoryPin(memory)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </section>
+          )}
+        </div>
       )}
     </div>
   );
@@ -375,6 +532,14 @@ const inputStyle = {
   color: 'var(--ds-text)',
 };
 
+function FolderIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+    </svg>
+  );
+}
+
 function unwrapProjectResponse<T = unknown>(response: unknown, missingMessage: string): T {
   return unwrapRuntimeResponse<T>(response, missingMessage);
 }
@@ -382,16 +547,17 @@ function unwrapProjectResponse<T = unknown>(response: unknown, missingMessage: s
 function isProjectContextState(value: unknown): value is ProjectContextState {
   if (!value || typeof value !== 'object') return false;
   const state = value as ProjectContextState;
-  return Array.isArray(state.projects) &&
-    Array.isArray(state.files) &&
-    (state.activeProjectId === null || typeof state.activeProjectId === 'string') &&
-    Array.isArray(state.activeFileIds);
+  return state.schemaVersion === PROJECT_CONTEXT_SCHEMA_VERSION &&
+    Array.isArray(state.projects) &&
+    Array.isArray(state.conversations) &&
+    (state.pendingProjectId === null || typeof state.pendingProjectId === 'string');
 }
 
-function isProjectContext(value: unknown): value is ProjectContext {
-  if (!value || typeof value !== 'object') return false;
-  const project = value as ProjectContext;
-  return typeof project.id === 'string' &&
-    typeof project.name === 'string' &&
-    typeof project.instructions === 'string';
+function formatAge(timestamp: number, t: ReturnType<typeof useI18n>['t']): string {
+  const mins = Math.floor((Date.now() - timestamp) / 60000);
+  if (mins < 1) return t('sidepanel.memory.age.justNow');
+  if (mins < 60) return t('sidepanel.memory.age.minutesAgo', { count: mins });
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return t('sidepanel.memory.age.hoursAgo', { count: hours });
+  return t('sidepanel.memory.age.daysAgo', { count: Math.floor(hours / 24) });
 }

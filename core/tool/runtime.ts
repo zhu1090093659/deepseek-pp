@@ -4,6 +4,7 @@ import {
   saveMemory,
   updateMemory,
 } from '../memory/store';
+import { getProjectForConversation } from '../project';
 import {
   executeMcpToolCall,
   getMcpToolDescriptors,
@@ -124,7 +125,7 @@ async function executeToolCallWithoutHistory(
   }
 
   if (isMemoryToolName(call.name)) {
-    return executeMemoryToolCall(memoryRuntime, call, locale);
+    return executeMemoryToolCall(await createMemoryRuntime(call), call, locale);
   }
 
   if (isWebSearchToolName(call.name)) {
@@ -162,6 +163,25 @@ async function executeToolCallWithoutHistory(
       code: 'tool_unsupported',
       message: `Unsupported tool: ${call.name}`,
       retryable: false,
+    },
+  };
+}
+
+async function createMemoryRuntime(call: ToolCall): Promise<MemoryToolRuntime> {
+  const chatSessionId = call.source?.chatSessionId ?? null;
+  if (call.name !== 'memory_save' || !chatSessionId) return memoryRuntime;
+
+  const project = await getProjectForConversation(chatSessionId);
+  if (!project) return memoryRuntime;
+
+  return {
+    ...memoryRuntime,
+    async saveMemory(input: NewMemory) {
+      return memoryRuntime.saveMemory({
+        ...input,
+        scope: 'project',
+        projectId: project.id,
+      });
     },
   };
 }

@@ -94,6 +94,7 @@ describe('augmentRequestBody', () => {
       memories: [{
         id: 1,
         syncId: 'sync-1',
+        scope: 'global',
         type: 'reference',
         name: 'Hidden memory',
         content: 'Do not include me',
@@ -125,6 +126,7 @@ describe('augmentRequestBody', () => {
       memories: [{
         id: 2,
         syncId: 'sync-2',
+        scope: 'global',
         type: 'reference',
         name: 'Durable memory',
         content: 'Inject me without the full system prompt',
@@ -176,4 +178,55 @@ describe('augmentRequestBody', () => {
     expect(body.prompt).toContain('The following is the user input for this turn');
     expect(body.prompt).toContain('Draft about {raw_user_value}');
   });
+
+  it('injects only global memories plus memories from the current project', () => {
+    const result = augmentRequestBody(JSON.stringify({
+      prompt: 'remember the project rule',
+      parent_message_id: null,
+      thinking_enabled: false,
+    }), {
+      memories: [
+        memory(1, 'global', undefined, 'Global memory', 'Always be concise.'),
+        memory(2, 'project', 'project-1', 'Project memory', 'Use project glossary.'),
+        memory(3, 'project', 'project-2', 'Other project memory', 'Do not include me.'),
+      ],
+      skills: [],
+      activePreset: null,
+      projectId: 'project-1',
+      modelType: null,
+      toolDescriptors: [],
+      messageCount: 0,
+      locale: 'en',
+    });
+
+    const body = JSON.parse(result?.body ?? '{}') as { prompt?: string };
+    expect(body.prompt).toContain('Always be concise.');
+    expect(body.prompt).toContain('[project reference] Project memory');
+    expect(body.prompt).not.toContain('Do not include me.');
+  });
 });
+
+function memory(
+  id: number,
+  scope: 'global' | 'project',
+  projectId: string | undefined,
+  name: string,
+  content: string,
+) {
+  return {
+    id,
+    syncId: `sync-${id}`,
+    scope,
+    projectId,
+    type: 'reference' as const,
+    name,
+    content,
+    description: '',
+    tags: [],
+    pinned: true,
+    createdAt: 1,
+    updatedAt: 1,
+    accessCount: 0,
+    lastAccessedAt: 1,
+  };
+}

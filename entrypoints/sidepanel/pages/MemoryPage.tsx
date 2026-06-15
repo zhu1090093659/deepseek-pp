@@ -15,7 +15,7 @@ export default function MemoryPage() {
 
   const load = async () => {
     const list: Memory[] = await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' });
-    setMemories(list ?? []);
+    setMemories((list ?? []).filter((memory) => memory.scope !== 'project'));
   };
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export default function MemoryPage() {
 
     const handleStateUpdate = (message: { type?: string; memories?: Memory[] }) => {
       if (message.type === 'STATE_UPDATED' && Array.isArray(message.memories)) {
-        setMemories(message.memories);
+        setMemories(message.memories.filter((memory) => memory.scope !== 'project'));
       }
     };
     const refreshWhenVisible = () => {

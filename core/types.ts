@@ -4,9 +4,11 @@ import type {
   McpServerUpdateInput,
 } from './mcp/types';
 import type {
+  CurrentDeepSeekConversation,
   ProjectContextCreateInput,
   ProjectContextState,
-  ProjectFileInput,
+  ProjectContextUpdateInput,
+  ProjectConversationInput,
 } from './project/types';
 import type { PromptInjectionSettings as PromptInjectionSettingsType } from './prompt/settings';
 import type { SandboxRunRequest as SandboxRunRequestType } from './sandbox/types';
@@ -69,15 +71,14 @@ export type {
 } from './tool/types';
 
 export type {
+  CurrentDeepSeekConversation,
   ProjectContext,
   ProjectContextCreateInput,
   ProjectContextState,
-  ProjectFile,
-  ProjectFileInput,
+  ProjectContextUpdateInput,
+  ProjectConversation,
+  ProjectConversationInput,
   ProjectPromptContext,
-  ProjectRagChunk,
-  ProjectSource,
-  ProjectSourceKind,
 } from './project/types';
 
 export type {
@@ -135,6 +136,7 @@ export type {
 } from './platform';
 
 export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';
+export type MemoryScope = 'global' | 'project';
 
 export type ModelType = 'expert' | null;
 
@@ -167,6 +169,8 @@ export interface PetConfig {
 export interface Memory {
   id?: number;
   syncId: string;
+  scope: MemoryScope;
+  projectId?: string;
   type: MemoryType;
   name: string;
   content: string;
@@ -181,9 +185,11 @@ export interface Memory {
 
 export type NewMemory = Omit<
   Memory,
-  'id' | 'syncId' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'
+  'id' | 'syncId' | 'scope' | 'projectId' | 'createdAt' | 'updatedAt' | 'accessCount' | 'lastAccessedAt'
 > & {
   syncId?: string;
+  scope?: MemoryScope;
+  projectId?: string;
 };
 
 export interface SyncConfig {
@@ -199,7 +205,7 @@ export interface SyncCounts {
   skills: number;
   presets: number;
   projects: number;
-  projectFiles: number;
+  projectConversations: number;
   savedItems: number;
 }
 
@@ -420,12 +426,13 @@ export type MessageAction =
   | { type: 'GET_PLATFORM_CAPABILITIES' }
   | { type: 'GET_PROJECT_CONTEXT_STATE' }
   | { type: 'CREATE_PROJECT_CONTEXT'; payload: ProjectContextCreateInput }
+  | { type: 'UPDATE_PROJECT_CONTEXT'; payload: { projectId: string; patch: ProjectContextUpdateInput } }
   | { type: 'DELETE_PROJECT_CONTEXT'; payload: { projectId: string } }
-  | { type: 'SET_ACTIVE_PROJECT_CONTEXT'; payload: { projectId: string | null } }
-  | { type: 'ADD_PROJECT_FILES'; payload: { projectId: string; files: ProjectFileInput[] } }
-  | { type: 'SET_ACTIVE_PROJECT_FILES'; payload: { projectId: string; fileIds: string[] } }
-  | { type: 'GET_ACTIVE_PROJECT_CONTEXT'; payload: { query: string } }
-  | { type: 'IMPORT_GITHUB_PROJECT_CONTEXT'; payload: { projectId: string; url: string; token?: string } }
+  | { type: 'ADD_CONVERSATION_TO_PROJECT'; payload: { projectId: string; conversation: ProjectConversationInput } }
+  | { type: 'REMOVE_CONVERSATION_FROM_PROJECT'; payload: { conversationId: string } }
+  | { type: 'SET_PENDING_PROJECT_CONTEXT'; payload: { projectId: string | null } }
+  | { type: 'GET_CURRENT_DEEPSEEK_CONVERSATION' }
+  | { type: 'GET_PROJECT_CONTEXT_FOR_CONVERSATION'; payload: { conversation: ProjectConversationInput; bindPendingProject?: boolean } }
   | { type: 'GET_ARTIFACT'; payload: { id: string } }
   | { type: 'GET_CONFIG' }
   | { type: 'GET_DEEPSEEK_THEME' }

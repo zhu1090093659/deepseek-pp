@@ -134,6 +134,11 @@ const PET_BUBBLE_REPEAT_MIN_MS = 8000;
 const PET_BUBBLE_REPEAT_MAX_MS = 12000;
 const PET_BUBBLE_RECENT_LIMIT = 3;
 type ExportResponse = ConversationExportResult | { ok: false; exportId?: string; error: string };
+interface ResolvedProjectAugmentationContext {
+  projectId: string;
+  context: string | null;
+}
+
 interface ConversationExportFormatOption {
   format: ConversationExportArtifact['format'];
   labelKey: LocaleMessageKey;
@@ -473,6 +478,19 @@ export default defineContentScript({
         return true;
       } else if (message.type === 'DEEPSEEK_EXPORT_PROGRESS') {
         updateConversationExportProgress(message.progress as ConversationExportProgress | undefined);
+      } else if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') {
+        const conversationId = getCurrentChatSessionId();
+        sendResponse(conversationId
+          ? {
+            ok: true,
+            conversation: {
+              conversationId,
+              title: getCurrentConversationTitle(),
+              url: location.href,
+            },
+          }
+          : { ok: false, error: 'no_current_conversation' });
+        return true;
       }
       return undefined;
     });
@@ -538,12 +556,13 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       throw new Error('Request body must be a string.');
     }
 
-    const projectContext = await resolveProjectContextForRequestBody(data.body);
+    const project = await resolveProjectContextForRequestBody(data.body);
     const result = augmentRequestBody(data.body, {
       memories: currentMemories,
       skills: currentSkills,
       activePreset: currentActivePreset,
-      projectContext,
+      projectContext: project?.context ?? null,
+      projectId: project?.projectId ?? null,
       modelType: currentModelType,
       toolDescriptors: currentToolDescriptors,
       messageCount: currentRequestMessageCount,
@@ -576,16 +595,26 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
   }
 }
 
-async function resolveProjectContextForRequestBody(bodyStr: string): Promise<string | null> {
+async function resolveProjectContextForRequestBody(bodyStr: string): Promise<ResolvedProjectAugmentationContext | null> {
   try {
-    const body = JSON.parse(bodyStr) as { prompt?: unknown };
-    const query = typeof body.prompt === 'string' ? body.prompt : '';
-    if (!query.trim()) return null;
-    const context = await sendRuntimeMessage<string | null>({
-      type: 'GET_ACTIVE_PROJECT_CONTEXT',
-      payload: { query },
+    const body = JSON.parse(bodyStr) as { chat_session_id?: unknown; parent_message_id?: unknown; prompt?: unknown };
+    const sessionId = typeof body.chat_session_id === 'string' && body.chat_session_id.trim()
+      ? body.chat_session_id.trim()
+      : getCurrentChatSessionId();
+    if (!sessionId) return null;
+    const bindPendingProject = body.parent_message_id === null;
+    const project = await sendRuntimeMessage<ResolvedProjectAugmentationContext | null>({
+      type: 'GET_PROJECT_CONTEXT_FOR_CONVERSATION',
+      payload: {
+        bindPendingProject,
+        conversation: {
+          conversationId: sessionId,
+          title: getCurrentConversationTitle(),
+          url: location.href,
+        },
+      },
     });
-    return context ?? null;
+    return project ?? null;
   } catch {
     return null;
   }
@@ -1220,6 +1249,13 @@ function getCurrentChatSessionId(): string | null {
   } catch {
     return match[1];
   }
+}
+
+function getCurrentConversationTitle(): string {
+  const title = document.title
+    .replace(/\s*[-|]\s*DeepSeek.*$/i, '')
+    .trim();
+  return title || contentT('content.conversation.untitled');
 }
 
 function downloadConversationExportArtifact(artifact: ConversationExportArtifact) {

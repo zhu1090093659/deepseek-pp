@@ -68,16 +68,18 @@ import {
 } from '../core/browser-control';
 import { filterSidepanelChatToolDescriptors } from '../core/tool/sidepanel';
 import {
-  addProjectFiles,
+  addConversationToProject,
+  bindPendingProjectConversation,
   createProjectContext,
   deleteProjectContext,
-  fetchGitHubProjectFiles,
   formatProjectPromptContext,
-  getActiveProjectPromptContext,
   getProjectContextState,
+  getProjectForConversation,
+  getProjectPromptContextForConversation,
+  removeConversationFromProject,
   saveProjectContextState,
-  setActiveProjectContext,
-  setActiveProjectFiles,
+  setPendingProjectContext,
+  updateProjectContext,
 } from '../core/project';
 import { getArtifact } from '../core/artifact';
 import {
@@ -118,6 +120,12 @@ import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
 import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
 import { getChatEnabled } from '../core/chat/store';
+import {
+  markChatLoopFinished,
+  markChatLoopStarted,
+  reconcileInterruptedChatLoop,
+  type ChatLoopProvider,
+} from '../core/chat/active-loop';
 import {
   clearDeepSeekApiKey,
   DEEPSEEK_API_KEY_STORAGE_KEY,
@@ -180,7 +188,7 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult } from '../core/types';
+import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
@@ -249,6 +257,7 @@ export default defineBackground(() => {
   ensureShellMcpPreset().catch((error) => reportBackgroundStartupError('shell_mcp_preset_failed', error));
   refreshWhatsNewBadge().catch((error) => reportBackgroundStartupError('whats_new_badge_failed', error));
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
+  reconcileInterruptedChatLoopOnWake().catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
   scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error));
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -821,6 +830,13 @@ async function handleMessage(
       return project;
     }
 
+    case 'UPDATE_PROJECT_CONTEXT': {
+      const { projectId, patch } = message.payload as { projectId: string; patch: Parameters<typeof updateProjectContext>[1] };
+      const project = await updateProjectContext(projectId, patch);
+      await broadcastProjectContextUpdate(sender.tab?.id);
+      return project;
+    }
+
     case 'DELETE_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string };
       await deleteProjectContext(projectId);
@@ -828,39 +844,46 @@ async function handleMessage(
       return { ok: true };
     }
 
-    case 'SET_ACTIVE_PROJECT_CONTEXT': {
+    case 'ADD_CONVERSATION_TO_PROJECT': {
+      const { projectId, conversation } = message.payload as { projectId: string; conversation: Parameters<typeof addConversationToProject>[1] };
+      const added = await addConversationToProject(projectId, conversation);
+      await broadcastProjectContextUpdate(sender.tab?.id);
+      return { ok: true, conversation: added };
+    }
+
+    case 'REMOVE_CONVERSATION_FROM_PROJECT': {
+      const { conversationId } = message.payload as { conversationId: string };
+      await removeConversationFromProject(conversationId);
+      await broadcastProjectContextUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'SET_PENDING_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string | null };
-      await setActiveProjectContext(projectId);
+      await setPendingProjectContext(projectId);
       await broadcastProjectContextUpdate(sender.tab?.id);
       return { ok: true };
     }
 
-    case 'ADD_PROJECT_FILES': {
-      const { projectId, files } = message.payload as { projectId: string; files: Parameters<typeof addProjectFiles>[1] };
-      const added = await addProjectFiles(projectId, files);
-      await broadcastProjectContextUpdate(sender.tab?.id);
-      return { ok: true, files: added };
-    }
+    case 'GET_CURRENT_DEEPSEEK_CONVERSATION':
+      return getCurrentDeepSeekConversation();
 
-    case 'SET_ACTIVE_PROJECT_FILES': {
-      const { projectId, fileIds } = message.payload as { projectId: string; fileIds: string[] };
-      await setActiveProjectFiles(projectId, fileIds);
-      await broadcastProjectContextUpdate(sender.tab?.id);
-      return { ok: true };
-    }
-
-    case 'GET_ACTIVE_PROJECT_CONTEXT': {
-      const { query } = message.payload as { query?: string };
-      const context = await getActiveProjectPromptContext(query ?? '');
-      return context ? formatProjectPromptContext(context) : null;
-    }
-
-    case 'IMPORT_GITHUB_PROJECT_CONTEXT': {
-      const { projectId, url, token } = message.payload as { projectId: string; url: string; token?: string };
-      const result = await fetchGitHubProjectFiles(url, { token });
-      const files = await addProjectFiles(projectId, result.files);
-      await broadcastProjectContextUpdate(sender.tab?.id);
-      return { ok: true, source: result.source, files, warnings: result.warnings };
+    case 'GET_PROJECT_CONTEXT_FOR_CONVERSATION': {
+      const { conversation, bindPendingProject } = message.payload as {
+        conversation: Parameters<typeof bindPendingProjectConversation>[0];
+        bindPendingProject?: boolean;
+      };
+      const bound = bindPendingProject === true
+        ? await bindPendingProjectConversation(conversation)
+        : null;
+      if (bound) await broadcastProjectContextUpdate(sender.tab?.id);
+      const project = await getProjectForConversation(conversation.conversationId);
+      if (!project) return null;
+      const context = await getProjectPromptContextForConversation(conversation.conversationId);
+      return {
+        projectId: project.id,
+        context: context ? formatProjectPromptContext(context) : null,
+      };
     }
 
     case 'GET_ARTIFACT': {
@@ -1210,6 +1233,34 @@ async function broadcastToolCallHistoryUpdate(excludeTabId?: number) {
 async function broadcastProjectContextUpdate(excludeTabId?: number) {
   const state = await getProjectContextState();
   await broadcastToTabs({ type: 'PROJECT_CONTEXT_UPDATED', state }, excludeTabId);
+}
+
+async function getCurrentDeepSeekConversation(): Promise<
+  { ok: true; conversation: CurrentDeepSeekConversation } | { ok: false; error: string }
+> {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs.find((item) => item.id != null && isDeepSeekChatUrl(item.url));
+  if (!tab?.id) return { ok: false, error: 'no_active_deepseek_conversation' };
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CURRENT_DEEPSEEK_CONVERSATION' });
+    if (response?.ok && response.conversation) {
+      return { ok: true, conversation: response.conversation as CurrentDeepSeekConversation };
+    }
+    return { ok: false, error: response?.error ?? 'no_current_conversation' };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function isDeepSeekChatUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'chat.deepseek.com' && /\/(?:a\/)?chat\/s\//.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 }
 
 async function broadcastSavedItemsUpdate(excludeTabId?: number) {
@@ -1659,7 +1710,7 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
     skills: snapshot.skills.length,
     presets: snapshot.presets.length,
     projects: snapshot.projectContext?.projects.length ?? 0,
-    projectFiles: snapshot.projectContext?.files.length ?? 0,
+    projectConversations: snapshot.projectContext?.conversations.length ?? 0,
     savedItems: snapshot.savedItems?.items.length ?? 0,
   };
 }
@@ -1670,15 +1721,21 @@ async function handleChatSubmitPrompt(
   excludeTabId?: number,
 ) {
   const apiKey = await getDeepSeekApiKey();
-  if (apiKey) {
-    const config = configInput
-      ? normalizeOfficialApiChatConfig(configInput)
-      : await getOfficialApiChatConfig();
-    await handleOfficialApiChatSubmitPrompt(prompt, apiKey, config, excludeTabId);
-    return;
-  }
+  const provider: ChatLoopProvider = apiKey ? 'official-api' : 'web';
+  await markChatLoopStarted(provider);
+  try {
+    if (apiKey) {
+      const config = configInput
+        ? normalizeOfficialApiChatConfig(configInput)
+        : await getOfficialApiChatConfig();
+      await handleOfficialApiChatSubmitPrompt(prompt, apiKey, config, excludeTabId);
+      return;
+    }
 
-  await handleWebChatSubmitPrompt(prompt, excludeTabId);
+    await handleWebChatSubmitPrompt(prompt, excludeTabId);
+  } finally {
+    await markChatLoopFinished();
+  }
 }
 
 async function handleWebChatSubmitPrompt(prompt: string, excludeTabId?: number) {
@@ -1768,7 +1825,7 @@ async function buildSidepanelPrompt(prompt: string): Promise<{
 
   const enabledDescriptors = filterSidepanelChatToolDescriptors(toolDescriptors);
   const { augmented } = buildPromptAugmentation(prompt, {
-    memories,
+    memories: memories.filter((memory) => memory.scope !== 'project'),
     presetContent: shouldInjectPreset ? activePreset?.content ?? null : null,
     toolDescriptors: enabledDescriptors,
     thinkingEnabled: false,
@@ -1955,4 +2012,17 @@ function broadcastChatChunk(
   excludeTabId?: number,
 ) {
   chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
+}
+
+// Called on every service-worker wake. If a chat tool loop was running when
+// the previous SW instance was terminated, the sidepanel never received its
+// final `done:true` chunk. Emit one so the UI unblocks, then reset in-memory
+// chat state so the next turn starts clean.
+async function reconcileInterruptedChatLoopOnWake() {
+  const interrupted = await reconcileInterruptedChatLoop();
+  if (!interrupted) return;
+  chatSessionId = null;
+  chatParentMessageId = null;
+  officialApiChatMessages = [];
+  broadcastChatChunk({ text: '', done: true, error: backgroundT('background.chat.interrupted') });
 }

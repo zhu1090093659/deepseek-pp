@@ -1131,6 +1131,8 @@ async function interceptHistoryResponse(responsePromise: Promise<Response>): Pro
 function setupXHRHistoryInterceptor(xhr: XMLHttpRequest) {
   const origResponseTextDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText') ||
     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(XMLHttpRequest.prototype), 'responseText');
+  const origResponseDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response') ||
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(XMLHttpRequest.prototype), 'response');
 
   let cachedFiltered: string | null = null;
 
@@ -1166,7 +1168,10 @@ function setupXHRHistoryInterceptor(xhr: XMLHttpRequest) {
         }
         return cachedFiltered;
       }
-      return xhr.response;
+      // Non-text response types: read from the native getter. Reading
+      // `xhr.response` here would re-enter this overridden getter and overflow
+      // the stack.
+      return origResponseDesc?.get?.call(xhr);
     },
   });
 }

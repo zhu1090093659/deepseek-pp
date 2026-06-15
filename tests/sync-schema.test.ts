@@ -3,15 +3,16 @@ import {
   parseValidatedArray,
   validateImportedMemory,
   validatePreset,
+  validateProjectConversation,
   validateProjectContext,
   validateProjectContextState,
-  validateProjectFile,
   validateSavedItemsState,
   validateStoredMemory,
 } from '../core/sync/schema';
 
 const validMemory = {
   syncId: 'sync-1',
+  scope: 'global',
   type: 'topic',
   name: 'Memory',
   content: 'Useful fact',
@@ -29,6 +30,8 @@ describe('sync schema validators', () => {
     expect(validateStoredMemory(validMemory).syncId).toBe('sync-1');
     expect(validateImportedMemory(validMemory)).toEqual({
       syncId: 'sync-1',
+      scope: 'global',
+      projectId: undefined,
       type: 'topic',
       name: 'Memory',
       content: 'Useful fact',
@@ -48,72 +51,60 @@ describe('sync schema validators', () => {
       .toThrow('presets[0].content');
   });
 
-  it('validates project context and project files at sync boundaries', () => {
+  it('validates project context and project conversations at sync boundaries', () => {
     const project = validateProjectContext({
       id: 'project-1',
       name: 'DeepSeek++',
       description: '',
-      instructions: 'Use repo context.',
-      source: {
-        kind: 'github',
-        label: 'zhu1090093659/deepseek-pp',
-        owner: 'zhu1090093659',
-        repo: 'deepseek-pp',
-        ref: 'main',
-        importedAt: 1,
-      },
+      instructions: 'Use project context.',
       createdAt: 1,
       updatedAt: 2,
     }, 'projects[0]');
-    const file = validateProjectFile({
-      id: 'file-1',
+    const conversation = validateProjectConversation({
+      conversationId: 'session-1',
       projectId: 'project-1',
-      path: 'README.md',
-      content: '# DeepSeek++',
-      sizeBytes: 12,
-      sourceKind: 'github',
-      createdAt: 3,
-    }, 'projectFiles[0]');
+      title: 'Review project progress',
+      url: 'https://chat.deepseek.com/chat/s/session-1',
+      addedAt: 3,
+      lastSeenAt: 4,
+    }, 'projectConversations[0]');
 
-    expect(project.source.kind).toBe('github');
-    expect(file.path).toBe('README.md');
-    expect(() => validateProjectFile({ ...file, sourceKind: 'binary' }, 'projectFiles[1]'))
-      .toThrow('projectFiles[1].sourceKind');
+    expect(project.instructions).toBe('Use project context.');
+    expect(conversation.conversationId).toBe('session-1');
+    expect(() => validateProjectConversation({ ...conversation, addedAt: 'now' }, 'projectConversations[1]'))
+      .toThrow('projectConversations[1].addedAt');
   });
 
   it('validates full project context sync state', () => {
     const state = validateProjectContextState({
-      schemaVersion: 1,
+      schemaVersion: 2,
       projects: [{
         id: 'project-1',
         name: 'DeepSeek++',
         description: '',
-        instructions: 'Use repo context.',
-        source: {
-          kind: 'manual',
-          label: 'Manual project',
-          importedAt: 1,
-        },
+        instructions: 'Use project context.',
         createdAt: 1,
         updatedAt: 2,
       }],
-      files: [{
-        id: 'file-1',
+      conversations: [{
+        conversationId: 'session-1',
         projectId: 'project-1',
-        path: 'README.md',
-        content: '# DeepSeek++',
-        sizeBytes: 12,
-        sourceKind: 'manual',
-        createdAt: 3,
+        title: 'Project thread',
+        url: 'https://chat.deepseek.com/chat/s/session-1',
+        addedAt: 3,
+        lastSeenAt: 4,
       }],
-      activeProjectId: 'project-1',
-      activeFileIds: ['file-1'],
+      pendingProjectId: 'project-1',
     }, 'project-context.json');
 
-    expect(state.activeProjectId).toBe('project-1');
-    expect(state.activeFileIds).toEqual(['file-1']);
-    expect(() => validateProjectContextState({ ...state, activeFileIds: ['missing'] }, 'project-context.json'))
-      .toThrow('project-context.json.activeFileIds contains an unknown file');
+    expect(state.pendingProjectId).toBe('project-1');
+    expect(state.conversations[0].conversationId).toBe('session-1');
+    expect(() => validateProjectContextState({ ...state, pendingProjectId: 'missing' }, 'project-context.json'))
+      .toThrow('project-context.json.pendingProjectId references an unknown project');
+    expect(() => validateProjectContextState({
+      ...state,
+      conversations: [...state.conversations, { ...state.conversations[0] }],
+    }, 'project-context.json')).toThrow('project-context.json.conversations contains duplicate conversation');
   });
 
   it('validates saved items at sync boundaries', () => {

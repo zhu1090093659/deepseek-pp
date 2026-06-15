@@ -372,7 +372,7 @@ export default function SettingsPage() {
       skills: counts.skills,
       presets: counts.presets,
       projects: counts.projects,
-      projectFiles: counts.projectFiles,
+      projectConversations: counts.projectConversations,
       savedItems: counts.savedItems,
     });
   };

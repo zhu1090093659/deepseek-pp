@@ -164,6 +164,50 @@ export async function getAutomationRunById(id: AutomationRunId): Promise<Automat
   return state.runs.find((run) => run.id === id) ?? null;
 }
 
+/**
+ * Marks `running` automation runs whose `startedAt` predates `thresholdMs` as
+ * failed. This recovers from a service-worker termination mid-run, which would
+ * otherwise leave orphaned `running` rows that never complete and would let the
+ * next scan re-run the same automation. Returns the count of runs reconciled.
+ *
+ * Safe to call repeatedly — only stale `running` rows are touched.
+ */
+export async function reconcileStaleRuns(
+  thresholdMs: number,
+  now: number = Date.now(),
+): Promise<number> {
+  const state = await readState();
+  let reconciled = 0;
+  let changed = false;
+  const runs = state.runs.map((run) => {
+    if (run.status !== 'running' || run.startedAt == null) return run;
+    if (now - run.startedAt < thresholdMs) return run;
+
+    changed = true;
+    reconciled += 1;
+    const completedAt = run.startedAt + thresholdMs;
+    return {
+      ...run,
+      status: 'failed' as const,
+      completedAt,
+      error: {
+        code: 'automation_run_interrupted',
+        message: 'Service worker was terminated while the run was in progress.',
+        phase: 'runner' as const,
+        retryable: true,
+        at: now,
+        details: { startedAt: run.startedAt, completedAt },
+      },
+      updatedAt: now,
+    };
+  });
+
+  if (changed) {
+    await writeState({ ...state, runs });
+  }
+  return reconciled;
+}
+
 async function patchAutomation(
   id: AutomationId,
   patch: AutomationUpdateInput | AutomationRuntimeUpdate,

@@ -2,24 +2,21 @@ import type {
   ProjectContext,
   ProjectContextCreateInput,
   ProjectContextState,
-  ProjectFile,
-  ProjectFileInput,
+  ProjectContextUpdateInput,
+  ProjectConversation,
+  ProjectConversationInput,
   ProjectPromptContext,
-  ProjectSource,
 } from './types';
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
-import { normalizeProjectFiles } from './sources';
-import { searchProjectFiles } from './rag';
-import { estimateTokens } from '../memory/selector';
 
 const STORAGE_KEY = 'deepseek_pp_project_context';
+const UNTITLED_CONVERSATION = 'Untitled conversation';
 
 const DEFAULT_STATE: ProjectContextState = {
   schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
   projects: [],
-  files: [],
-  activeProjectId: null,
-  activeFileIds: [],
+  conversations: [],
+  pendingProjectId: null,
 };
 
 export async function getProjectContextState(): Promise<ProjectContextState> {
@@ -39,131 +36,173 @@ export async function createProjectContext(input: ProjectContextCreateInput): Pr
     name: requiredTrimmed(input.name, 'Project name'),
     description: String(input.description ?? '').trim(),
     instructions: String(input.instructions ?? '').trim(),
-    source: normalizeSource(input.source, now),
     createdAt: now,
     updatedAt: now,
   };
   await saveProjectContextState({
     ...state,
     projects: [...state.projects, project],
-    activeProjectId: state.activeProjectId ?? project.id,
   });
   return project;
 }
 
+export async function updateProjectContext(
+  projectId: string,
+  patch: ProjectContextUpdateInput,
+): Promise<ProjectContext> {
+  const state = await getProjectContextState();
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) throw new Error(`Project not found: ${projectId}`);
+
+  const nextProject: ProjectContext = {
+    ...project,
+    ...(patch.name === undefined ? {} : { name: requiredTrimmed(patch.name, 'Project name') }),
+    ...(patch.description === undefined ? {} : { description: String(patch.description).trim() }),
+    ...(patch.instructions === undefined ? {} : { instructions: String(patch.instructions).trim() }),
+    updatedAt: Date.now(),
+  };
+
+  await saveProjectContextState({
+    ...state,
+    projects: state.projects.map((item) => item.id === projectId ? nextProject : item),
+  });
+  return nextProject;
+}
+
 export async function deleteProjectContext(projectId: string): Promise<void> {
   const state = await getProjectContextState();
-  const nextFiles = state.files.filter((file) => file.projectId !== projectId);
   await saveProjectContextState({
     ...state,
     projects: state.projects.filter((project) => project.id !== projectId),
-    files: nextFiles,
-    activeProjectId: state.activeProjectId === projectId ? null : state.activeProjectId,
-    activeFileIds: state.activeFileIds.filter((id) => nextFiles.some((file) => file.id === id)),
+    conversations: state.conversations.filter((conversation) => conversation.projectId !== projectId),
+    pendingProjectId: state.pendingProjectId === projectId ? null : state.pendingProjectId,
   });
 }
 
-export async function setActiveProjectContext(projectId: string | null): Promise<void> {
+export async function addConversationToProject(
+  projectId: string,
+  input: ProjectConversationInput,
+): Promise<ProjectConversation> {
+  const state = await getProjectContextState();
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) throw new Error(`Project not found: ${projectId}`);
+
+  const now = Date.now();
+  const conversationId = requiredTrimmed(input.conversationId, 'Conversation id');
+  const existing = state.conversations.find((item) => item.conversationId === conversationId);
+  const conversation: ProjectConversation = {
+    conversationId,
+    projectId,
+    title: normalizeConversationTitle(input.title ?? existing?.title),
+    url: normalizeConversationUrl(input.url ?? existing?.url),
+    addedAt: existing?.addedAt ?? now,
+    lastSeenAt: now,
+  };
+
+  await saveProjectContextState({
+    ...state,
+    projects: state.projects.map((item) => item.id === projectId ? { ...item, updatedAt: now } : item),
+    conversations: [
+      ...state.conversations.filter((item) => item.conversationId !== conversationId),
+      conversation,
+    ],
+    pendingProjectId: state.pendingProjectId === projectId ? null : state.pendingProjectId,
+  });
+
+  return conversation;
+}
+
+export async function removeConversationFromProject(conversationId: string): Promise<void> {
+  const state = await getProjectContextState();
+  await saveProjectContextState({
+    ...state,
+    conversations: state.conversations.filter((item) => item.conversationId !== conversationId),
+  });
+}
+
+export async function setPendingProjectContext(projectId: string | null): Promise<void> {
   const state = await getProjectContextState();
   const exists = projectId === null || state.projects.some((project) => project.id === projectId);
   if (!exists) throw new Error(`Project not found: ${projectId}`);
   await saveProjectContextState({
     ...state,
-    activeProjectId: projectId,
-    activeFileIds: [],
+    pendingProjectId: projectId,
   });
 }
 
-export async function addProjectFiles(
-  projectId: string,
-  inputFiles: readonly ProjectFileInput[],
-): Promise<ProjectFile[]> {
+export async function bindPendingProjectConversation(
+  input: ProjectConversationInput,
+): Promise<ProjectConversation | null> {
   const state = await getProjectContextState();
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project) throw new Error(`Project not found: ${projectId}`);
-  const now = Date.now();
-  const files = normalizeProjectFiles(inputFiles, inputFiles[0]?.sourceKind ?? 'manual').map((file): ProjectFile => ({
-    id: crypto.randomUUID(),
-    projectId,
-    path: file.path,
-    content: file.content,
-    sizeBytes: new TextEncoder().encode(file.content).length,
-    sourceKind: file.sourceKind ?? 'manual',
-    createdAt: now,
-  }));
-  await saveProjectContextState({
-    ...state,
-    files: [...state.files.filter((file) => file.projectId !== projectId || !files.some((incoming) => incoming.path === file.path)), ...files],
-    projects: state.projects.map((item) => item.id === projectId ? { ...item, updatedAt: now } : item),
-    activeFileIds: [...new Set([...state.activeFileIds, ...files.map((file) => file.id)])],
-  });
-  return files;
+  if (!state.pendingProjectId) return null;
+  const projectExists = state.projects.some((project) => project.id === state.pendingProjectId);
+  if (!projectExists) {
+    await saveProjectContextState({ ...state, pendingProjectId: null });
+    return null;
+  }
+  return addConversationToProject(state.pendingProjectId, input);
 }
 
-export async function setActiveProjectFiles(projectId: string, fileIds: string[]): Promise<void> {
+export async function getProjectForConversation(conversationId: string): Promise<ProjectContext | null> {
   const state = await getProjectContextState();
-  const validIds = new Set(state.files.filter((file) => file.projectId === projectId).map((file) => file.id));
-  await saveProjectContextState({
-    ...state,
-    activeProjectId: projectId,
-    activeFileIds: fileIds.filter((id) => validIds.has(id)),
-  });
+  const membership = state.conversations.find((item) => item.conversationId === conversationId);
+  if (!membership) return null;
+  return state.projects.find((project) => project.id === membership.projectId) ?? null;
 }
 
-export async function getActiveProjectPromptContext(query: string): Promise<ProjectPromptContext | null> {
+export async function getProjectPromptContextForConversation(
+  conversationId: string,
+): Promise<ProjectPromptContext | null> {
   const state = await getProjectContextState();
-  const project = state.projects.find((item) => item.id === state.activeProjectId);
+  const membership = state.conversations.find((item) => item.conversationId === conversationId);
+  if (!membership) return null;
+  const project = state.projects.find((item) => item.id === membership.projectId);
   if (!project) return null;
-  const activeFiles = state.files.filter((file) =>
-    file.projectId === project.id &&
-    (state.activeFileIds.length === 0 || state.activeFileIds.includes(file.id)),
-  );
-  const chunks = searchProjectFiles(query, activeFiles, 6);
   const instructions = project.instructions.trim();
-  if (!instructions && chunks.length === 0) return null;
-  const totalTokensEstimate = estimateTokens([
-    instructions,
-    ...chunks.map((chunk) => chunk.content),
-  ].join('\n'));
+  if (!instructions) return null;
   return {
     projectId: project.id,
     projectName: project.name,
     instructions,
-    chunks,
-    totalTokensEstimate,
   };
+}
+
+export function formatProjectPromptContext(context: ProjectPromptContext): string {
+  return [
+    '## Project Context',
+    `Project: ${context.projectName}`,
+    '',
+    '### Project Instructions',
+    context.instructions,
+  ].join('\n').trim();
 }
 
 export function normalizeProjectContextState(value: unknown): ProjectContextState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_STATE };
   const object = value as Partial<ProjectContextState>;
+  if (object.schemaVersion !== PROJECT_CONTEXT_SCHEMA_VERSION) return { ...DEFAULT_STATE };
+
   const projects = Array.isArray(object.projects) ? object.projects.filter(isProjectContext) : [];
-  const files = Array.isArray(object.files) ? object.files.filter(isProjectFile) : [];
   const projectIds = new Set(projects.map((project) => project.id));
-  const fileIds = new Set(files.map((file) => file.id));
-  const activeProjectId = typeof object.activeProjectId === 'string' && projectIds.has(object.activeProjectId)
-    ? object.activeProjectId
+  const seenConversations = new Set<string>();
+  const conversations = Array.isArray(object.conversations)
+    ? object.conversations.filter((conversation): conversation is ProjectConversation => {
+      if (!isProjectConversation(conversation)) return false;
+      if (!projectIds.has(conversation.projectId)) return false;
+      if (seenConversations.has(conversation.conversationId)) return false;
+      seenConversations.add(conversation.conversationId);
+      return true;
+    })
+    : [];
+  const pendingProjectId = typeof object.pendingProjectId === 'string' && projectIds.has(object.pendingProjectId)
+    ? object.pendingProjectId
     : null;
+
   return {
     schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
     projects,
-    files: files.filter((file) => projectIds.has(file.projectId)),
-    activeProjectId,
-    activeFileIds: Array.isArray(object.activeFileIds)
-      ? object.activeFileIds.filter((id): id is string => typeof id === 'string' && fileIds.has(id))
-      : [],
-  };
-}
-
-function normalizeSource(source: Partial<ProjectSource> | undefined, now: number): ProjectSource {
-  return {
-    kind: source?.kind ?? 'manual',
-    label: String(source?.label ?? 'Manual project').trim() || 'Manual project',
-    url: source?.url,
-    owner: source?.owner,
-    repo: source?.repo,
-    ref: source?.ref,
-    importedAt: typeof source?.importedAt === 'number' ? source.importedAt : now,
+    conversations,
+    pendingProjectId,
   };
 }
 
@@ -174,6 +213,16 @@ function requiredTrimmed(value: unknown, label: string): string {
   return value.trim();
 }
 
+function normalizeConversationTitle(value: unknown): string {
+  if (typeof value !== 'string') return UNTITLED_CONVERSATION;
+  return value.trim() || UNTITLED_CONVERSATION;
+}
+
+function normalizeConversationUrl(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
 function isProjectContext(value: unknown): value is ProjectContext {
   if (!value || typeof value !== 'object') return false;
   const item = value as ProjectContext;
@@ -181,19 +230,17 @@ function isProjectContext(value: unknown): value is ProjectContext {
     typeof item.name === 'string' &&
     typeof item.description === 'string' &&
     typeof item.instructions === 'string' &&
-    Boolean(item.source && typeof item.source === 'object') &&
     typeof item.createdAt === 'number' &&
     typeof item.updatedAt === 'number';
 }
 
-function isProjectFile(value: unknown): value is ProjectFile {
+function isProjectConversation(value: unknown): value is ProjectConversation {
   if (!value || typeof value !== 'object') return false;
-  const item = value as ProjectFile;
-  return typeof item.id === 'string' &&
+  const item = value as ProjectConversation;
+  return typeof item.conversationId === 'string' &&
     typeof item.projectId === 'string' &&
-    typeof item.path === 'string' &&
-    typeof item.content === 'string' &&
-    typeof item.sizeBytes === 'number' &&
-    typeof item.sourceKind === 'string' &&
-    typeof item.createdAt === 'number';
+    typeof item.title === 'string' &&
+    typeof item.url === 'string' &&
+    typeof item.addedAt === 'number' &&
+    typeof item.lastSeenAt === 'number';
 }

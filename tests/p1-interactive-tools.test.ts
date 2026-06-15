@@ -259,6 +259,7 @@ function storedMemory(content: string): Memory {
   return {
     id: 1,
     syncId: 'sync-1',
+    scope: 'global',
     type: 'reference',
     name: 'Existing',
     content,

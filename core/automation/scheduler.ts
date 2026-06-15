@@ -2,6 +2,7 @@ import {
   createAutomationRun,
   getAllAutomations,
   getAutomationById,
+  reconcileStaleRuns,
   updateAutomationRun,
   updateAutomationRuntime,
 } from './store';
@@ -48,6 +49,11 @@ export async function scanDueAutomations(
   executor: AutomationRunExecutor,
   now: number = Date.now(),
 ): Promise<ScanDueAutomationsResult> {
+  // Recover any `running` rows orphaned by a service-worker termination before
+  // scanning, so the in-memory lock (which is lost on restart) doesn't allow a
+  // duplicate run and so the orphaned row is finalized.
+  await reconcileStaleRuns(AUTOMATION_RUN_TIMEOUT_MS, now);
+
   const automations = await getAllAutomations();
   const result: ScanDueAutomationsResult = {
     checkedAt: now,

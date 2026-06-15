@@ -14,6 +14,7 @@ export interface RequestAugmentationState {
   skills: Array<Pick<Skill, 'name' | 'instructions' | 'memoryEnabled'>>;
   activePreset: SystemPromptPreset | null;
   projectContext?: string | null;
+  projectId?: string | null;
   modelType: ModelType;
   toolDescriptors: readonly ToolDescriptor[];
   messageCount: number;
@@ -71,8 +72,9 @@ export function augmentRequestBody(
   if (invocation) {
     const resolved = resolveSkills(state.skills, invocation.skillName, invocation.args, locale);
     if (resolved) {
+      const scopedMemories = filterMemoriesByProjectScope(state.memories, state.projectId);
       const { augmented, usedMemoryIds } = buildPromptAugmentation(resolved.combinedPrompt, {
-        memories: state.memories,
+        memories: scopedMemories,
         thinkingEnabled,
         identityOnly: !resolved.memoryEnabled,
         presetContent,
@@ -95,7 +97,7 @@ export function augmentRequestBody(
   }
 
   const { augmented, usedMemoryIds } = buildPromptAugmentation(originalPrompt, {
-    memories: state.memories,
+    memories: filterMemoriesByProjectScope(state.memories, state.projectId),
     thinkingEnabled,
     presetContent,
     projectContext: state.projectContext,
@@ -113,6 +115,13 @@ export function augmentRequestBody(
     usedMemoryIds,
     messageCount,
   };
+}
+
+function filterMemoriesByProjectScope(memories: Memory[], projectId?: string | null): Memory[] {
+  return memories.filter((memory) => {
+    if (memory.scope === 'project') return Boolean(projectId && memory.projectId === projectId);
+    return memory.scope === undefined || memory.scope === 'global';
+  });
 }
 
 function resolveSkills(

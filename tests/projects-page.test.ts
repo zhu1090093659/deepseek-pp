@@ -6,11 +6,16 @@ import ProjectsPage from '../entrypoints/sidepanel/pages/ProjectsPage';
 import type { ProjectContext, ProjectContextState } from '../core/project';
 
 const EMPTY_PROJECT_STATE: ProjectContextState = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   projects: [],
-  files: [],
-  activeProjectId: null,
-  activeFileIds: [],
+  conversations: [],
+  pendingProjectId: null,
+};
+
+const CURRENT_CONVERSATION = {
+  conversationId: 'session-1',
+  title: '查看项目进展',
+  url: 'https://chat.deepseek.com/chat/s/session-1',
 };
 
 let container: HTMLDivElement;
@@ -39,11 +44,12 @@ describe('ProjectsPage', () => {
     const project = createProject('project-1', 'Alpha');
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
       if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: true, conversation: CURRENT_CONVERSATION };
       if (message.type === 'CREATE_PROJECT_CONTEXT') {
         state = {
           ...state,
           projects: [project],
-          activeProjectId: project.id,
         };
         return project;
       }
@@ -52,10 +58,10 @@ describe('ProjectsPage', () => {
 
     await renderProjectsPage(sendMessage);
     await enterProjectName('Alpha');
-    await clickCreateProject();
+    await clickButton('创建项目');
 
     expect(container.textContent).toContain('Alpha');
-    expect(container.textContent).toContain('当前项目：Alpha');
+    expect(container.textContent).toContain('0 个对话，0 条项目记忆');
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'CREATE_PROJECT_CONTEXT',
       payload: { name: 'Alpha', instructions: '' },
@@ -65,45 +71,77 @@ describe('ProjectsPage', () => {
   it('surfaces unavailable project backend instead of clearing the form silently', async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === 'GET_PROJECT_CONTEXT_STATE') return EMPTY_PROJECT_STATE;
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: false, error: 'no_active_deepseek_conversation' };
       if (message.type === 'CREATE_PROJECT_CONTEXT') return null;
       return { ok: true };
     });
 
     await renderProjectsPage(sendMessage);
     await enterProjectName('Alpha');
-    await clickCreateProject();
+    await clickButton('创建项目');
 
     expect(projectNameInput().value).toBe('Alpha');
     expect(container.textContent).toContain('项目后端不可用');
-    expect(container.textContent).not.toContain('当前项目：Alpha');
+    expect(container.textContent).not.toContain('0 个对话，0 条项目记忆');
   });
 
-  it('passes the optional GitHub token only when importing a repository', async () => {
+  it('adds the current DeepSeek conversation to the selected project', async () => {
     const project = createProject('project-1', 'Alpha');
-    const state: ProjectContextState = {
+    let state: ProjectContextState = {
       ...EMPTY_PROJECT_STATE,
       projects: [project],
-      activeProjectId: project.id,
     };
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
       if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
-      if (message.type === 'IMPORT_GITHUB_PROJECT_CONTEXT') return { ok: true, files: [], warnings: [] };
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: true, conversation: CURRENT_CONVERSATION };
+      if (message.type === 'ADD_CONVERSATION_TO_PROJECT') {
+        state = {
+          ...state,
+          conversations: [{
+            ...CURRENT_CONVERSATION,
+            projectId: project.id,
+            addedAt: 1,
+            lastSeenAt: 2,
+          }],
+        };
+        return { ok: true, conversation: state.conversations[0] };
+      }
       return { ok: true };
     });
 
     await renderProjectsPage(sendMessage);
-    await enterInput('https://github.com/owner/repo', 'https://github.com/owner/repo');
-    await enterInput('GitHub Token（可选，不会保存）', '  github_pat_test  ');
-    await clickButton('导入 GitHub 仓库');
+    await clickButton('加入当前对话');
 
     expect(sendMessage).toHaveBeenCalledWith({
-      type: 'IMPORT_GITHUB_PROJECT_CONTEXT',
+      type: 'ADD_CONVERSATION_TO_PROJECT',
       payload: {
         projectId: 'project-1',
-        url: 'https://github.com/owner/repo',
-        token: 'github_pat_test',
+        conversation: CURRENT_CONVERSATION,
       },
     });
+    expect(container.textContent).toContain('查看项目进展');
+  });
+
+  it('surfaces project mutation failures instead of reloading as success', async () => {
+    const project = createProject('project-1', 'Alpha');
+    const state: ProjectContextState = {
+      ...EMPTY_PROJECT_STATE,
+      projects: [project],
+    };
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: true, conversation: CURRENT_CONVERSATION };
+      if (message.type === 'UPDATE_PROJECT_CONTEXT') return { ok: false, error: 'update failed' };
+      return { ok: true };
+    });
+
+    await renderProjectsPage(sendMessage);
+    await clickButton('保存更改');
+
+    expect(container.textContent).toContain('update failed');
   });
 });
 
@@ -140,10 +178,6 @@ async function enterInput(placeholder: string, value: string) {
   });
 }
 
-async function clickCreateProject() {
-  await clickButton('创建项目');
-}
-
 async function clickButton(label: string) {
   const button = Array.from(container.querySelectorAll('button'))
     .find((candidate) => candidate.textContent === label);
@@ -174,11 +208,6 @@ function createProject(id: string, name: string): ProjectContext {
     name,
     description: '',
     instructions: '',
-    source: {
-      kind: 'manual',
-      label: 'Manual project',
-      importedAt: 1,
-    },
     createdAt: 1,
     updatedAt: 1,
   };

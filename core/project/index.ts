@@ -1,40 +1,28 @@
 export type {
+  CurrentDeepSeekConversation,
   ProjectContext,
   ProjectContextCreateInput,
   ProjectContextState,
-  ProjectFile,
-  ProjectFileInput,
+  ProjectContextUpdateInput,
+  ProjectConversation,
+  ProjectConversationInput,
   ProjectPromptContext,
-  ProjectRagChunk,
-  ProjectSource,
-  ProjectSourceKind,
 } from './types';
 
 export { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
 
 export {
-  chunkProjectFile,
-  formatProjectPromptContext,
-  searchProjectFiles,
-  tokenizeProjectText,
-} from './rag';
-
-export {
-  MAX_PROJECT_FILE_BYTES,
-  MAX_PROJECT_IMPORT_FILES,
-  fetchGitHubProjectFiles,
-  normalizeProjectFiles,
-  parseGitHubRepository,
-} from './sources';
-
-export {
-  addProjectFiles,
+  addConversationToProject,
+  bindPendingProjectConversation,
   createProjectContext,
   deleteProjectContext,
-  getActiveProjectPromptContext,
+  formatProjectPromptContext,
   getProjectContextState,
+  getProjectForConversation,
+  getProjectPromptContextForConversation,
   normalizeProjectContextState,
+  removeConversationFromProject,
   saveProjectContextState,
-  setActiveProjectContext,
-  setActiveProjectFiles,
+  setPendingProjectContext,
+  updateProjectContext,
 } from './store';

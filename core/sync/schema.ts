@@ -17,13 +17,11 @@ import {
   PROJECT_CONTEXT_SCHEMA_VERSION,
   type ProjectContext,
   type ProjectContextState,
-  type ProjectFile,
-  type ProjectSourceKind,
+  type ProjectConversation,
 } from '../project/types';
 
 const MEMORY_TYPES: readonly MemoryType[] = ['user', 'feedback', 'topic', 'reference'];
 const SKILL_SOURCES: readonly SkillSource[] = ['builtin', 'third-party', 'official', 'custom', 'remote'];
-const PROJECT_SOURCE_KINDS: readonly ProjectSourceKind[] = ['manual', 'local_folder', 'github', 'web_page'];
 const SAVED_ITEM_KINDS: readonly SavedItemKind[] = ['snippet', 'bookmark'];
 
 export function parseValidatedArray<T>(
@@ -58,6 +56,8 @@ export function validateStoredMemory(value: unknown, path = 'memory'): Omit<Memo
   const object = objectValue(value, path);
   return {
     syncId: requiredString(object.syncId, `${path}.syncId`),
+    scope: object.scope === 'project' ? 'project' : 'global',
+    ...(object.scope === 'project' ? { projectId: requiredString(object.projectId, `${path}.projectId`) } : {}),
     type: enumValue(object.type, MEMORY_TYPES, `${path}.type`),
     name: requiredString(object.name, `${path}.name`),
     content: requiredString(object.content, `${path}.content`),
@@ -75,6 +75,8 @@ export function validateImportedMemory(value: unknown, path = 'memory'): NewMemo
   const stored = validateStoredMemory(value, path);
   return {
     syncId: stored.syncId,
+    scope: stored.scope,
+    projectId: stored.projectId,
     type: stored.type,
     name: stored.name,
     content: stored.content,
@@ -166,36 +168,25 @@ export function validateSavedItemsState(value: unknown, path = 'savedItems'): Sa
 
 export function validateProjectContext(value: unknown, path = 'project'): ProjectContext {
   const object = objectValue(value, path);
-  const source = objectValue(object.source, `${path}.source`);
   return {
     id: requiredString(object.id, `${path}.id`),
     name: requiredString(object.name, `${path}.name`),
     description: typeof object.description === 'string' ? object.description : '',
     instructions: typeof object.instructions === 'string' ? object.instructions : '',
-    source: {
-      kind: enumValue(source.kind, PROJECT_SOURCE_KINDS, `${path}.source.kind`),
-      label: requiredString(source.label, `${path}.source.label`),
-      ...(source.url === undefined ? {} : { url: requiredString(source.url, `${path}.source.url`) }),
-      ...(source.owner === undefined ? {} : { owner: requiredString(source.owner, `${path}.source.owner`) }),
-      ...(source.repo === undefined ? {} : { repo: requiredString(source.repo, `${path}.source.repo`) }),
-      ...(source.ref === undefined ? {} : { ref: requiredString(source.ref, `${path}.source.ref`) }),
-      importedAt: requiredFiniteNumber(source.importedAt, `${path}.source.importedAt`),
-    },
     createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
     updatedAt: requiredFiniteNumber(object.updatedAt, `${path}.updatedAt`),
   };
 }
 
-export function validateProjectFile(value: unknown, path = 'projectFile'): ProjectFile {
+export function validateProjectConversation(value: unknown, path = 'projectConversation'): ProjectConversation {
   const object = objectValue(value, path);
   return {
-    id: requiredString(object.id, `${path}.id`),
+    conversationId: requiredString(object.conversationId, `${path}.conversationId`),
     projectId: requiredString(object.projectId, `${path}.projectId`),
-    path: requiredString(object.path, `${path}.path`),
-    content: requiredString(object.content, `${path}.content`),
-    sizeBytes: requiredFiniteNumber(object.sizeBytes, `${path}.sizeBytes`),
-    sourceKind: enumValue(object.sourceKind, PROJECT_SOURCE_KINDS, `${path}.sourceKind`),
-    createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
+    title: requiredString(object.title, `${path}.title`),
+    url: typeof object.url === 'string' ? object.url : '',
+    addedAt: requiredFiniteNumber(object.addedAt, `${path}.addedAt`),
+    lastSeenAt: requiredFiniteNumber(object.lastSeenAt, `${path}.lastSeenAt`),
   };
 }
 
@@ -208,37 +199,32 @@ export function validateProjectContextState(value: unknown, path = 'projectConte
   const projects = arrayValue(object.projects, `${path}.projects`)
     .map((item, index) => validateProjectContext(item, `${path}.projects[${index}]`));
   const projectIds = new Set(projects.map((project) => project.id));
-  const files = arrayValue(object.files, `${path}.files`)
-    .map((item, index) => validateProjectFile(item, `${path}.files[${index}]`));
+  const conversations = arrayValue(object.conversations, `${path}.conversations`)
+    .map((item, index) => validateProjectConversation(item, `${path}.conversations[${index}]`));
+  const conversationIds = new Set<string>();
 
-  for (const file of files) {
-    if (!projectIds.has(file.projectId)) {
-      throw new Error(`${path}.files contains file for unknown project: ${file.projectId}`);
+  for (const conversation of conversations) {
+    if (!projectIds.has(conversation.projectId)) {
+      throw new Error(`${path}.conversations contains conversation for unknown project: ${conversation.projectId}`);
     }
+    if (conversationIds.has(conversation.conversationId)) {
+      throw new Error(`${path}.conversations contains duplicate conversation: ${conversation.conversationId}`);
+    }
+    conversationIds.add(conversation.conversationId);
   }
 
-  const activeProjectId = object.activeProjectId === null
+  const pendingProjectId = object.pendingProjectId === null
     ? null
-    : requiredString(object.activeProjectId, `${path}.activeProjectId`);
-  if (activeProjectId !== null && !projectIds.has(activeProjectId)) {
-    throw new Error(`${path}.activeProjectId references an unknown project`);
-  }
-
-  const fileIds = new Set(files.map((file) => file.id));
-  const activeFileIds = arrayValue(object.activeFileIds, `${path}.activeFileIds`)
-    .map((item, index) => requiredString(item, `${path}.activeFileIds[${index}]`));
-  for (const fileId of activeFileIds) {
-    if (!fileIds.has(fileId)) {
-      throw new Error(`${path}.activeFileIds contains an unknown file: ${fileId}`);
-    }
+    : requiredString(object.pendingProjectId, `${path}.pendingProjectId`);
+  if (pendingProjectId !== null && !projectIds.has(pendingProjectId)) {
+    throw new Error(`${path}.pendingProjectId references an unknown project`);
   }
 
   return {
     schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
     projects,
-    files,
-    activeProjectId,
-    activeFileIds,
+    conversations,
+    pendingProjectId,
   };
 }
 

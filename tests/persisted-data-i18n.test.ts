@@ -143,6 +143,7 @@ describe('persisted user data i18n boundaries', () => {
   it('keeps WebDAV sync payload validation data-only and locale-independent', () => {
     const memory: Omit<Memory, 'id'> = {
       syncId: 'sync-中文',
+      scope: 'global',
       type: 'reference',
       name: '原始标题',
       content: 'Do not translate https://example.com/中文',
