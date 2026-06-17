@@ -31,6 +31,7 @@ const AUTOMATION_MISSING_TOKEN_MESSAGE =
 
 export interface AutomationRunnerOptions {
   executeToolCall?: (call: ToolCall) => Promise<ToolResult>;
+  clientHeaders?: Record<string, string>;
 }
 
 export async function runDeepSeekAutomation(
@@ -43,7 +44,8 @@ export async function runDeepSeekAutomation(
 
   try {
     parentMessageId = normalizeMessageId(request.parentMessageId, 'parent_message_id');
-    const clientHeaders = createClientHeaders({ missingTokenMessage: AUTOMATION_MISSING_TOKEN_MESSAGE });
+    const clientHeaders = options?.clientHeaders
+      ?? createClientHeaders({ missingTokenMessage: AUTOMATION_MISSING_TOKEN_MESSAGE });
     chatSessionId ??= await createChatSession(clientHeaders);
     const { augmented: prompt } = buildPromptAugmentation(request.prompt, {
       memories: request.promptContext?.memories ?? [],
@@ -84,7 +86,7 @@ export async function runDeepSeekAutomation(
 
     const completedAt = Date.now();
     const finalAssistantMessageId = stream.responseMessageId ?? assistantMessageId;
-    const history = await readHistorySnapshot(chatSessionId, finalAssistantMessageId).catch(() => null);
+    const history = await readHistorySnapshot(chatSessionId, finalAssistantMessageId, { clientHeaders }).catch(() => null);
     const nextParentMessageId = history?.parentMessageId ?? finalAssistantMessageId;
     const result: AutomationRunnerSuccess = {
       ok: true,

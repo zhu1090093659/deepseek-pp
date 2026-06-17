@@ -84,6 +84,29 @@ describe('runDeepSeekAutomation PoW handling', () => {
     adapterMocks.readHistorySnapshot.mockResolvedValue(null);
   });
 
+  it('uses injected client headers without calling createClientHeaders', async () => {
+    adapterMocks.submitPrompt.mockResolvedValueOnce({
+      assistantText: 'Done.',
+      responseMessageId: 101,
+      requestMessageId: 100,
+      finished: true,
+    });
+
+    const result = await runDeepSeekAutomation(createRequest(), {
+      clientHeaders: { Authorization: 'Bearer injected-token' },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(adapterMocks.submitPrompt.mock.calls[0][0]).toMatchObject({
+      clientHeaders: { Authorization: 'Bearer injected-token' },
+    });
+    expect(adapterMocks.readHistorySnapshot).toHaveBeenCalledWith(
+      'session-1',
+      101,
+      { clientHeaders: { Authorization: 'Bearer injected-token' } },
+    );
+  });
+
   it('creates fresh PoW headers for the initial completion and each tool continuation', async () => {
     adapterMocks.submitPrompt
       .mockResolvedValueOnce({

@@ -8,7 +8,7 @@ describe('DeepSeek web adapter streaming', () => {
   });
 
   it('can stream chunks without retaining the full assistant text', async () => {
-    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => createSseResponse([
+    vi.stubGlobal('fetch', vi.fn(async () => createSseResponse([
       'data: {"v":"Hello "}',
       'data: {"v":"world"}',
       'data: {"p":"response/status","v":"FINISHED"}',
@@ -33,7 +33,7 @@ describe('DeepSeek web adapter streaming', () => {
   });
 
   it('retains full assistant text by default', async () => {
-    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => createSseResponse([
+    vi.stubGlobal('fetch', vi.fn(async () => createSseResponse([
       'data: {"v":"Hello "}',
       'data: {"v":"world"}',
     ].join('\n\n'))));

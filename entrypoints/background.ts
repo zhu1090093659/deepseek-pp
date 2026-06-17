@@ -157,6 +157,7 @@ import {
   setAutomationStatus,
   updateAutomation,
 } from '../core/automation/store';
+import { resolveAutomationClientHeaders } from '../core/automation/auth';
 import { runDeepSeekAutomation } from '../core/automation/runner';
 import {
   AUTOMATION_WAKE_ALARM_NAME,
@@ -1191,6 +1192,14 @@ async function broadcastToTabs(payload: Record<string, unknown>, excludeTabId?: 
 }
 
 async function loadOrRefreshClientHeaders(preferredTabId?: number): Promise<Record<string, string> | null> {
+  // When the caller knows the active DeepSeek tab, refresh from it first so manual
+  // flows do not reuse a stale cached token without hitting the live page context.
+  if (preferredTabId !== undefined) {
+    await refreshClientHeadersFromDeepSeekTabs(preferredTabId);
+    const refreshed = await loadClientHeadersFromStorage();
+    if (refreshed) return refreshed;
+  }
+
   const cached = await loadClientHeadersFromStorage();
   if (cached) return cached;
 
@@ -1597,7 +1606,7 @@ async function runAutomationNow(id: string, excludeTabId?: number) {
     automationId: id,
     trigger: 'manual',
     scheduledFor: null,
-    executor: executeAutomationWithContext,
+    executor: (request) => executeAutomationWithContext(request, excludeTabId),
   });
 
   await broadcastAutomationUpdate(excludeTabId);
@@ -1609,12 +1618,22 @@ async function runAutomationNow(id: string, excludeTabId?: number) {
 
 async function executeAutomationWithContext(
   request: AutomationRunnerRequest,
+  preferredTabId?: number,
 ): Promise<AutomationRunnerResult> {
-  const [memories, activePreset, toolDescriptors] = await Promise.all([
+  const [memories, activePreset, toolDescriptors, clientHeaders] = await Promise.all([
     getAllMemories(),
     getActivePreset(),
     getRuntimeToolDescriptors(currentBackgroundLocale),
+    loadOrRefreshClientHeaders(preferredTabId),
   ]);
+  const resolvedHeaders = resolveAutomationClientHeaders(
+    clientHeaders,
+    request,
+    backgroundT('background.auth.missingDeepSeek'),
+  );
+  if (resolvedHeaders.kind === 'failure') {
+    return resolvedHeaders.result;
+  }
   const enabledDescriptors = toolDescriptors.filter((descriptor) => descriptor.execution.enabled);
   const [project, projectPromptContext] = request.chatSessionId
     ? await Promise.all([
@@ -1633,6 +1652,7 @@ async function executeAutomationWithContext(
       toolDescriptors: enabledDescriptors,
     },
   }, {
+    clientHeaders: resolvedHeaders.headers,
     executeToolCall: (call) => executeBackgroundRuntimeToolCall(call, 'automation'),
   });
 }

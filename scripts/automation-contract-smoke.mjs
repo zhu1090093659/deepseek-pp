@@ -50,6 +50,10 @@ assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "import Autom
 assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "sub === 'automation' && <AutomationPage />");
 assertContains('entrypoints/sidepanel/pages/AutomationPage.tsx', 'export default function AutomationPage');
 assertContains('core/automation/runner.ts', 'runDeepSeekAutomation');
+assertContains('core/automation/auth.ts', 'resolveAutomationClientHeaders');
+assertContains('entrypoints/background.ts', 'resolveAutomationClientHeaders');
+assertContains('entrypoints/background.ts', 'loadOrRefreshClientHeaders(preferredTabId)');
+assertContains('entrypoints/background.ts', 'if (preferredTabId !== undefined)');
 assertContains('core/automation/scheduler.ts', 'runAutomation');
 assertContains('wxt.config.ts', "'alarms'");
 assertContains('entrypoints/background.ts', 'chrome.alarms.create');
@@ -67,6 +71,7 @@ assertContains('core/inline-agent/loop.ts', 'INLINE_AGENT_MAX_STEPS');
 assertContains('core/inline-agent/prompt.ts', 'buildContinuationPrompt');
 assertContains('core/inline-agent/renderer.ts', 'createAgentStepElement');
 assertContains('core/deepseek/adapter.ts', 'BYPASS_HOOK_HEADER');
+assertContains('core/deepseek/adapter.ts', 'getDeepSeekWebOrigin');
 assertContains('core/shell/index.ts', 'createShellMcpPresetInput');
 assertContains('scripts/shell-mcp-host.mjs', '../packages/shell-host/native/shell-mcp-host.mjs');
 assertContains('scripts/install-shell-host.mjs', '../packages/shell-host/lib/installer.mjs');
