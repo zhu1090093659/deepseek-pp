@@ -9,6 +9,7 @@ import {
   executeMcpToolCall,
   getMcpToolDescriptors,
   refreshMcpServerDiscovery,
+  type McpToolExecutionOptions,
 } from '../mcp/discovery';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { getAllMcpServers } from '../mcp/store';
@@ -48,6 +49,8 @@ import {
 } from '../browser-control/tool';
 import { getWebToolSettings } from './web-settings';
 import type { ToolCall, ToolDescriptor, ToolExecutionTrigger, ToolResult } from './types';
+
+export type RuntimeToolCallOptions = McpToolExecutionOptions;
 
 const memoryRuntime: MemoryToolRuntime = {
   async saveMemory(input: NewMemory) {
@@ -102,8 +105,9 @@ export async function executeRuntimeToolCall(
   call: ToolCall,
   source: ToolExecutionTrigger,
   locale: SupportedLocale = DEFAULT_LOCALE,
+  options: RuntimeToolCallOptions = {},
 ): Promise<ToolResult> {
-  const result = await executeToolCallWithoutHistory(call, locale);
+  const result = await executeToolCallWithoutHistory(call, locale, options);
   await appendToolCallHistory(call, result, source);
   return result;
 }
@@ -111,6 +115,7 @@ export async function executeRuntimeToolCall(
 async function executeToolCallWithoutHistory(
   call: ToolCall,
   locale: SupportedLocale,
+  options: RuntimeToolCallOptions,
 ): Promise<ToolResult> {
   if (call.parseError) {
     return {
@@ -149,7 +154,7 @@ async function executeToolCallWithoutHistory(
   }
 
   if (call.provider?.kind === 'mcp' || call.descriptorId?.startsWith('mcp:')) {
-    return executeMcpToolCall(call);
+    return executeMcpToolCall(call, options);
   }
 
   return {

@@ -88,6 +88,7 @@ import {
   type MultimodalMediaInput,
   type MultimodalMediaKind,
 } from '../core/multimodal/media';
+import { calculateMultimodalRequestAugmentationTimeoutMs } from '../core/multimodal';
 
 import { createClientHeaders, rememberDeepSeekClientHeaders, saveClientHeadersToStorage } from '../core/deepseek/adapter';
 import type {
@@ -636,7 +637,15 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       throw new Error('Request body must be a string.');
     }
 
-    const bodyWithMultimodalMedia = await consumePendingMultimodalMediaForRequest(data.body);
+    const bodyWithMultimodalMedia = await consumePendingMultimodalMediaForRequest(data.body, {
+      onLongRunning(timeoutMs) {
+        postToMainWorld({
+          type: 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT',
+          id,
+          timeoutMs,
+        });
+      },
+    });
     const project = await resolveProjectContextForRequestBody(bodyWithMultimodalMedia);
     const result = augmentRequestBody(bodyWithMultimodalMedia, {
       memories: currentMemories,
@@ -1711,7 +1720,10 @@ function insertPromptText(text: string) {
   textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: text }));
 }
 
-async function consumePendingMultimodalMediaForRequest(bodyStr: string): Promise<string> {
+async function consumePendingMultimodalMediaForRequest(
+  bodyStr: string,
+  options: { onLongRunning?: (timeoutMs: number) => void } = {},
+): Promise<string> {
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(bodyStr);
@@ -1729,6 +1741,7 @@ async function consumePendingMultimodalMediaForRequest(bodyStr: string): Promise
   if (!originalPrompt.trim()) {
     throw new Error(contentT('content.multimodalMedia.emptyPrompt'));
   }
+  options.onLongRunning?.(calculateMultimodalRequestAugmentationTimeoutMs(media));
 
   try {
     multimodalMediaBusy = true;

@@ -65,6 +65,7 @@ import {
   executeRuntimeToolCall,
   getRuntimeToolDescriptors,
   refreshRuntimeToolDescriptors,
+  type RuntimeToolCallOptions,
 } from '../core/tool/runtime';
 import {
   browserControlService,
@@ -129,6 +130,7 @@ import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput
 import {
   MULTIMODAL_MCP_NATIVE_HOST,
   MULTIMODAL_MCP_SERVER_NAME,
+  MULTIMODAL_MCP_REQUEST_TIMEOUT_MS,
   createMultimodalMcpPresetInput,
 } from '../core/multimodal';
 import {
@@ -1400,8 +1402,9 @@ async function broadcastConversationExportProgress(
 async function executeBackgroundRuntimeToolCall(
   call: ToolCall,
   source: ToolExecutionTrigger,
+  options?: RuntimeToolCallOptions,
 ): Promise<ToolResult> {
-  return executeRuntimeToolCall(call, source, currentBackgroundLocale);
+  return executeRuntimeToolCall(call, source, currentBackgroundLocale, options);
 }
 
 async function analyzeMultimodalMedia(
@@ -1432,6 +1435,7 @@ async function analyzeMultimodalMedia(
           output_schema: 'general',
         }, request),
         'manual_chat',
+        { timeoutMs: MULTIMODAL_MCP_REQUEST_TIMEOUT_MS },
       );
       const analysis = createMultimodalAnalysisItem(
         `images:${images.map((item) => item.id).join(',')}`,
@@ -1464,6 +1468,7 @@ async function analyzeMultimodalMedia(
           output_schema: 'summary',
         }, request),
         'manual_chat',
+        { timeoutMs: MULTIMODAL_MCP_REQUEST_TIMEOUT_MS },
       );
       const analysis = createMultimodalAnalysisItem(video.id, 'video', [video], result);
       if (!result.ok) {

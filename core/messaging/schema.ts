@@ -1,6 +1,7 @@
 export type BridgeMessageType =
   | 'SYNC_HOOK_STATE'
   | 'AUGMENT_REQUEST_BODY'
+  | 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT'
   | 'AUGMENT_REQUEST_BODY_RESULT'
   | 'TOOL_CALL'
   | 'RESTORE_TOOL_CALLS'
@@ -17,12 +18,14 @@ export interface ValidatedBridgeMessage {
   body?: string;
   ok?: boolean;
   error?: string;
+  timeoutMs?: number;
   [key: string]: unknown;
 }
 
 const BRIDGE_TYPES = new Set<string>([
   'SYNC_HOOK_STATE',
   'AUGMENT_REQUEST_BODY',
+  'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT',
   'AUGMENT_REQUEST_BODY_RESULT',
   'TOOL_CALL',
   'RESTORE_TOOL_CALLS',
@@ -47,6 +50,10 @@ export function validateBridgeMessage(
   if ('body' in message && typeof message.body !== 'string') return null;
   if ('ok' in message && typeof message.ok !== 'boolean') return null;
   if ('error' in message && typeof message.error !== 'string') return null;
+  if (
+    'timeoutMs' in message &&
+    (typeof message.timeoutMs !== 'number' || !Number.isFinite(message.timeoutMs) || message.timeoutMs <= 0)
+  ) return null;
 
   return message as ValidatedBridgeMessage;
 }

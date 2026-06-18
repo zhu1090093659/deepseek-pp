@@ -12,7 +12,13 @@ export type {
 } from './contracts';
 
 export {
+  calculateMultimodalRequestAugmentationTimeoutMs,
   createMultimodalMcpPresetInput,
+  MULTIMODAL_MCP_CONNECT_TIMEOUT_MS,
+  MULTIMODAL_MCP_DISCOVERY_TIMEOUT_MS,
+  MULTIMODAL_MCP_REQUEST_TIMEOUT_MS,
+  MULTIMODAL_REQUEST_AUGMENTATION_MAX_TIMEOUT_MS,
+  MULTIMODAL_REQUEST_AUGMENTATION_TIMEOUT_MS,
 } from './policy';
 
 export {
@@ -24,6 +30,7 @@ export {
 } from './media';
 
 export type {
+  MultimodalRequestAugmentationMedia,
   MultimodalMcpPresetOptions,
 } from './policy';
 

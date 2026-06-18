@@ -73,7 +73,15 @@ export async function ensureMcpServerDiscovery(
   return refreshMcpServerDiscovery(serverId, options);
 }
 
-export async function executeMcpToolCall(call: ToolCall): Promise<ToolResult> {
+export interface McpToolExecutionOptions {
+  timeoutMs?: number;
+  maxResultBytes?: number;
+}
+
+export async function executeMcpToolCall(
+  call: ToolCall,
+  options: McpToolExecutionOptions = {},
+): Promise<ToolResult> {
   const serverId = call.provider?.kind === 'mcp'
     ? call.provider.id
     : call.provider?.id || call.descriptorId?.split(':')[1];
@@ -147,8 +155,8 @@ export async function executeMcpToolCall(call: ToolCall): Promise<ToolResult> {
       provider: descriptor?.provider ?? call.provider,
     },
     descriptor,
-    timeoutMs: descriptor?.execution.timeoutMs ?? server.timeouts.requestMs,
-    maxResultBytes: descriptor?.execution.maxResultBytes ?? server.limits.maxResultBytes,
+    timeoutMs: options.timeoutMs ?? descriptor?.execution.timeoutMs ?? server.timeouts.requestMs,
+    maxResultBytes: options.maxResultBytes ?? descriptor?.execution.maxResultBytes ?? server.limits.maxResultBytes,
   });
 }
 

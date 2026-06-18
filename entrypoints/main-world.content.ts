@@ -5,6 +5,10 @@ import {
   type ResponseCompletePayload,
   type ResponseTokenSpeedPayload,
 } from '../core/interceptor/fetch-hook';
+import {
+  MULTIMODAL_REQUEST_AUGMENTATION_MAX_TIMEOUT_MS,
+  MULTIMODAL_REQUEST_AUGMENTATION_TIMEOUT_MS,
+} from '../core/multimodal';
 import { initSkillPopup } from '../core/ui/skill-popup';
 import type {
   ToolCall,
@@ -36,6 +40,7 @@ type AugmentResultMessage = {
   ok?: boolean;
   result?: RequestBodyModification | null;
   error?: string;
+  timeoutMs?: number;
 };
 
 let contentPort: MessagePort | null = null;
@@ -129,6 +134,10 @@ function handlePortMessage(data: unknown): void {
       settleAugmentRequest(message);
       break;
     }
+    case 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT': {
+      extendAugmentRequestTimeout(message);
+      break;
+    }
   }
 }
 
@@ -147,6 +156,26 @@ function requestAugmentedBody(body: string): Promise<RequestBodyModification | n
     pendingAugmentRequests.set(id, { resolve, reject, timeout });
     postToContent({ type: 'AUGMENT_REQUEST_BODY', id, body });
   });
+}
+
+function extendAugmentRequestTimeout(message: AugmentResultMessage): void {
+  const id = message.id;
+  if (!id) return;
+  const pending = pendingAugmentRequests.get(id);
+  if (!pending) return;
+
+  clearTimeout(pending.timeout);
+  const timeoutMs = Math.max(
+    REQUEST_TIMEOUT_MS,
+    Math.min(
+      message.timeoutMs ?? MULTIMODAL_REQUEST_AUGMENTATION_TIMEOUT_MS,
+      MULTIMODAL_REQUEST_AUGMENTATION_MAX_TIMEOUT_MS,
+    ),
+  );
+  pending.timeout = setTimeout(() => {
+    pendingAugmentRequests.delete(id);
+    pending.reject(new Error('DeepSeek++ request augmentation timed out.'));
+  }, timeoutMs);
 }
 
 function settleAugmentRequest(message: AugmentResultMessage): void {
