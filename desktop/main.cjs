@@ -392,7 +392,9 @@ ipcMain.handle('dpp-debugger-send', (_e, tabId, method, params) => {
 });
 
 // ---------------------------------------------------------------------------
-// Content-script injection (same files the Chrome/Android builds use).
+// Content-script injection — the same built files the Chrome/Android builds use.
+// This is how the extension enhances the DeepSeek chat (memory, tools, tok/s,
+// /skill popup, tool-result blocks); the side panel is the control surface.
 // ---------------------------------------------------------------------------
 function readDist(rel) {
   try { return fs.readFileSync(path.join(DIST_DIR, rel), 'utf8'); } catch { return null; }
@@ -501,7 +503,12 @@ function createChatWindow() {
     if (template.length > 0) Menu.buildFromTemplate(template).popup({ window: chatWindow });
   });
   chatWindow.loadURL(CHAT_URL);
-  chatWindow.on('closed', () => { chatWindow = null; });
+  chatWindow.on('closed', () => {
+    chatWindow = null;
+    // The DeepSeek window is primary; closing it quits the whole app (sidebar +
+    // hidden background) so the session profile flushes and unlocks for next launch.
+    if (process.platform !== 'darwin') app.quit();
+  });
 }
 
 // DeepSeek's site shows an "abnormal environment" warning when it sees the
@@ -516,7 +523,21 @@ function normalizeUserAgent() {
   console.log('[DeepSeek++] UA:', clean);
 }
 
+// One instance only: a second launch can't share the session profile (locked
+// cookie/storage DBs), which would surface as being logged out. Defer to the
+// running instance and (re)open its DeepSeek window.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+app.on('second-instance', () => {
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    if (chatWindow.isMinimized()) chatWindow.restore();
+    chatWindow.focus();
+  } else if (app.isReady()) {
+    createChatWindow();
+  }
+});
+
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) { app.quit(); return; }
   normalizeUserAgent();
   registerAssetProtocol();
   Menu.setApplicationMenu(null);
