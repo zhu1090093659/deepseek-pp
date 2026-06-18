@@ -3,8 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 const version = packageJson.version;
 

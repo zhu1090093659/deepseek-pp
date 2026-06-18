@@ -2,8 +2,9 @@
 import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const chromeBuildDir = resolve(root, 'dist/chrome-mv3');
 const androidAssetDir = resolve(root, 'android/app/src/main/assets/dpp');
 const shimSource = resolve(root, 'android/web/android-bridge-shim.js');

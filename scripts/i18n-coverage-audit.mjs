@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const failures = [];
 const hanText = /\p{Script=Han}/u;
 const scannableExtensions = new Set(['.js', '.jsx', '.json', '.mjs', '.ts', '.tsx']);
@@ -213,5 +214,6 @@ function readText(relativePath) {
 }
 
 function toProjectPath(absolutePath) {
-  return relative(root, absolutePath).split('/').join('/');
+  // Normalize Windows backslashes so paths match the forward-slash allowlist keys.
+  return relative(root, absolutePath).split(/[\\/]/).join('/');
 }
