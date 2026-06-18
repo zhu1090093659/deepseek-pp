@@ -110,7 +110,7 @@ import {
   saveVoiceSettings,
 } from '../core/voice/settings';
 import type { SandboxExecutionResult, SandboxRunRequest, SandboxToolRuntime } from '../core/sandbox';
-import { getCurrentBrowserExtensionEnvironment } from '../core/platform';
+import { getCurrentPlatformEnvironment } from '../core/platform';
 import { readOptionalChromeApi } from '../core/platform/chrome-api';
 import {
   dismissWhatsNew,
@@ -878,7 +878,7 @@ async function handleMessage(
     }
 
     case 'GET_PLATFORM_CAPABILITIES':
-      return getCurrentBrowserExtensionEnvironment();
+      return getCurrentPlatformEnvironment();
 
     case 'GET_PROJECT_CONTEXT_STATE':
       return getProjectContextState();

@@ -16,6 +16,7 @@ export {
   createCapabilityMap,
   getCurrentBrowserExtensionEnvironment,
   getCurrentPlatformEnvironment,
+  getElectronDesktopEnvironment,
   isCapabilitySupported,
 } from './capabilities';
 

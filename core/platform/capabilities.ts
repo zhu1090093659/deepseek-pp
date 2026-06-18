@@ -1,6 +1,6 @@
 import { readOptionalChromeApi } from './chrome-api';
 
-export type PlatformKind = 'browser_extension' | 'android_webview' | 'unknown';
+export type PlatformKind = 'browser_extension' | 'android_webview' | 'electron_desktop' | 'unknown';
 
 export type PlatformCapability =
   | 'storage'
@@ -135,7 +135,47 @@ export function getCurrentBrowserExtensionEnvironment(): PlatformEnvironment {
   };
 }
 
+// The Electron desktop shell sets this marker on `window` from its preload
+// scripts (see desktop/). Detected before the Android/extension checks so the
+// host advertises its richer, Node-backed capability set.
+export function getElectronDesktopEnvironment(): PlatformEnvironment {
+  return {
+    kind: 'electron_desktop',
+    name: 'Electron Desktop',
+    capabilities: createCapabilityMap({
+      storage: true,
+      runtimeMessaging: true,
+      downloads: true,
+      filePicker: true,
+      folderPicker: true,
+      assetUrl: true,
+      // Backed by child_process in the Electron main process (shell host / MCP).
+      nativeMessaging: true,
+      // AI-controlled tabs are Electron windows; CDP is webContents.debugger.
+      tabs: true,
+      debugger: true,
+      browserControl: true,
+      accessibilityTree: true,
+      // Timers in the persistent (never-throttled) background window — unlike an
+      // MV3 service worker, it is not torn down, so the scheduler keeps running.
+      alarms: true,
+      // Phase 2c remaining: contextMenus (Electron Menu), sidePanel.
+    }),
+  };
+}
+
+function hasDesktopBridgeMarker(): boolean {
+  try {
+    return typeof window !== 'undefined' &&
+      (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__ === true;
+  } catch {
+    return false;
+  }
+}
+
 export function getCurrentPlatformEnvironment(): PlatformEnvironment {
+  if (hasDesktopBridgeMarker()) return getElectronDesktopEnvironment();
+
   const androidBridge = typeof window !== 'undefined'
     ? (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge
     : undefined;

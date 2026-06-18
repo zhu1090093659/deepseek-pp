@@ -1,0 +1,35 @@
+{
+  "name": "deepseek-plus-plus-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop shell for DeepSeek++ (wraps chat.deepseek.com + the extension content scripts)",
+  "main": "main.cjs",
+  "scripts": {
+    "stage": "node ../scripts/copy-dist-to-desktop.mjs && node ../scripts/copy-shell-host-to-desktop.mjs",
+    "prestart": "npm run stage",
+    "start": "electron .",
+    "predist": "npm run stage",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "github.zhu1090093659.deepseekpp.desktop",
+    "productName": "DeepSeek++",
+    "directories": { "output": "release" },
+    "asar": false,
+    "files": [
+      "main.cjs",
+      "preload-chat.cjs",
+      "preload-background.cjs",
+      "background.html",
+      "dpp/**/*",
+      "native/**/*"
+    ],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg", "category": "public.app-category.productivity" },
+    "linux": { "target": "AppImage", "category": "Utility" }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

@@ -21,6 +21,13 @@ web-ext.config.ts
 native-host/
 .tmp-deepseek-live/
 
+# Electron desktop shell — generated/staged artifacts
+desktop/node_modules
+desktop/dpp/
+desktop/native/
+desktop/build/
+desktop/release/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

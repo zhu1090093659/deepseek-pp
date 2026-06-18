@@ -11,6 +11,7 @@ import type { McpServerTransportConfig } from '../core/mcp/types';
 
 afterEach(() => {
   delete (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge;
+  delete (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__;
   vi.unstubAllGlobals();
 });
 
@@ -89,6 +90,25 @@ describe('platform capability contracts', () => {
     expect(environment.capabilities.nativeMessaging).toBe(false);
     expect(environment.capabilities.sidePanel).toBe(false);
     expect(environment.capabilities.browserControl).toBe(false);
+  });
+
+  it('detects the Electron desktop host with native messaging enabled', () => {
+    (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__ = true;
+
+    const environment = getCurrentPlatformEnvironment();
+
+    expect(environment.kind).toBe('electron_desktop');
+    expect(environment.capabilities.storage).toBe(true);
+    expect(environment.capabilities.nativeMessaging).toBe(true);
+    expect(isShellNativeHostSupported(environment)).toBe(true);
+    // Phase 2b: browser control via webContents.debugger (CDP).
+    expect(environment.capabilities.browserControl).toBe(true);
+    expect(environment.capabilities.debugger).toBe(true);
+    expect(environment.capabilities.accessibilityTree).toBe(true);
+    // Phase 2c: automation scheduler via persistent-background timers.
+    expect(environment.capabilities.alarms).toBe(true);
+    // Remaining Phase 2c surfaces stay gated off until wired.
+    expect(environment.capabilities.contextMenus).toBe(false);
   });
 
   it('filters native MCP controls when native messaging is unsupported', () => {
