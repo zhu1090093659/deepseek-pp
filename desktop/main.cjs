@@ -29,23 +29,14 @@ const REPO_ROOT = path.join(__dirname, '..');
 const STORE_FILE = path.join(app.getPath('userData'), 'dpp-store.json');
 const SIDEBAR_WIDTH = 440;
 
-// Security: browser control features (tabs.create/reload/goBack/goForward) are
-// gated behind this flag. Set to true only if the user explicitly opts in.
-// Defaults to false to prevent untrusted content from creating/navigating windows.
-let enableBrowserControl = false;
+// Navigation guard (pure, unit-tested in tests/desktop-navigation-guard).
+const { isValidNavigationUrl } = require('./navigation-guard.cjs');
 
-// Privileged schemes that should never be loaded in controlled tabs.
-const PRIVILEGED_PROTOCOLS = new Set(['file:', 'chrome:', 'chrome-extension:', 'electron:', 'dppasset:']);
-
-function isValidNavigationUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (PRIVILEGED_PROTOCOLS.has(parsed.protocol)) return false;
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+// Browser control is gated by the persisted browser-control setting so the main
+// process and the sidepanel UI share a single source of truth: the sidepanel's
+// SET_BROWSER_CONTROL_ENABLED is written to chrome.storage.local, which is this
+// process's `store`. See isBrowserControlEnabled() below.
+const BROWSER_CONTROL_KEY = 'deepseek_pp_browser_control_settings';
 
 // App manifest is read once here in the main process so renderer preloads do not
 // need to require node:fs/node:path (which would expose Node in the same world as
@@ -93,6 +84,13 @@ function persist() {
     fs.writeFile(STORE_FILE, JSON.stringify(store), () => {});
   }, 50);
 }
+// Single source of truth for the browser-control gate: the persisted setting the
+// sidepanel toggles via SET_BROWSER_CONTROL_ENABLED (saved into `store`).
+function isBrowserControlEnabled() {
+  const s = store[BROWSER_CONTROL_KEY];
+  return !!(s && s.enabled === true);
+}
+
 function allSurfaces() {
   return [chatWindow, backgroundWindow, sidebarWindow].filter((w) => w && !w.isDestroyed() && !w.webContents.isDestroyed());
 }
@@ -355,7 +353,7 @@ ipcMain.handle('dpp-tabs-get', (_e, tabId) => {
   return controlledTabInfo(win, tabId);
 });
 ipcMain.handle('dpp-tabs-create', (_e, props) => {
-  if (!enableBrowserControl) throw new Error('Browser control is disabled. Enable it in settings to use tabs.create.');
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled. Enable it in settings to use tabs.create.');
   const url = typeof props.url === 'string' ? props.url : null;
   if (url && !isValidNavigationUrl(url)) throw new Error(`Blocked navigation to privileged URL: ${url}`);
   const id = ++controlledSeq;
@@ -363,8 +361,9 @@ ipcMain.handle('dpp-tabs-create', (_e, props) => {
   win.__dppPendingUrl = url || undefined;
   controlledTabs.set(id, win);
   win.webContents.on('did-navigate', () => { win.__dppPendingUrl = undefined; });
-  win.webContents.on('will-navigate', (_e, navUrl) => {
-    if (!isValidNavigationUrl(navUrl)) { win.webContents.stop(); }
+  // Issue #3: use event.preventDefault() to properly cancel disallowed navigations.
+  win.webContents.on('will-navigate', (event, navUrl) => {
+    if (!isValidNavigationUrl(navUrl)) event.preventDefault();
   });
   win.on('closed', () => {
     controlledTabs.delete(id);
@@ -388,31 +387,50 @@ ipcMain.handle('dpp-tabs-remove', (_e, tabId) => {
 });
 
 ipcMain.handle('dpp-tabs-reload', (_e, tabId) => {
-  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
   const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
   if (win && !win.isDestroyed()) win.webContents.reload();
   return true;
 });
 
 ipcMain.handle('dpp-tabs-go-back', (_e, tabId) => {
-  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
   const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
   if (win && !win.isDestroyed() && win.webContents.navigationHistory.canGoBack()) win.webContents.navigationHistory.goBack();
   return true;
 });
 
 ipcMain.handle('dpp-tabs-go-forward', (_e, tabId) => {
-  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
   const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
   if (win && !win.isDestroyed() && win.webContents.navigationHistory.canGoForward()) win.webContents.navigationHistory.goForward();
   return true;
 });
 
-// Browser control gating: allow the settings UI to query/enable.
-ipcMain.handle('dpp-browser-control-get', () => enableBrowserControl);
+// Gate chrome.debugger (attach / sendCommand) behind the same persisted setting.
+ipcMain.handle('dpp-debugger-attach', (_e, tabId, version) => {
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
+  const dbg = debuggerForTab(tabId);
+  if (!dbg.isAttached()) dbg.attach(version || '1.3');
+  wireDebuggerEvents(tabId);
+  return true;
+});
+ipcMain.handle('dpp-debugger-send', (_e, tabId, method, params) => {
+  if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
+  return debuggerForTab(tabId).sendCommand(method, params || {});
+});
+
+// Sync helpers — bridge the sidepanel's SET_BROWSER_CONTROL_ENABLED flow
+// (background.js → chrome.storage.local → main store) with the main-process gate.
+ipcMain.handle('dpp-browser-control-get', () => isBrowserControlEnabled());
 ipcMain.handle('dpp-browser-control-set', (_e, enabled) => {
-  enableBrowserControl = !!enabled;
-  return enableBrowserControl;
+  const flag = !!enabled;
+  const old = store[BROWSER_CONTROL_KEY];
+  const next = { ...((old && typeof old === 'object') ? old : {}), enabled: flag };
+  store[BROWSER_CONTROL_KEY] = next;
+  persist();
+  broadcastStorageChange({ [BROWSER_CONTROL_KEY]: { oldValue: old, newValue: next } });
+  return isBrowserControlEnabled();
 });
 
 function debuggerForTab(tabId) {
@@ -436,18 +454,9 @@ function wireDebuggerEvents(tabId) {
     }
   });
 }
-ipcMain.handle('dpp-debugger-attach', (_e, tabId, version) => {
-  const dbg = debuggerForTab(tabId);
-  if (!dbg.isAttached()) dbg.attach(version || '1.3');
-  wireDebuggerEvents(tabId);
-  return true;
-});
 ipcMain.handle('dpp-debugger-detach', (_e, tabId) => {
   try { const dbg = debuggerForTab(tabId); if (dbg.isAttached()) dbg.detach(); } catch {}
   return true;
-});
-ipcMain.handle('dpp-debugger-send', (_e, tabId, method, params) => {
-  return debuggerForTab(tabId).sendCommand(method, params || {});
 });
 
 // ---------------------------------------------------------------------------
@@ -493,9 +502,9 @@ function createSidebarWindow() {
     icon: path.join(DIST_DIR, 'logo.png'),
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload-chat.cjs'),
-      contextIsolation: false,
-      sandbox: false,
+      preload: path.join(__dirname, 'preload-sidebar.cjs'),
+      contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false,
     },
   });
@@ -530,8 +539,8 @@ function createBackgroundWindow() {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload-background.cjs'),
-      contextIsolation: false,
-      sandbox: false,
+      contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false,
       backgroundThrottling: false,
     },
@@ -547,19 +556,36 @@ function createChatWindow() {
     icon: path.join(DIST_DIR, 'logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload-chat.cjs'),
-      contextIsolation: false,
-      sandbox: false,
+      contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false,
     },
   });
 
-  chatWindow.webContents.on('did-finish-load', () => {
+  chatWindow.webContents.on('did-finish-load', async () => {
     const url = chatWindow.webContents.getURL();
-    if (url.startsWith('https://chat.deepseek.com')) injectContentScripts(chatWindow);
+    if (url.startsWith('https://chat.deepseek.com')) {
+      // The preload exposes __DPP_CHROME__ via contextBridge (can't use 'chrome'
+      // key because Electron pre-populates window.chrome for web pages). Alias
+      // it to window.chrome before injecting content scripts so they find the
+      // familiar chrome.runtime / chrome.storage API.
+      try {
+        await chatWindow.webContents.executeJavaScript(`
+          (function() {
+            if (!window.__DPP_CHROME__) return;
+            try { window.chrome = window.__DPP_CHROME__; } catch(e) {}
+            try { window.browser = window.chrome; } catch(e) {}
+          })();
+        `);
+      } catch (err) {
+        console.error('[DeepSeek++] chrome alias injection failed', err);
+      }
+      injectContentScripts(chatWindow);
+    }
   });
   // Block navigation to privileged URLs (file://, chrome://, etc.)
-  chatWindow.webContents.on('will-navigate', (_event, navUrl) => {
-    if (!isValidNavigationUrl(navUrl)) { chatWindow.webContents.stop(); }
+  chatWindow.webContents.on('will-navigate', (event, navUrl) => {
+    if (!isValidNavigationUrl(navUrl)) event.preventDefault();
   });
   chatWindow.webContents.on('context-menu', (_event, params) => {
     const template = buildSelectionMenu(params.selectionText || '', params.isEditable);

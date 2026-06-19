@@ -1,12 +1,12 @@
 'use strict';
 
-// chrome.* polyfill for the visible chat window. The injected content.js talks
-// to the background through this shim; main.cjs relays to the background window.
+// Preload for the sidebar window (loads sidepanel.html – local, trusted).
+// Because the sidebar loads a local file (not a remote page), window.chrome is
+// NOT pre-populated by Electron, so contextBridge.exposeInMainWorld('chrome', …)
+// works without key conflicts.
 
 const { ipcRenderer, contextBridge } = require('electron');
 
-// Manifest comes from the main process — this preload shares a world with the
-// remote DeepSeek page, so it must not pull in node:fs/node:path.
 let cachedManifest = {};
 try { cachedManifest = ipcRenderer.sendSync('dpp-manifest') || {}; } catch { /* main not ready */ }
 
@@ -43,7 +43,6 @@ const chromeShim = {
       set(values) { return ipcRenderer.invoke('dpp-store-set', values); },
       remove(keys) { return ipcRenderer.invoke('dpp-store-remove', keys); },
     },
-    // Session storage: in-memory in main, cleared on app restart.
     session: {
       get(keys) { return ipcRenderer.invoke('dpp-session-get', keys ?? null); },
       set(values) { return ipcRenderer.invoke('dpp-session-set', values); },
@@ -54,16 +53,14 @@ const chromeShim = {
       removeListener(fn) { storageChangedListeners.delete(fn); },
     },
   },
-  // Tabs from the page side are not used; provide harmless stubs.
   tabs: {
     query: async () => [{ id: 1, active: true, url: 'https://chat.deepseek.com/' }],
     sendMessage: async () => undefined,
   },
 };
 
-// Marker read by core/platform/capabilities.ts -> electron_desktop kind.
-// The remote DeepSeek page has window.chrome pre-populated by Electron, so we
-// expose under a private key. main.cjs aliases it to window.chrome after load
-// via executeJavaScript so existing content scripts see the familiar API.
+// Sidebar loads a local file → window.chrome is not pre-populated → safe to
+// expose as 'chrome' directly via contextBridge (no key conflict).
 contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true);
-contextBridge.exposeInMainWorld('__DPP_CHROME__', chromeShim);
+contextBridge.exposeInMainWorld('chrome', chromeShim);
+contextBridge.exposeInMainWorld('browser', chromeShim);
