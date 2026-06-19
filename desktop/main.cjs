@@ -1,33 +1,5 @@
 'use strict';
 
-// ---------------------------------------------------------------------------
-// File logging for diagnosing silent exits.
-// ---------------------------------------------------------------------------
-const LOG_FILE = require('node:path').join(
-  process.env.TEMP || process.env.TMP || 'C:	emp',
-  'deepseek-pp-desktop.log'
-);
-function logToFile(msg) {
-  try { require('node:fs').appendFileSync(LOG_FILE, '[' + new Date().toISOString() + '] ' + msg + '
-'); } catch {}
-}
-logToFile('=== APP START ===');
-
-// ---------------------------------------------------------------------------
-// Catch sync errors that would otherwise cause silent exit.
-// ---------------------------------------------------------------------------
-process.once('uncaughtException', (err) => {
-  logToFile('UNCAUGHT: ' + err.message + '
-' + err.stack);
-  fs.appendFileSync(LOG_FILE, '[FATAL] ' + new Date().toISOString() + ' UNCAUGHT: ' + err.message + '
-' + (err.stack || '') + '
-');
-  process.exit(1);
-});
-logToFile('Electron: ' + process.versions.electron);
-logToFile('Argv: ' + process.argv.join(' '));
-
-
 // DeepSeek++ desktop shell (Electron).
 //
 // Architecture (mirrors the project's existing Android WebView host, but uses
@@ -617,7 +589,7 @@ function createChatWindow() {
     chatWindow = null;
     // The DeepSeek window is primary; closing it quits the whole app (sidebar +
     // hidden background) so the session profile flushes and unlocks for next launch.
-    logToFile('chatWindow closed, calling quit'); if (process.platform !== 'darwin') app.quit();
+    if (process.platform !== 'darwin') app.quit();
   });
 }
 
@@ -637,27 +609,21 @@ function normalizeUserAgent() {
 // cookie/storage DBs), which would surface as being logged out. Defer to the
 // running instance and (re)open its DeepSeek window.
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-logToFile('requestSingleInstanceLock result: ' + hasSingleInstanceLock);
-const _origQuit = app.quit; app.quit = function(...args) { logToFile('app.quit() called: ' + new Error().stack); _origQuit.apply(this, args); };
-
 app.on('second-instance', () => {
   if (chatWindow && !chatWindow.isDestroyed()) {
     if (chatWindow.isMinimized()) chatWindow.restore();
     chatWindow.focus();
   } else if (app.isReady()) {
-      logToFile('Creating chat window...');
-  createChatWindow();
+      createChatWindow();
   }
 });
 
 app.whenReady().then(() => {
-    logToFile('=== app.whenReady fired ===');
-  if (!hasSingleInstanceLock) { logToFile('QUIT: single instance lock not acquired'); app.quit(); return; }
+    if (!hasSingleInstanceLock) { app.quit(); return; }
   normalizeUserAgent();
   registerAssetProtocol();
   Menu.setApplicationMenu(null);
-    logToFile('Creating background window...');
-  createBackgroundWindow();
+    createBackgroundWindow();
   createChatWindow();
   const shortcutOk = globalShortcut.register('CommandOrControl+Shift+D', toggleSidebar);
   console.log('[DeepSeek++] sidebar shortcut registered:', shortcutOk);
@@ -665,7 +631,7 @@ app.whenReady().then(() => {
   // background bridge is ready (so its first state queries resolve). Ctrl+Shift+D
   // still toggles it; the main DeepSeek window is left as the original extension
   // injects it (memory/skills/tools intact).
-  backgroundWindow.webContents.once('did-finish-load', () => { logToFile('Background loaded, showing sidebar...'); showSidebar(); });
+  backgroundWindow.webContents.once('did-finish-load', () => { showSidebar(); });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createChatWindow();
@@ -678,6 +644,5 @@ app.on('will-quit', () => {
   for (const win of controlledTabs.values()) { try { if (!win.isDestroyed()) win.destroy(); } catch {} }
 });
 
-app.on('window-all-closed', () => { logToFile('window-all-closed fired');
-  if (process.platform !== 'darwin') app.quit();
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit();
 });
