@@ -9,12 +9,15 @@
     "prestart": "npm run stage",
     "start": "electron .",
     "predist": "npm run stage",
+    "postdist": "node scripts/set-icon.cjs",
     "dist": "electron-builder"
   },
   "build": {
     "appId": "github.zhu1090093659.deepseekpp.desktop",
     "productName": "DeepSeek++",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "asar": false,
     "files": [
       "main.cjs",
@@ -23,15 +26,28 @@
       "preload-sidebar.cjs",
       "navigation-guard.cjs",
       "background.html",
+      "scripts/set-icon.cjs",
       "dpp/**/*",
       "native/**/*"
     ],
-    "win": { "target": "nsis", "icon": "build/icon.png" },
-    "mac": { "target": "dmg", "category": "public.app-category.productivity", "icon": "build/icon.png" },
-    "linux": { "target": "AppImage", "category": "Utility", "icon": "build/icon.png" }
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Utility",
+      "icon": "build/icon.png"
+    }
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.1"
   }
 }
