@@ -29,7 +29,7 @@
   <a href="#feature-overview">Feature Overview</a> ·
   <a href="#use-cases">Use Cases</a> ·
   <a href="#installation">Installation</a> ·
-  <a href="#101-release-highlights">1.0.1 Highlights</a>
+  <a href="#102-release-highlights">1.0.2 Highlights</a>
 </p>
 
 ## Product Positioning
@@ -46,7 +46,7 @@ Language can follow the browser or be set to English or Simplified Chinese. Deep
 - [Feature Overview](#feature-overview)
 - [Use Cases](#use-cases)
 - [Core Features](#core-features)
-- [1.0.1 Release Highlights](#101-release-highlights)
+- [1.0.2 Release Highlights](#102-release-highlights)
 - [Installation](#installation)
 - [Friendly Links](#friendly-links)
 
@@ -295,7 +295,22 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
   <img src="assets/screenshot-sidepanel-automation.png" width="300" alt="Automation task side panel">
 </p>
 
-## 1.0.1 Release Highlights
+## 1.0.2 Release Highlights
+
+1.0.2 improves Shell MCP sessions and tool-result readability, letting local commands keep context across multi-step work while keeping bilingual feedback, command results, and release checks more reliable.
+
+| Area | Main changes |
+|------|--------------|
+| Persistent shell sessions | Adds persistent Shell MCP session tools so users can start, reuse, and end the same local shell session for workflows that need the current directory, environment variables, or interactive state to persist. |
+| Command result feedback | Returns the command output, exit code, and status even when a shell command exits through the command itself, reducing lost feedback after long-running or one-shot commands finish. |
+| Tool-result language | Expands English and Simplified Chinese copy for Skill draft, memory import, and artifact-related tool result cards so side-panel language choices stay more consistent. |
+| Release script reliability | Makes release, automation, i18n, manifest, and asset validation scripts more stable when run from different working directories, reducing cross-platform project-root mistakes. |
+| Regression coverage | Adds coverage for persistent shell sessions, command-exit results, tool-result rendering, shell policy, and release script project-root handling. |
+
+<details>
+<summary>Show 1.0.1 release highlights</summary>
+
+### 1.0.1 Release Highlights
 
 1.0.1 is a post-1.0.0 experience and reliability update, making session speed easier to inspect, project conversations easier to manage, and MCP/multimodal execution more controlled inside the browser workflow.
 
@@ -306,6 +321,8 @@ npm run shell:install -- --browser chrome --extension-id <extension-id>
 | Project conversation experience | Polishes project-sidebar conversation links and theme styling so lists, links, and state cues are clearer in light and dark modes. |
 | Store assets | Adds Chrome Web Store icon and promotional images so the listing can better represent the current product surface. |
 | Regression coverage | Adds tests for token speed, usage statistics, MCP execution policy, multimodal policy, side-panel navigation, and project-sidebar organization. |
+
+</details>
 
 <details>
 <summary>Show 1.0.0 release highlights</summary>

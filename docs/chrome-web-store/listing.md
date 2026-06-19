@@ -1,11 +1,11 @@
 # Chrome Web Store Listing Draft
 
-Last updated: 2026-06-18
+Last updated: 2026-06-19
 
 ## Package
 
-- Current version: `1.0.1`
-- Upload package: `dist/deepseek-plus-plus-1.0.1-chrome.zip`
+- Current version: `1.0.2`
+- Upload package: `dist/deepseek-plus-plus-1.0.2-chrome.zip`
 - Category: Productivity
 - Default language: English (United States)
 - Homepage URL: `https://github.com/zhu1090093659/deepseek-pp`
