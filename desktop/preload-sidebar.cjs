@@ -5,7 +5,7 @@
 // NOT pre-populated by Electron, so contextBridge.exposeInMainWorld('chrome', …)
 // works without key conflicts.
 
-const { ipcRenderer, contextBridge } = require('electron');
+const { ipcRenderer } = require('electron');
 
 let cachedManifest = {};
 try { cachedManifest = ipcRenderer.sendSync('dpp-manifest') || {}; } catch { /* main not ready */ }
@@ -59,8 +59,9 @@ const chromeShim = {
   },
 };
 
-// Sidebar loads a local file → window.chrome is not pre-populated → safe to
-// expose as 'chrome' directly via contextBridge (no key conflict).
-contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true);
-contextBridge.exposeInMainWorld('chrome', chromeShim);
-contextBridge.exposeInMainWorld('browser', chromeShim);
+// contextIsolation:false + sandbox:true for this trusted local window.
+// contextBridge requires contextIsolation:true, so we assign directly.
+// window.chrome is NOT pre-populated for local files, so direct assignment works.
+window.__DPP_DESKTOP__ = true;
+window.chrome = chromeShim;
+window.browser = chromeShim;

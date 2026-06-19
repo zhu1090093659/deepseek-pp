@@ -1,5 +1,4 @@
 'use strict';
-
 // DeepSeek++ desktop shell (Electron).
 //
 // Architecture (mirrors the project's existing Android WebView host, but uses
@@ -31,7 +30,6 @@ const SIDEBAR_WIDTH = 440;
 
 // Navigation guard (pure, unit-tested in tests/desktop-navigation-guard).
 const { isValidNavigationUrl } = require('./navigation-guard.cjs');
-
 // Browser control is gated by the persisted browser-control setting so the main
 // process and the sidepanel UI share a single source of truth: the sidepanel's
 // SET_BROWSER_CONTROL_ENABLED is written to chrome.storage.local, which is this
@@ -496,7 +494,10 @@ function createSidebarWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload-sidebar.cjs'),
-      contextIsolation: true,
+      // Sidebar loads a LOCAL file (sidepanel.html), so contextIsolation:false
+      // is acceptable — the content is ours, not a remote site.
+      // We keep sandbox:true to restrict Node access.
+      contextIsolation: false,
       sandbox: true,
       nodeIntegration: false,
     },
@@ -532,7 +533,8 @@ function createBackgroundWindow() {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload-background.cjs'),
-      contextIsolation: true,
+      // Background loads a LOCAL file (background.html) — trusted content.
+      contextIsolation: false,
       sandbox: true,
       nodeIntegration: false,
       backgroundThrottling: false,

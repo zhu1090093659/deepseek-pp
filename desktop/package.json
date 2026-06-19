@@ -26,9 +26,9 @@
       "dpp/**/*",
       "native/**/*"
     ],
-    "win": { "target": "nsis" },
-    "mac": { "target": "dmg", "category": "public.app-category.productivity" },
-    "linux": { "target": "AppImage", "category": "Utility" }
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "mac": { "target": "dmg", "category": "public.app-category.productivity", "icon": "build/icon.png" },
+    "linux": { "target": "AppImage", "category": "Utility", "icon": "build/icon.png" }
   },
   "devDependencies": {
     "electron": "^33.0.0",

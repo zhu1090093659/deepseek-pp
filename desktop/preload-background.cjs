@@ -6,7 +6,7 @@
 //   nativeMessaging -> child_process, browserControl -> webContents.debugger,
 //   alarms -> node-cron, sidePanel -> docked BrowserView.
 
-const { ipcRenderer, contextBridge } = require('electron');
+const { ipcRenderer } = require('electron');
 
 // Manifest comes from the main process so this preload doesn't pull in
 // node:fs/node:path into the renderer.
@@ -244,9 +244,8 @@ const chromeShim = {
   action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
 };
 
-// Marker read by core/platform/capabilities.ts -> electron_desktop kind.
-// The background window loads a local file → window.chrome is not pre-populated
-// → safe to expose as 'chrome' directly via contextBridge.
-contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true);
-contextBridge.exposeInMainWorld('chrome', chromeShim);
-contextBridge.exposeInMainWorld('browser', chromeShim);
+// contextIsolation:false + sandbox:true for this trusted local window.
+// Direct assignment (contextBridge requires contextIsolation:true).
+window.__DPP_DESKTOP__ = true;
+window.chrome = chromeShim;
+window.browser = chromeShim;
