@@ -20,6 +20,8 @@
       "main.cjs",
       "preload-chat.cjs",
       "preload-background.cjs",
+      "preload-sidebar.cjs",
+      "navigation-guard.cjs",
       "background.html",
       "dpp/**/*",
       "native/**/*"

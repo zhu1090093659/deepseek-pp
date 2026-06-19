@@ -420,18 +420,11 @@ ipcMain.handle('dpp-debugger-send', (_e, tabId, method, params) => {
   return debuggerForTab(tabId).sendCommand(method, params || {});
 });
 
-// Sync helpers — bridge the sidepanel's SET_BROWSER_CONTROL_ENABLED flow
-// (background.js → chrome.storage.local → main store) with the main-process gate.
-ipcMain.handle('dpp-browser-control-get', () => isBrowserControlEnabled());
-ipcMain.handle('dpp-browser-control-set', (_e, enabled) => {
-  const flag = !!enabled;
-  const old = store[BROWSER_CONTROL_KEY];
-  const next = { ...((old && typeof old === 'object') ? old : {}), enabled: flag };
-  store[BROWSER_CONTROL_KEY] = next;
-  persist();
-  broadcastStorageChange({ [BROWSER_CONTROL_KEY]: { oldValue: old, newValue: next } });
-  return isBrowserControlEnabled();
-});
+// Note: the sidepanel toggles browser control via SET_BROWSER_CONTROL_ENABLED
+// (background.js → chrome.storage.local), which already flows through
+// dpp-store-set above into `store` and drives isBrowserControlEnabled(). No
+// dedicated get/set IPC is needed — the storage relay is the single source of
+// truth.
 
 function debuggerForTab(tabId) {
   const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
