@@ -29,6 +29,24 @@ const REPO_ROOT = path.join(__dirname, '..');
 const STORE_FILE = path.join(app.getPath('userData'), 'dpp-store.json');
 const SIDEBAR_WIDTH = 440;
 
+// Security: browser control features (tabs.create/reload/goBack/goForward) are
+// gated behind this flag. Set to true only if the user explicitly opts in.
+// Defaults to false to prevent untrusted content from creating/navigating windows.
+let enableBrowserControl = false;
+
+// Privileged schemes that should never be loaded in controlled tabs.
+const PRIVILEGED_PROTOCOLS = new Set(['file:', 'chrome:', 'chrome-extension:', 'electron:', 'dppasset:']);
+
+function isValidNavigationUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (PRIVILEGED_PROTOCOLS.has(parsed.protocol)) return false;
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // App manifest is read once here in the main process so renderer preloads do not
 // need to require node:fs/node:path (which would expose Node in the same world as
 // the remote DeepSeek page). Preloads fetch it via the synchronous 'dpp-manifest'.
@@ -337,11 +355,17 @@ ipcMain.handle('dpp-tabs-get', (_e, tabId) => {
   return controlledTabInfo(win, tabId);
 });
 ipcMain.handle('dpp-tabs-create', (_e, props) => {
+  if (!enableBrowserControl) throw new Error('Browser control is disabled. Enable it in settings to use tabs.create.');
+  const url = typeof props.url === 'string' ? props.url : null;
+  if (url && !isValidNavigationUrl(url)) throw new Error(`Blocked navigation to privileged URL: ${url}`);
   const id = ++controlledSeq;
   const win = new BrowserWindow({ width: 1100, height: 800, show: props.active !== false });
-  win.__dppPendingUrl = typeof props.url === 'string' ? props.url : undefined;
+  win.__dppPendingUrl = url || undefined;
   controlledTabs.set(id, win);
   win.webContents.on('did-navigate', () => { win.__dppPendingUrl = undefined; });
+  win.webContents.on('will-navigate', (_e, navUrl) => {
+    if (!isValidNavigationUrl(navUrl)) { win.webContents.stop(); }
+  });
   win.on('closed', () => {
     controlledTabs.delete(id);
     wiredDebuggers.delete(id);
@@ -349,7 +373,7 @@ ipcMain.handle('dpp-tabs-create', (_e, props) => {
       backgroundWindow.webContents.send('dpp-debugger-detach-event', { tabId: id, reason: 'target_closed' });
     }
   });
-  if (props.url) win.loadURL(props.url);
+  if (url) win.loadURL(url);
   return { id, windowId: id, groupId: -1, active: props.active !== false, url: '', pendingUrl: win.__dppPendingUrl, title: '' };
 });
 ipcMain.handle('dpp-tabs-update', (_e, tabId, props) => {
@@ -361,6 +385,34 @@ ipcMain.handle('dpp-tabs-remove', (_e, tabId) => {
   const win = controlledTabs.get(tabId);
   if (win && !win.isDestroyed()) win.close();
   return true;
+});
+
+ipcMain.handle('dpp-tabs-reload', (_e, tabId) => {
+  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
+  if (win && !win.isDestroyed()) win.webContents.reload();
+  return true;
+});
+
+ipcMain.handle('dpp-tabs-go-back', (_e, tabId) => {
+  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
+  if (win && !win.isDestroyed() && win.webContents.navigationHistory.canGoBack()) win.webContents.navigationHistory.goBack();
+  return true;
+});
+
+ipcMain.handle('dpp-tabs-go-forward', (_e, tabId) => {
+  if (!enableBrowserControl) throw new Error('Browser control is disabled.');
+  const win = tabId === 1 ? chatWindow : controlledTabs.get(tabId);
+  if (win && !win.isDestroyed() && win.webContents.navigationHistory.canGoForward()) win.webContents.navigationHistory.goForward();
+  return true;
+});
+
+// Browser control gating: allow the settings UI to query/enable.
+ipcMain.handle('dpp-browser-control-get', () => enableBrowserControl);
+ipcMain.handle('dpp-browser-control-set', (_e, enabled) => {
+  enableBrowserControl = !!enabled;
+  return enableBrowserControl;
 });
 
 function debuggerForTab(tabId) {
@@ -504,6 +556,10 @@ function createChatWindow() {
   chatWindow.webContents.on('did-finish-load', () => {
     const url = chatWindow.webContents.getURL();
     if (url.startsWith('https://chat.deepseek.com')) injectContentScripts(chatWindow);
+  });
+  // Block navigation to privileged URLs (file://, chrome://, etc.)
+  chatWindow.webContents.on('will-navigate', (_event, navUrl) => {
+    if (!isValidNavigationUrl(navUrl)) { chatWindow.webContents.stop(); }
   });
   chatWindow.webContents.on('context-menu', (_event, params) => {
     const template = buildSelectionMenu(params.selectionText || '', params.isEditable);
