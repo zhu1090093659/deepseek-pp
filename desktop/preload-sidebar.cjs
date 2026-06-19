@@ -1,9 +1,9 @@
 'use strict';
 
 // Preload for the sidebar window (loads sidepanel.html – local, trusted).
-// Because the sidebar loads a local file (not a remote page), window.chrome is
-// NOT pre-populated by Electron, so contextBridge.exposeInMainWorld('chrome', …)
-// works without key conflicts.
+// Uses contextIsolation:false + sandbox:true. The preload assigns window.chrome
+// directly (contextBridge requires contextIsolation:true, which we can't use
+// because Electron 33 sandbox pre-populates window.chrome even for local files).
 
 const { ipcRenderer } = require('electron');
 
@@ -60,8 +60,7 @@ const chromeShim = {
 };
 
 // contextIsolation:false + sandbox:true for this trusted local window.
-// contextBridge requires contextIsolation:true, so we assign directly.
-// window.chrome is NOT pre-populated for local files, so direct assignment works.
+// Direct assignment (contextBridge requires contextIsolation:true).
 window.__DPP_DESKTOP__ = true;
 window.chrome = chromeShim;
 window.browser = chromeShim;

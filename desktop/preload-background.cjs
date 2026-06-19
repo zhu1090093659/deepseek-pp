@@ -245,7 +245,6 @@ const chromeShim = {
 };
 
 // contextIsolation:false + sandbox:true for this trusted local window.
-// Direct assignment (contextBridge requires contextIsolation:true).
 window.__DPP_DESKTOP__ = true;
 window.chrome = chromeShim;
 window.browser = chromeShim;

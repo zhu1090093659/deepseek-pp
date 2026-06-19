@@ -1,4 +1,5 @@
 'use strict';
+
 // DeepSeek++ desktop shell (Electron).
 //
 // Architecture (mirrors the project's existing Android WebView host, but uses
@@ -30,6 +31,7 @@ const SIDEBAR_WIDTH = 440;
 
 // Navigation guard (pure, unit-tested in tests/desktop-navigation-guard).
 const { isValidNavigationUrl } = require('./navigation-guard.cjs');
+
 // Browser control is gated by the persisted browser-control setting so the main
 // process and the sidepanel UI share a single source of truth: the sidepanel's
 // SET_BROWSER_CONTROL_ENABLED is written to chrome.storage.local, which is this
@@ -459,14 +461,36 @@ function readDist(rel) {
   try { return fs.readFileSync(path.join(DIST_DIR, rel), 'utf8'); } catch { return null; }
 }
 async function injectContentScripts(win) {
-  for (const rel of ['content-scripts/main-world.js', 'content-scripts/content.js']) {
-    const code = readDist(rel);
-    if (!code) { console.warn('[DeepSeek++] missing', rel, '- run prestart copy'); continue; }
+  // main-world.js runs in the page's main world and sets up the extension
+  // platform detection. Inject it as-is.
+  const mwCode = readDist('content-scripts/main-world.js');
+  if (mwCode) {
     try {
-      await win.webContents.executeJavaScript(`${code}\n//# sourceURL=dpp/${rel}`, true);
+      await win.webContents.executeJavaScript(`${mwCode}\n//# sourceURL=dpp/content-scripts/main-world.js`, true);
     } catch (err) {
-      console.error('[DeepSeek++] inject failed', rel, err);
+      console.error('[DeepSeek++] inject failed main-world.js', err);
     }
+  } else {
+    console.warn('[DeepSeek++] missing content-scripts/main-world.js');
+  }
+
+  // content.js accesses chrome.runtime, chrome.storage, etc. directly.
+  // Electron's sandbox makes window.chrome a non-configurable Proxy that
+  // throws on property access. We prepend `var chrome = window.__DPP_CHROME__`
+  // to shadow the global. Using `var` (not let/const) ensures the variable
+  // is hoisted to the top of the executeJavaScript function scope, so the
+  // content script (even if wrapped in its own IIFE) resolves the bare
+  // `chrome` identifier to our shim instead of window.chrome.
+  const ctCode = readDist('content-scripts/content.js');
+  if (ctCode) {
+    try {
+      const wrapped = `var chrome = window.__DPP_CHROME__;\nvar browser = chrome;\n${ctCode}\n//# sourceURL=dpp/content-scripts/content.js`;
+      await win.webContents.executeJavaScript(wrapped, true);
+    } catch (err) {
+      console.error('[DeepSeek++] inject failed content.js', err);
+    }
+  } else {
+    console.warn('[DeepSeek++] missing content-scripts/content.js');
   }
 }
 
@@ -567,9 +591,30 @@ function createChatWindow() {
       try {
         await chatWindow.webContents.executeJavaScript(`
           (function() {
-            if (!window.__DPP_CHROME__) return;
-            try { window.chrome = window.__DPP_CHROME__; } catch(e) {}
-            try { window.browser = window.chrome; } catch(e) {}
+            var s = window.__DPP_CHROME__;
+            if (!s) return;
+            // Create a PLAIN object (not a contextBridge Proxy) so the content
+            // script's own Proxy wrapper (Lv) can use Reflect.get without
+            // triggering invariant violations on contextBridge's internal proxy.
+            var plain = {
+              runtime: {
+                id: s.runtime.id,
+                getURL: function(p) { return s.runtime.getURL(p); },
+                getManifest: function() { return s.runtime.getManifest(); },
+                sendMessage: function(m) { return s.runtime.sendMessage(m); },
+                onMessage: { addListener: function(fn) { s.runtime.onMessage.addListener(fn); }, removeListener: function(fn) { s.runtime.onMessage.removeListener(fn); } },
+                onInstalled: { addListener: function() {}, removeListener: function() {} },
+                lastError: undefined
+              },
+              storage: {
+                local: { get: function(k) { return s.storage.local.get(k); }, set: function(v) { return s.storage.local.set(v); }, remove: function(k) { return s.storage.local.remove(k); } },
+                session: { get: function(k) { return s.storage.session.get(k); }, set: function(v) { return s.storage.session.set(v); }, remove: function(k) { return s.storage.session.remove(k); } },
+                onChanged: { addListener: function(fn) { s.storage.onChanged.addListener(fn); }, removeListener: function(fn) { s.storage.onChanged.removeListener(fn); } }
+              },
+              tabs: { query: function(q) { return s.tabs.query(q); }, sendMessage: function(t, m) { return s.tabs.sendMessage(t, m); } }
+            };
+            try { Object.defineProperty(globalThis, 'browser', { value: plain, writable: true, configurable: true }); }
+            catch(e) { try { globalThis.browser = plain; } catch(e2) {} }
           })();
         `);
       } catch (err) {
@@ -646,5 +691,6 @@ app.on('will-quit', () => {
   for (const win of controlledTabs.values()) { try { if (!win.isDestroyed()) win.destroy(); } catch {} }
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit();
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
 });

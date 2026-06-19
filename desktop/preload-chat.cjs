@@ -62,8 +62,11 @@ const chromeShim = {
 };
 
 // Marker read by core/platform/capabilities.ts -> electron_desktop kind.
-// The remote DeepSeek page has window.chrome pre-populated by Electron, so we
-// expose under a private key. main.cjs aliases it to window.chrome after load
-// via executeJavaScript so existing content scripts see the familiar API.
+// The remote DeepSeek page has window.chrome pre-populated by Electron as a
+// non-writable Proxy. We expose the shim under __DPP_CHROME__ (contextBridge
+// creates a non-configurable property). main.cjs then creates a PLAIN object
+// (not a contextBridge Proxy) and assigns it to globalThis.browser via
+// executeJavaScript — this avoids Proxy invariant violations when the content
+// script wraps it in its own Proxy (Lv function).
 contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true);
 contextBridge.exposeInMainWorld('__DPP_CHROME__', chromeShim);

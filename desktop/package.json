@@ -26,7 +26,6 @@
       "preload-sidebar.cjs",
       "navigation-guard.cjs",
       "background.html",
-      "scripts/set-icon.cjs",
       "dpp/**/*",
       "native/**/*"
     ],
