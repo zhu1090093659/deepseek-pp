@@ -7,13 +7,11 @@
 //   alarms -> node-cron, sidePanel -> docked BrowserView.
 
 const { ipcRenderer } = require('electron');
-const fs = require('node:fs');
-const path = require('node:path');
 
+// Manifest comes from the main process so this preload doesn't pull in
+// node:fs/node:path into the renderer.
 let cachedManifest = {};
-try {
-  cachedManifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'dpp', 'manifest.json'), 'utf8'));
-} catch { /* dev runs before staging */ }
+try { cachedManifest = ipcRenderer.sendSync('dpp-manifest') || {}; } catch { /* main not ready */ }
 
 const runtimeMessageListeners = new Set();
 const storageChangedListeners = new Set();

@@ -29,6 +29,13 @@ const REPO_ROOT = path.join(__dirname, '..');
 const STORE_FILE = path.join(app.getPath('userData'), 'dpp-store.json');
 const SIDEBAR_WIDTH = 440;
 
+// App manifest is read once here in the main process so renderer preloads do not
+// need to require node:fs/node:path (which would expose Node in the same world as
+// the remote DeepSeek page). Preloads fetch it via the synchronous 'dpp-manifest'.
+let appManifest = {};
+try { appManifest = JSON.parse(fs.readFileSync(path.join(DIST_DIR, 'manifest.json'), 'utf8')); } catch {}
+ipcMain.on('dpp-manifest', (event) => { event.returnValue = appManifest; });
+
 let chatWindow = null;
 let backgroundWindow = null;
 let sidebarWindow = null;
@@ -79,7 +86,7 @@ function broadcastStorageChange(changes) {
 // Custom protocol so chrome.runtime.getURL(path) can resolve packaged assets.
 // ---------------------------------------------------------------------------
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'dppasset', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } },
+  { scheme: 'dppasset', privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
 function registerAssetProtocol() {
