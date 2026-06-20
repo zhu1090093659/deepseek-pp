@@ -25,6 +25,7 @@
       "preload-background.cjs",
       "preload-sidebar.cjs",
       "navigation-guard.cjs",
+      "store-crypto.cjs",
       "background.html",
       "dpp/**/*",
       "native/**/*"
