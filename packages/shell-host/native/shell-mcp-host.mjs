@@ -1611,9 +1611,38 @@ function getPythonLimits() {
   };
 }
 
+// H-01: shell_exec / shell sessions must NOT inherit the host's entire
+// process.env, which leaks secrets (AWS_*, GITHUB_TOKEN, *_SECRET, DATABASE_URL,
+// …) into any command the model runs. Mirror createPythonChildEnv(): start from a
+// minimal base allowlist and add only the caller's explicit extraEnv.
+const SHELL_ENV_BASE_KEYS = platform() === 'win32'
+  ? ['SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE',
+     'LOCALAPPDATA', 'APPDATA', 'HOMEDRIVE', 'HOMEPATH', 'PROGRAMDATA',
+     'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PUBLIC', 'USERNAME', 'USERDOMAIN',
+     'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE']
+  : ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+     'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'];
+
+// H-03 (env portion): never honour dynamic-loader hijack variables, even if the
+// caller passes them via extraEnv.
+const BLOCKED_CHILD_ENV_KEYS = new Set([
+  'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDIT',
+  'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH',
+]);
+
 function createChildEnv(extraEnv) {
   const explicitPath = getExplicitPathOverride(extraEnv);
-  const env = extraEnv && typeof extraEnv === 'object' ? { ...process.env, ...extraEnv } : { ...process.env };
+  const env = {};
+  for (const key of SHELL_ENV_BASE_KEYS) {
+    if (typeof process.env[key] === 'string') env[key] = process.env[key];
+  }
+  if (extraEnv && typeof extraEnv === 'object') {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (typeof value !== 'string') continue;
+      if (BLOCKED_CHILD_ENV_KEYS.has(key.toUpperCase())) continue;
+      env[key] = value;
+    }
+  }
   const pathValue = explicitPath !== null ? explicitPath : (getEnvironmentPath(env) || getEnvironmentPath(process.env));
   setEnvironmentPath(env, pathValue);
   if (platform() === 'win32') {
