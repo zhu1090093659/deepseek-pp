@@ -1,11 +1,11 @@
 'use strict';
 
 // Preload for the sidebar window (loads sidepanel.html – local, trusted).
-// Uses contextIsolation:false + sandbox:true. The preload assigns window.chrome
-// directly (contextBridge requires contextIsolation:true, which we can't use
-// because Electron 33 sandbox pre-populates window.chrome even for local files).
+// Uses contextIsolation:true + sandbox:false. The chrome shim is exposed to
+// the main world via contextBridge (the ONLY thing the page can see from the
+// preload). The preload world is fully isolated from sidepanel.html's JS.
 
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, contextBridge, webFrame } = require('electron');
 
 let cachedManifest = {};
 try { cachedManifest = ipcRenderer.sendSync('dpp-manifest') || {}; } catch { /* main not ready */ }
@@ -59,8 +59,22 @@ const chromeShim = {
   },
 };
 
-// contextIsolation:false + sandbox:true for this trusted local window.
-// Direct assignment (contextBridge requires contextIsolation:true).
-window.__DPP_DESKTOP__ = true;
-window.chrome = chromeShim;
-window.browser = chromeShim;
+// contextIsolation:true — expose chrome shim as 'browser' via contextBridge.
+// NOTE: exposeInMainWorld('chrome', ...) silently fails because Electron 33
+// pre-populates window.chrome with an empty non-configurable stub. 'browser'
+// works fine. For code that uses chrome.*, we alias chrome=browser in the
+// main world via webFrame.executeJavaScript.
+try { contextBridge.exposeInMainWorld('browser', chromeShim); } catch {}
+try { contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true); } catch {}
+
+// Main-world injection: make window.chrome point to the contextBridge-exposed
+// window.browser proxy. This runs synchronously in the preload, before
+// sidepanel.html's own scripts execute.
+webFrame.executeJavaScript(`(() => {
+  try {
+    window.chrome = window.browser;
+    console.log('[DPP] chrome shim aliased to browser in sidebar main world');
+  } catch(e) {
+    console.warn('[DPP] chrome alias failed:', e.message);
+  }
+})()`);

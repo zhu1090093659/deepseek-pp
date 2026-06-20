@@ -311,6 +311,7 @@ let currentToolDescriptors: ToolDescriptor[] = [...createDefaultToolDescriptors(
 let currentRequestMessageCount = 0;
 let mainWorldPort: MessagePort | null = null;
 let mainWorldBridgeReady = false;
+const isDesktopBridge = typeof globalThis !== 'undefined' && !!(globalThis as any).__DPP_DESKTOP__;
 let activeAgentAbort: AbortController | null = null;
 let toolOpenTagRe = buildToolOpenTagRegex(currentToolDescriptors);
 let toolMarkerRe = buildToolMarkerRegex(currentToolDescriptors);
@@ -422,9 +423,9 @@ export default defineContentScript({
   main: contentMain,
 });
 
-// Desktop injects content.js directly via eval in the isolated preload world
-// without the WXT content-script runtime that normally calls main().
-// Auto-run here when the desktop flag is present.
+// Desktop injects content.js into the main world via webFrame.executeJavaScript
+// in preload-chat.cjs (sandbox:true), without the WXT content-script runtime
+// that normally calls main(). Auto-run when the desktop flag is present.
 if (typeof globalThis !== 'undefined' && (globalThis as any).__DPP_DESKTOP__) {
   void contentMain();
 }
@@ -615,6 +616,20 @@ function setMainWorldMessageHandler(handler: (data: any) => void | Promise<void>
 }
 
 function installMainWorldBridge(): void {
+  if (isDesktopBridge) {
+    // Desktop: listen for main-world.js messages via DPP_BRIDGE (IPC relay).
+    // Bridge is effectively ready immediately since DPP_BRIDGE is exposed
+    // via contextBridge before content.js is injected.
+    mainWorldBridgeReady = true;
+    const bridge = (globalThis as any).DPP_BRIDGE;
+    bridge?.onMessage?.addListener((message: any) => {
+      void handleDesktopBridgeMessage(message);
+    });
+    flushMainWorldMessages();
+    return;
+  }
+
+  // Extension: window.postMessage / MessagePort handshake (browser-only path).
   window.addEventListener('message', (event) => {
     if (event.origin !== window.location.origin) return;
     if (event.data?.source !== MAIN_WORLD_SOURCE || event.data.type !== BRIDGE_REQUEST_TYPE) return;
@@ -648,6 +663,20 @@ async function handleMainWorldPortMessage(data: any): Promise<void> {
     flushMainWorldMessages();
     return;
   }
+
+  if (message.type === 'AUGMENT_REQUEST_BODY') {
+    await handleAugmentRequestBody(message);
+    return;
+  }
+
+  await mainWorldMessageHandler?.(message);
+}
+
+// Desktop: handles messages from main-world.js via DPP_BRIDGE.onMessage.
+// IPC relay is trusted — no source/type validation needed (the main process
+// already verified the sender is the chat window's preload).
+async function handleDesktopBridgeMessage(message: any): Promise<void> {
+  if (!message || typeof message !== 'object') return;
 
   if (message.type === 'AUGMENT_REQUEST_BODY') {
     await handleAugmentRequestBody(message);
@@ -743,6 +772,15 @@ async function resolveProjectContextForRequestBody(bodyStr: string): Promise<Res
 }
 
 function postToMainWorld(message: Record<string, unknown>): void {
+  if (isDesktopBridge) {
+    if (!mainWorldBridgeReady) {
+      pendingMainWorldMessages.push(message);
+      return;
+    }
+    const bridge = (globalThis as any).DPP_BRIDGE;
+    bridge?.sendMessage?.({ ...message, direction: 'to-mainworld' }).catch(() => {});
+    return;
+  }
   if (!mainWorldPort || !mainWorldBridgeReady) {
     pendingMainWorldMessages.push(message);
     return;
@@ -751,7 +789,16 @@ function postToMainWorld(message: Record<string, unknown>): void {
 }
 
 function flushMainWorldMessages(): void {
-  if (!mainWorldPort || !mainWorldBridgeReady) return;
+  if (!mainWorldBridgeReady) return;
+  if (isDesktopBridge) {
+    const bridge = (globalThis as any).DPP_BRIDGE;
+    while (pendingMainWorldMessages.length > 0) {
+      const message = pendingMainWorldMessages.shift()!;
+      bridge?.sendMessage?.({ ...message, direction: 'to-mainworld' }).catch(() => {});
+    }
+    return;
+  }
+  if (!mainWorldPort) return;
   while (pendingMainWorldMessages.length > 0) {
     const message = pendingMainWorldMessages.shift()!;
     mainWorldPort.postMessage({ source: CONTENT_SOURCE, ...message });

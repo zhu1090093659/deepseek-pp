@@ -48,6 +48,37 @@ let bridgeRequestAttempts = 0;
 let bridgeRequestTimer: ReturnType<typeof setInterval> | null = null;
 const pendingAugmentRequests = new Map<string, PendingRequest<RequestBodyModification | null>>();
 
+// Desktop: both main-world.js and content.js run in the MAIN world and
+// communicate through the contextBridge-exposed DPP_BRIDGE proxy (IPC-relay
+// through the main process) instead of MessagePort / window.postMessage.
+const isDesktop = typeof window !== 'undefined' && !!(window as any).__DPP_DESKTOP__;
+
+// Desktop: the page-facing DPP_BRIDGE is token-gated (Blocker 2). The token is
+// injected by the preload as a closure variable around this whole bundle and is
+// NOT a global, so other main-world (page) scripts cannot read it. Every bridge
+// call must present it. In the extension build the closure variable is absent,
+// so getBridgeToken() resolves to '' and the desktop bridge is never used.
+declare const __DPP_BRIDGE_TOKEN__: string | undefined;
+function getBridgeToken(): string {
+  try {
+    return typeof __DPP_BRIDGE_TOKEN__ === 'string' ? __DPP_BRIDGE_TOKEN__ : '';
+  } catch {
+    return '';
+  }
+}
+
+interface DppBridge {
+  sendMessage(token: string, message: Record<string, unknown>): Promise<unknown>;
+  onMessage: {
+    addListener(token: string, fn: (message: any, sender: any, sendResponse: (r: any) => void) => void): void;
+    removeListener(token: string, fn: (message: any, sender: any, sendResponse: (r: any) => void) => void): void;
+  };
+}
+
+function getDesktopBridge(): DppBridge | null {
+  return isDesktop ? ((window as any).DPP_BRIDGE as DppBridge) ?? null : null;
+}
+
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
   world: 'MAIN',
@@ -68,13 +99,24 @@ function main(): void {
   if ((window as any).__DPP_MAIN_WORLD_INITIALIZED__) return;
   (window as any).__DPP_MAIN_WORLD_INITIALIZED__ = true;
 
-  installContentBridge();
+  if (isDesktop) {
+    // Desktop: listen for content.js responses via DPP_BRIDGE (IPC relay).
+    const bridge = getDesktopBridge();
+    bridge?.onMessage.addListener(getBridgeToken(), (message: AugmentResultMessage) => {
+      handleBridgeResponse(message);
+    });
+  } else {
+    // Extension: MessagePort handshake (browser-only path).
+    installContentBridge();
+  }
+
   installFetchHook();
 
   updateHookState({
     onRequestBody: requestAugmentedBody,
     onHeadersCaptured(headers: Record<string, string> | null) {
-      postToContent({ type: 'HEADERS_CAPTURED', headers });
+      // Desktop captures auth headers in the main process; skip bridge send.
+      if (!isDesktop) postToContent({ type: 'HEADERS_CAPTURED', headers });
     },
     onToolCallStarted(call: ToolCall) {
       postToContent({ type: 'TOOL_CALL_STARTED', data: call });
@@ -155,8 +197,33 @@ function handlePortMessage(data: unknown): void {
   }
 }
 
+// Desktop: handles messages from content.js received via DPP_BRIDGE.onMessage.
+// IPC relay is trusted (no source validation needed — the main process
+// already validated the sender is the chat window's preload).
+function handleBridgeResponse(message: AugmentResultMessage): void {
+  switch (message.type) {
+    case 'SYNC_HOOK_STATE': {
+      const value = message as { toolDescriptors?: unknown; skillSummaries?: unknown; skillPopupCopy?: unknown };
+      updateHookState({
+        toolDescriptors: normalizeToolDescriptors(value.toolDescriptors),
+      });
+      initSkillPopup(normalizeSkillSummaries(value.skillSummaries), normalizeSkillPopupCopy(value.skillPopupCopy));
+      break;
+    }
+    case 'AUGMENT_REQUEST_BODY_RESULT': {
+      settleAugmentRequest(message);
+      break;
+    }
+    case 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT': {
+      extendAugmentRequestTimeout(message);
+      break;
+    }
+  }
+}
+
 function requestAugmentedBody(body: string): Promise<RequestBodyModification | null> {
-  if (!contentPort) {
+  const bridge = getDesktopBridge();
+  if (!bridge && !contentPort) {
     throw new Error('DeepSeek++ main/content bridge is not connected.');
   }
 
@@ -168,7 +235,13 @@ function requestAugmentedBody(body: string): Promise<RequestBodyModification | n
     }, REQUEST_TIMEOUT_MS);
 
     pendingAugmentRequests.set(id, { resolve, reject, timeout });
-    postToContent({ type: 'AUGMENT_REQUEST_BODY', id, body });
+
+    if (bridge) {
+      // Desktop: send through IPC relay (response arrives via DPP_BRIDGE.onMessage)
+      bridge.sendMessage(getBridgeToken(), { type: 'AUGMENT_REQUEST_BODY', id, body }).catch(() => {});
+    } else {
+      postToContent({ type: 'AUGMENT_REQUEST_BODY', id, body });
+    }
   });
 }
 
@@ -209,6 +282,12 @@ function settleAugmentRequest(message: AugmentResultMessage): void {
 }
 
 function postToContent(message: Record<string, unknown>): void {
+  if (isDesktop) {
+    // Desktop: send through DPP_BRIDGE IPC relay to content.js
+    const bridge = getDesktopBridge();
+    bridge?.sendMessage(getBridgeToken(), message).catch(() => {});
+    return;
+  }
   if (!contentPort) return;
   contentPort.postMessage({ source: MAIN_WORLD_SOURCE, ...message });
 }

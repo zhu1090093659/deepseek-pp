@@ -1,41 +1,85 @@
 'use strict';
 
-// DeepSeek++ chat window preload.
+// DeepSeek++ chat window preload — sandboxed, bridge-only design.
 //
-// Runs in the ISOLATED preload world (contextIsolation:true). The remote
-// DeepSeek page lives in the MAIN world and cannot see any variable set here.
-// We build a chrome.* shim in this isolated world and run content.js here as
-// well, so it has access to the shim + the shared DOM but the page cannot
-// reach the privileged APIs.
+// Runs with sandbox:true + contextIsolation:true. This preload is intentionally
+// MINIMAL: it builds the chrome shim + bridge relays and injects the built
+// scripts into dedicated worlds. It NEVER eval()s the content bundle in the
+// preload world.
 //
-// main-world.js is the only script intentionally injected into the page's
-// main world; it only hooks fetch and forwards data to content.js over a
-// transferred MessagePort, so it never needs the chrome shim.
+// World layout (mirrors a real Chromium extension):
+//   - MAIN world (world 0): the remote DeepSeek page + our main-world.js fetch
+//     hook. The page can ONLY see a narrow DPP_BRIDGE message relay, gated by an
+//     unguessable per-load token (held in main-world.js's injected closure).
+//   - CONTENT isolated world (CONTENT_WORLD_ID): the built content.js bundle. It
+//     gets the chrome shim (globalThis.browser) and an isolated DPP_BRIDGE via
+//     contextBridge.exposeInIsolatedWorld. The page CANNOT reach this world.
+//   - Preload world: this file. Holds ipcRenderer; never exposed to the page.
+//
+// Because content.js runs in a sandboxed renderer isolated world (not in the
+// Node-backed preload world), a compromised page cannot reach Node even if an
+// isolation bug surfaced — there is no Node in any world the page can touch.
 
-const { ipcRenderer, webFrame } = require('electron');
+const { ipcRenderer, webFrame, contextBridge } = require('electron');
 
-// Manifest comes from the main process — this preload must not pull in
-// node:fs/node:path, because the main world must not be able to obtain Node.
+// Dedicated isolated world for the content.js bundle. Must not collide with the
+// main world (0) or the preload's internal isolation world.
+const CONTENT_WORLD_ID = 1000;
+
+// Unguessable per-load token (Blocker 2). Lives only here (preload world) and in
+// main-world.js's injected closure. The page-facing bridge validates it on every
+// call, so a page script — which cannot read main-world.js's closure — can
+// neither forge messages to content.js nor observe content.js responses.
+const BRIDGE_TOKEN = (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
+  ? globalThis.crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+
+// ---- Manifest (sync IPC, available immediately) ----
 let cachedManifest = {};
 try { cachedManifest = ipcRenderer.sendSync('dpp-manifest') || {}; } catch { /* main not ready */ }
 
-// Load the same content scripts the Chrome/Android builds use.
-const { mainWorld, content } = ipcRenderer.sendSync('dpp-content-scripts') || {};
-
-const runtimeListeners = new Set();
+// ---- Event listener sets ----
+const runtimeListeners = new Set();   // messages from background (via dpp-runtime-incoming)
+// SEC-2: the two bridge directions are kept in SEPARATE listener sets so that
+// the page-facing (main-world) shim never receives traffic destined for
+// content.js, and the isolated (content) shim never receives content's own
+// outbound echoes.
+const contentInboxListeners = new Set();    // main-world.js → content.js (isolated world only)
+const mainWorldInboxListeners = new Set();  // content.js → main-world.js (page main world)
 const storageChangedListeners = new Set();
 
+// Background → content.js (existing path: dpp-runtime-incoming)
 ipcRenderer.on('dpp-runtime-incoming', (_e, message) => {
   for (const fn of runtimeListeners) {
     try { fn(message, { id: 'deepseek-pp-desktop' }, () => {}); } catch {}
   }
 });
+
+// Main-world.js → content.js relay (via IPC through main process).
+// Delivered ONLY to content.js (isolated world).
+ipcRenderer.on('dpp-bridge-from-mainworld', (_e, message) => {
+  for (const fn of contentInboxListeners) {
+    try { fn(message, { id: 'deepseek-pp-desktop' }, () => {}); } catch {}
+  }
+});
+
+// content.js → main-world.js responses/pushes (via separate IPC channel).
+// Delivered ONLY to main-world.js (page main world), and only to listeners that
+// presented the correct per-load token.
+ipcRenderer.on('dpp-bridge-from-content', (_e, message) => {
+  for (const fn of mainWorldInboxListeners) {
+    try { fn(message, { id: 'deepseek-pp-desktop' }, () => {}); } catch {}
+  }
+});
+
+// Storage changes (existing path)
 ipcRenderer.on('dpp-storage-changed', (_e, changes) => {
   for (const fn of storageChangedListeners) {
     try { fn(changes, 'local'); } catch {}
   }
 });
 
+// ---- Chrome shim (CONTENT isolated world only — NEVER exposed to main world) ----
 const chromeShim = {
   runtime: {
     id: 'deepseek-pp-desktop',
@@ -71,69 +115,143 @@ const chromeShim = {
   },
 };
 
-// Marker read by core/platform/capabilities.ts -> electron_desktop kind.
-// Kept inside the isolated world only; the main world cannot see it.
-try { Object.defineProperty(globalThis, '__DPP_DESKTOP__', { value: true, configurable: true, writable: true }); }
-catch { globalThis.__DPP_DESKTOP__ = true; }
+// Whitelist of allowed message types the page-facing shim may forward.
+const BRIDGE_ALLOWED_TYPES = new Set([
+  'AUGMENT_REQUEST_BODY', 'AUGMENT_REQUEST_BODY_RESULT',
+  'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT',
+  'RESPONSE_COMPLETE', 'RESPONSE_TOKEN_SPEED',
+  'TOOL_CALL', 'TOOL_CALL_STARTED', 'RESTORE_TOOL_CALLS',
+  'MEMORIES_USED', 'SYNC_HOOK_STATE', 'DPP_BRIDGE_READY',
+]);
 
-// Expose the shim as `browser` in the isolated world. We deliberately do NOT
-// touch `chrome` here: Electron pre-populates window.chrome in every renderer
-// as a non-writable Proxy, and attempting to override it would fail or leak
-// into the main world. content.js is built to read `globalThis.browser` first
-// (via the WXT browser polyfill alias); for any remaining bare `chrome.*`
-// references we rebind them locally when evaluating content.js below.
-try { Object.defineProperty(globalThis, 'browser', { value: chromeShim, configurable: true, writable: true }); }
-catch { globalThis.browser = chromeShim; }
+// Rate limiter: sliding window counter to prevent IPC flooding from the page.
+const BRIDGE_RATE_LIMIT = 100;
+const BRIDGE_RATE_WINDOW_MS = 10_000;
+let bridgeMsgCount = 0;
+let bridgeRateResetTimer = null;
+function checkBridgeRate() {
+  if (!bridgeRateResetTimer) {
+    bridgeRateResetTimer = setTimeout(() => {
+      bridgeMsgCount = 0;
+      bridgeRateResetTimer = null;
+    }, BRIDGE_RATE_WINDOW_MS);
+  }
+  return ++bridgeMsgCount <= BRIDGE_RATE_LIMIT;
+}
 
-// 1) Inject main-world.js into the page's MAIN world before any page script
-//    runs, so it can hook fetch before the first page request.
-//
-//    The three steps must execute strictly in order:
-//    a) set __DPP_DESKTOP__ so main-world.js's auto-run guard triggers;
-//    b) run main-world.js (which sets up the fetch hook + content bridge);
-//    c) freeze window.fetch so the page cannot uninstall the hook.
-if (mainWorld) {
-  webFrame.executeJavaScript(`window.__DPP_DESKTOP__ = true;\n//# sourceURL=dpp/set-desktop-flag.js`)
-    .then(() => webFrame.executeJavaScript(`${mainWorld}\n//# sourceURL=dpp/main-world.js`))
+// Page-facing shim (exposed to the MAIN world via contextBridge). This is the
+// ONLY bridge the untrusted DeepSeek page can reach. Every method REQUIRES the
+// per-load token as its first argument; main-world.js supplies it from its
+// injected closure, so a page script (which cannot read that closure) is
+// rejected. Defence in depth: type whitelist + rate limit on top of the token.
+const mainWorldBridgeShim = {
+  sendMessage(token, message) {
+    if (token !== BRIDGE_TOKEN) {
+      // A page script trying to forge a message to content.js.
+      return Promise.reject(new Error('Bridge token invalid'));
+    }
+    if (!message || typeof message.type !== 'string') {
+      return Promise.reject(new Error('Bridge message must have a string type'));
+    }
+    if (!BRIDGE_ALLOWED_TYPES.has(message.type)) {
+      console.warn(`[dpp] bridge blocked disallowed type: ${message.type}`);
+      return Promise.reject(new Error(`Bridge message type not allowed: ${message.type}`));
+    }
+    if (!checkBridgeRate()) {
+      console.warn('[dpp] bridge rate limit exceeded');
+      return Promise.reject(new Error('Bridge rate limit exceeded'));
+    }
+    return ipcRenderer.invoke('dpp-bridge-relay', { source: 'deepseek-pp-main', ...message });
+  },
+  onMessage: {
+    addListener(token, fn) {
+      // Only main-world.js (with the closure token) may observe content.js
+      // responses; a page listener without the token is silently ignored.
+      if (token !== BRIDGE_TOKEN || typeof fn !== 'function') return;
+      mainWorldInboxListeners.add(fn);
+    },
+    removeListener(token, fn) {
+      if (token !== BRIDGE_TOKEN) return;
+      mainWorldInboxListeners.delete(fn);
+    },
+  },
+};
+
+// Isolated-world shim (exposed to content.js only via exposeInIsolatedWorld).
+// content.js runs in the trusted isolated world the page cannot reach, so no
+// token/whitelist/rate limit is needed on its outbound path. Its sendMessage
+// routes ONLY to main-world.js; its onMessage receives ONLY main-world.js
+// → content.js messages.
+const isolatedBridgeShim = {
+  sendMessage(message) {
+    if (!message || typeof message.type !== 'string') {
+      return Promise.reject(new Error('Bridge message must have a string type'));
+    }
+    const { direction, ...rest } = message;
+    return ipcRenderer.invoke('dpp-bridge-to-mainworld', { source: 'deepseek-pp-content', ...rest });
+  },
+  onMessage: {
+    addListener(fn) { contentInboxListeners.add(fn); },
+    removeListener(fn) { contentInboxListeners.delete(fn); },
+  },
+};
+
+// ---- Expose the chrome shim + bridge into the CONTENT isolated world ----
+// The page (main world) cannot see anything in CONTENT_WORLD_ID.
+try { contextBridge.exposeInIsolatedWorld(CONTENT_WORLD_ID, 'browser', chromeShim); } catch (e) { console.error('[dpp] expose browser failed', e); }
+try { contextBridge.exposeInIsolatedWorld(CONTENT_WORLD_ID, 'DPP_BRIDGE', isolatedBridgeShim); } catch (e) { console.error('[dpp] expose isolated bridge failed', e); }
+
+// ---- Expose ONLY the narrow, token-gated relay to the MAIN world ----
+// DPP_BRIDGE is NOT the chrome shim — it cannot call chrome.runtime.sendMessage,
+// chrome.storage.local, or any privileged API. Without the per-load token it
+// cannot forward anything or observe any response.
+try { contextBridge.exposeInMainWorld('DPP_BRIDGE', mainWorldBridgeShim); } catch {}
+try { contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true); } catch {}
+
+// ---- Load script sources (sync IPC from main; no fs in the preload) ----
+const { mainWorld: mainWorldCode, content: contentCode } = (() => {
+  try { return ipcRenderer.sendSync('dpp-content-scripts') || {}; } catch { return {}; }
+})();
+
+// 1) Inject main-world.js into the page's MAIN world. It is wrapped in a closure
+//    that receives the per-load token as __DPP_BRIDGE_TOKEN__ — never assigned to
+//    any global, so other main-world (page) scripts cannot read it.
+if (mainWorldCode) {
+  const wrapped =
+    `(function(__DPP_BRIDGE_TOKEN__){\n${mainWorldCode}\n})(${JSON.stringify(BRIDGE_TOKEN)});` +
+    `\n//# sourceURL=dpp/main-world.js`;
+  webFrame.executeJavaScript(wrapped)
     .then(() => {
-      // Protect the fetch hook from being overwritten by page scripts
+      // Protect the fetch hook from being overwritten by page scripts (§4a).
       return webFrame.executeJavaScript(`
         (function() {
           const hooked = window.fetch;
           Object.defineProperty(window, 'fetch', {
-            value: hooked,
-            writable: false,
-            configurable: false,
-            enumerable: true,
+            value: hooked, writable: false, configurable: false, enumerable: true,
           });
         })();
         //# sourceURL=dpp/fetch-lock.js
       `);
     })
-    .then(() => {
-      console.log('[dpp] main-world.js injected and fetch hook locked');
-    })
-    .catch((e) => {
-      console.error('[dpp] main-world inject or fetch lock failed', e);
-    });
+    .then(() => console.log('[dpp] main-world.js injected into main world, fetch hook locked'))
+    .catch((e) => console.error('[dpp] main-world injection failed', e));
 }
 
-// 2) Run content.js in this ISOLATED preload world. It shares the DOM with
-//    the page but runs in a separate JS global, so it can use our shim while
-//    the page cannot. Rebinding `chrome` locally covers any direct chrome.*
-//    references that the WXT browser polyfill does not intercept.
+// 2) Run content.js in the CONTENT isolated world (NOT in the preload world).
+//    It sees globalThis.browser (chrome shim) and globalThis.DPP_BRIDGE
+//    (isolated relay), shares the DOM with the page, but has isolated JS globals.
 function runContent() {
-  if (!content) return;
-  try {
-    (0, eval)(`(function(){
-  var chrome = globalThis.browser;
-  var browser = globalThis.browser;
-  ${content}
-})();
-//# sourceURL=dpp/content.js`);
-  } catch (e) {
-    console.error('[dpp] content inject failed', e);
+  if (!contentCode) return;
+  webFrame.executeJavaScriptInIsolatedWorld(CONTENT_WORLD_ID, [
+    { code: 'globalThis.__DPP_DESKTOP__ = true; if (!globalThis.chrome) globalThis.chrome = globalThis.browser;' },
+    { code: `${contentCode}\n//# sourceURL=dpp/content.js` },
+  ]).then(() => console.log('[dpp] content.js running in isolated world ' + CONTENT_WORLD_ID))
+    .catch((e) => console.error('[dpp] content.js injection failed', e));
+}
+if (contentCode) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runContent, { once: true });
+  } else {
+    runContent();
   }
 }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', runContent, { once: true });
-else runContent();

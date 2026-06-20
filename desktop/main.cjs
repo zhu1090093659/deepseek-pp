@@ -17,17 +17,26 @@
 
 const {
   app, BrowserWindow, ipcMain, protocol, net, Menu, globalShortcut, session, screen, dialog,
+  safeStorage,
 } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
+const crypto = require('node:crypto');
 
 const CHAT_URL = 'https://chat.deepseek.com/';
 const DIST_DIR = path.join(__dirname, 'dpp'); // staged copy of dist/chrome-mv3
 const REPO_ROOT = path.join(__dirname, '..');
 const STORE_FILE = path.join(app.getPath('userData'), 'dpp-store.json');
 const SIDEBAR_WIDTH = 440;
+const ENC_PREFIX = '__enc__:';
+// Keys that the chat window (remote page) must not write, and that are
+// encrypted on disk via safeStorage to protect auth tokens at rest.
+const SENSITIVE_STORE_KEYS = new Set([
+  'deepseekCachedClientHeaders',
+  'deepseek_pp_browser_control_settings',
+]);
 
 // Navigation guard (pure, unit-tested in tests/desktop-navigation-guard).
 const { isValidNavigationUrl } = require('./navigation-guard.cjs');
@@ -47,6 +56,11 @@ ipcMain.on('dpp-manifest', (event) => { event.returnValue = appManifest; });
 
 function readDist(rel) {
   try { return fs.readFileSync(path.join(DIST_DIR, rel), 'utf8'); } catch { return null; }
+}
+function scriptHash(rel) {
+  const src = readDist(rel);
+  if (!src) return null;
+  return crypto.createHash('sha256').update(src).digest('hex');
 }
 ipcMain.on('dpp-content-scripts', (e) => {
   e.returnValue = {
@@ -91,8 +105,25 @@ let writeTimer = null;
 function persist() {
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
-    fs.writeFile(STORE_FILE, JSON.stringify(store), () => {});
+    // Encrypt sensitive keys before writing to disk
+    const diskStore = { ...store };
+    for (const key of SENSITIVE_STORE_KEYS) {
+      if (diskStore[key] != null && safeStorage.isEncryptionAvailable()) {
+        try {
+          const json = typeof diskStore[key] === 'string' ? diskStore[key] : JSON.stringify(diskStore[key]);
+          diskStore[key] = ENC_PREFIX + safeStorage.encryptString(json).toString('base64');
+        } catch (e) { console.warn('[dpp] encrypt failed for key', key, e.message); }
+      }
+    }
+    fs.writeFile(STORE_FILE, JSON.stringify(diskStore), () => {});
   }, 50);
+}
+function decryptStoreValue(key, value) {
+  if (!SENSITIVE_STORE_KEYS.has(key) || typeof value !== 'string' || !value.startsWith(ENC_PREFIX)) return value;
+  try {
+    const buf = Buffer.from(value.slice(ENC_PREFIX.length), 'base64');
+    return JSON.parse(safeStorage.decryptString(buf));
+  } catch { return value; }
 }
 // Single source of truth for the browser-control gate: the persisted setting the
 // sidepanel toggles via SET_BROWSER_CONTROL_ENABLED (saved into `store`).
@@ -116,12 +147,22 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function registerAssetProtocol() {
+  const ALLOWED_EXTENSIONS = new Set([
+    '.html', '.js', '.mjs', '.cjs', '.css', '.json', '.png', '.jpg', '.jpeg',
+    '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.map', '.wasm',
+    '.zip', '.txt',
+  ]);
+
   protocol.handle('dppasset', (request) => {
     const url = new URL(request.url);
     // dppasset://asset/<relative path inside dist>
     const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
     const filePath = path.join(DIST_DIR, rel);
     if (!filePath.startsWith(DIST_DIR)) return new Response('Forbidden', { status: 403 });
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext && !ALLOWED_EXTENSIONS.has(ext)) {
+      return new Response('Unsupported file type', { status: 404 });
+    }
     return net.fetch(pathToFileURL(filePath).toString());
   });
 }
@@ -130,15 +171,26 @@ function registerAssetProtocol() {
 // IPC: storage
 // ---------------------------------------------------------------------------
 ipcMain.handle('dpp-store-get', (_e, keys) => {
-  if (keys == null) return { ...store };
+  if (keys == null) {
+    // Return full store with decrypted sensitive values
+    const out = {};
+    for (const [k, v] of Object.entries(store)) out[k] = decryptStoreValue(k, v);
+    return out;
+  }
   const list = Array.isArray(keys) ? keys : [keys];
   const out = {};
-  for (const k of list) if (k in store) out[k] = store[k];
+  for (const k of list) if (k in store) out[k] = decryptStoreValue(k, store[k]);
   return out;
 });
-ipcMain.handle('dpp-store-set', (_e, values) => {
+
+ipcMain.handle('dpp-store-set', (e, values) => {
+  const isChatSender = chatWindow && e.sender === chatWindow.webContents;
   const changes = {};
   for (const [k, v] of Object.entries(values || {})) {
+    if (isChatSender && SENSITIVE_STORE_KEYS.has(k)) {
+      console.warn(`[dpp] blocked chat window write to sensitive key: ${k}`);
+      continue;
+    }
     changes[k] = { oldValue: store[k], newValue: v };
     store[k] = v;
   }
@@ -146,10 +198,15 @@ ipcMain.handle('dpp-store-set', (_e, values) => {
   broadcastStorageChange(changes);
   return true;
 });
-ipcMain.handle('dpp-store-remove', (_e, keys) => {
+ipcMain.handle('dpp-store-remove', (e, keys) => {
+  const isChatSender = chatWindow && e.sender === chatWindow.webContents;
   const list = Array.isArray(keys) ? keys : [keys];
   const changes = {};
   for (const k of list) {
+    if (isChatSender && SENSITIVE_STORE_KEYS.has(k)) {
+      console.warn(`[dpp] blocked chat window delete of sensitive key: ${k}`);
+      continue;
+    }
     if (k in store) { changes[k] = { oldValue: store[k], newValue: undefined }; delete store[k]; }
   }
   persist();
@@ -212,6 +269,32 @@ ipcMain.on('dpp-tabs-send', (_e, _tabId, message) => {
 });
 
 // ---------------------------------------------------------------------------
+// IPC: DPP_BRIDGE relay  (main-world.js ↔ content.js via preload contextBridge)
+//
+// With sandbox:true the MessagePort bridge is eliminated on desktop.
+// All main-world ↔ content communication routes through these handlers
+// so the page can neither observe nor forge bridge messages.
+//
+// Two directions:
+//   dpp-bridge-relay:         main-world.js → content.js  (fire-and-forget)
+//   dpp-bridge-to-mainworld:  content.js   → main-world.js (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('dpp-bridge-relay', (e, message) => {
+  if (!chatWindow || chatWindow.webContents.isDestroyed()) return null;
+  if (e.sender !== chatWindow.webContents) return null;
+  chatWindow.webContents.send('dpp-bridge-from-mainworld', message);
+  return null;
+});
+
+// content.js → main-world.js push messages (e.g. SYNC_HOOK_STATE, AUGMENT results)
+ipcMain.handle('dpp-bridge-to-mainworld', (e, message) => {
+  if (!chatWindow || chatWindow.webContents.isDestroyed()) return;
+  if (e.sender !== chatWindow.webContents) return;
+  chatWindow.webContents.send('dpp-bridge-from-content', message);
+});
+
+// ---------------------------------------------------------------------------
 // IPC: native messaging (4-byte LE length frames, same as Chrome).
 // ---------------------------------------------------------------------------
 const nativeChildren = new Map(); // portId -> { child, buffer }
@@ -219,8 +302,8 @@ const nativeChildren = new Map(); // portId -> { child, buffer }
 // Tool-execution confirmation gate (Finding #1, §5b.1). Intercepts every
 // `tools/call` JSON-RPC frame before it reaches the native host child process.
 // Read-only/status tools are allowed silently; anything that can mutate the
-// local machine requires an explicit user confirmation per session.
-let trustAllToolsThisSession = false;
+// local machine requires an explicit user confirmation per tool per session.
+const trustedToolsThisSession = new Set(); // tool names trusted for this session
 const READ_ONLY_TOOLS = new Set([
   'shell_status', 'python_status', 'local_skill_preview', 'local_folder_pick',
 ]);
@@ -232,7 +315,7 @@ function summarizeToolCall(name, args) {
 }
 
 async function confirmToolExecution(hostName, name, args) {
-  if (trustAllToolsThisSession) return true;
+  if (trustedToolsThisSession.has(name)) return true;
   const parent = (chatWindow && !chatWindow.isDestroyed()) ? chatWindow : undefined;
   const { response, checkboxChecked } = await dialog.showMessageBox(parent, {
     type: 'warning',
@@ -243,11 +326,11 @@ async function confirmToolExecution(hostName, name, args) {
     buttons: ['拒绝', '允许这一次'],
     defaultId: 0,
     cancelId: 0,
-    checkboxLabel: '本次会话内信任(不再询问)',
+    checkboxLabel: `本次会话内信任「${name}」(不再询问此工具)`,
     checkboxChecked: false,
   });
   const allowed = response === 1;
-  if (allowed && checkboxChecked) trustAllToolsThisSession = true;
+  if (allowed && checkboxChecked) trustedToolsThisSession.add(name);
   return allowed;
 }
 
@@ -302,9 +385,13 @@ ipcMain.on('dpp-native-post', async (e, portId, message) => {
   const rpc = message && message.message;
   if (rpc && rpc.method === 'tools/call') {
     const name = rpc.params?.name;
-    if (name && !READ_ONLY_TOOLS.has(name)) {
+    // SEC-4: only the explicit read-only allowlist may run without confirmation.
+    // A missing/unknown tool name must NOT silently bypass the gate, so anything
+    // that is not a known read-only tool (including a forged frame with no name)
+    // requires user confirmation.
+    if (!name || !READ_ONLY_TOOLS.has(name)) {
       const ok = await confirmToolExecution(message.server?.id || 'native host',
-                                            name, rpc.params?.arguments);
+                                            name || '(未知工具)', rpc.params?.arguments);
       if (!ok) {
         if (!e.sender.isDestroyed()) {
           e.sender.send('dpp-native-message', portId, {
@@ -480,8 +567,36 @@ ipcMain.handle('dpp-debugger-attach', (_e, tabId, version) => {
   wireDebuggerEvents(tabId);
   return true;
 });
+// CDP method whitelist — only methods needed by the browser control service.
+// Blocks dangerous methods (Browser.close, System.getInfo, IO.read, etc.)
+// that could be abused by a compromised background script or rogue AI action.
+const CDP_ALLOWED_METHODS = new Set([
+  // Navigation & page lifecycle
+  'Page.navigate', 'Page.reload', 'Page.getFrameTree', 'Page.enable',
+  // DOM inspection
+  'DOM.getDocument', 'DOM.querySelector', 'DOM.querySelectorAll',
+  'DOM.describeNode', 'DOM.getOuterHTML', 'DOM.getAttributes', 'DOM.enable',
+  // Accessibility tree
+  'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
+  // Script evaluation (filtered further by expression validator in service.ts)
+  'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.enable',
+  // Input simulation
+  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText',
+  // Network observation
+  'Network.enable', 'Network.getResponseBody',
+  // Target auto-attach
+  'Target.setAutoAttach',
+  // JavaScript dialogs
+  'Page.handleJavaScriptDialog',
+  // Screenshots
+  'Page.captureScreenshot',
+]);
+
 ipcMain.handle('dpp-debugger-send', (_e, tabId, method, params) => {
   if (!isBrowserControlEnabled()) throw new Error('Browser control is disabled.');
+  if (!CDP_ALLOWED_METHODS.has(method)) {
+    throw new Error(`CDP method not allowed: ${method}`);
+  }
   return debuggerForTab(tabId).sendCommand(method, params || {});
 });
 
@@ -541,11 +656,12 @@ function createSidebarWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload-sidebar.cjs'),
-      // Sidebar loads a LOCAL file (sidepanel.html), so contextIsolation:false
-      // is acceptable — the content is ours, not a remote site.
-      // We keep sandbox:true to restrict Node access.
-      contextIsolation: false,
-      sandbox: true,
+      // Sidebar loads a LOCAL file (sidepanel.html) — trusted content.
+      // contextIsolation:true ensures the preload world is isolated from the
+      // page; sandbox:false allows the preload to use contextBridge reliably.
+      // The chrome shim is exposed to the main world ONLY via contextBridge.
+      contextIsolation: true,
+      sandbox: false,
       nodeIntegration: false,
     },
   });
@@ -556,6 +672,10 @@ function createSidebarWindow() {
     console.log('[DeepSeek++] sidebar loaded', sidebarWindow.webContents.getURL());
   });
   sidebarWindow.on('closed', () => { sidebarWindow = null; });
+  // Navigation guard: sidebar should never navigate away from its local page.
+  sidebarWindow.webContents.on('will-navigate', (event, navUrl) => {
+    if (!isValidNavigationUrl(navUrl)) event.preventDefault();
+  });
   // dppasset:// (not loadFile) so sidepanel.html's absolute asset paths resolve.
   sidebarWindow.loadURL('dppasset://asset/sidepanel.html');
 }
@@ -581,7 +701,9 @@ function createBackgroundWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload-background.cjs'),
       // Background loads a LOCAL file (background.html) — trusted content.
-      contextIsolation: false,
+      // contextIsolation:true ensures the preload world is isolated from the
+      // page, so even a compromised background.html cannot reach ipcRenderer.
+      contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
       backgroundThrottling: false,
@@ -599,14 +721,24 @@ function createChatWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload-chat.cjs'),
       contextIsolation: true,   // remote page cannot see the preload world
-      sandbox: false,           // preload needs require/eval; Node stays in the isolated preload world
+      sandbox: true,            // remote chat renderer stays sandboxed (Blocker 1).
+                                // The preload is minimal & sandbox-compatible: it only
+                                // builds a bridge and injects scripts into dedicated
+                                // worlds — it never eval()s the content bundle itself.
       nodeIntegration: false,
     },
   });
 
-  // Content-script injection is now handled by preload-chat.cjs inside the
-  // isolated preload world, so the remote page's main world never sees the
-  // chrome shim. Navigation guard stays here.
+  // Content-script injection is handled by preload-chat.cjs (sandbox-safe):
+  //   - chrome shim + DPP_BRIDGE go into a dedicated CONTENT isolated world via
+  //     contextBridge.exposeInIsolatedWorld; the page can never reach that world
+  //   - content.js runs in that isolated world via executeJavaScriptInIsolatedWorld
+  //     (NOT eval'd in the Node-backed preload world)
+  //   - main-world.js is injected into the MAIN world via webFrame.executeJavaScript,
+  //     wrapped in a closure holding an unguessable per-load bridge token (Blocker 2)
+  //   - the MAIN world only sees a narrow, token-gated DPP_BRIDGE relay — never the
+  //     chrome shim, and a page script without the token can neither forge nor observe
+  // Navigation guard stays here.
   chatWindow.webContents.on('will-navigate', (event, navUrl) => {
     if (!isValidNavigationUrl(navUrl)) event.preventDefault();
   });
@@ -616,7 +748,9 @@ function createChatWindow() {
   });
   // --- Security audit probe (Finding #1) ---
   // Runs in the MAIN world to verify the chrome shim is NOT exposed there.
-  chatWindow.webContents.on('did-finish-load', () => {
+  // SEC-6: development-only diagnostic; gated behind DPP_DEBUG so it does not
+  // execute on every load in packaged/production builds.
+  if (process.env.DPP_DEBUG) chatWindow.webContents.on('did-finish-load', () => {
     chatWindow.webContents.executeJavaScript(`
       (function() {
         let sendMessageResult;
@@ -697,7 +831,9 @@ function lcHeaders(h) {
 }
 
 function startDeepSeekHeaderCapture() {
-  const filter = { urls: ['*://chat.deepseek.com/*'] };
+  // SEC-7: https only — never capture/trust auth headers from a plaintext
+  // (downgraded) chat.deepseek.com request.
+  const filter = { urls: ['https://chat.deepseek.com/*'] };
   session.defaultSession.webRequest.onSendHeaders(filter, (details) => {
     const h = lcHeaders(details.requestHeaders);
     const auth = h['authorization'];
@@ -737,6 +873,34 @@ app.whenReady().then(() => {
     if (!hasSingleInstanceLock) { app.quit(); return; }
   normalizeUserAgent();
   registerAssetProtocol();
+  // Log script integrity hashes for audit trail (supply chain detection).
+  console.log(`[dpp] script integrity: main-world.js sha256=${scriptHash('content-scripts/main-world.js') || 'MISSING'}`);
+  console.log(`[dpp] script integrity: content.js sha256=${scriptHash('content-scripts/content.js') || 'MISSING'}`);
+
+  // --- CSP injection for the chat window (Item 8) ---
+  // Adds a restrictive CSP when DeepSeek's own response lacks one.
+  // unsafe-inline/unsafe-eval are required because the DeepSeek SPA uses both.
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['https://chat.deepseek.com/*'] },
+    (details, callback) => {
+      const headers = { ...details.responseHeaders };
+      const cspKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-security-policy');
+      if (!cspKey) {
+        headers['Content-Security-Policy'] = [
+          "default-src 'self'; " +
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+          "connect-src 'self' https://chat.deepseek.com https://*.deepseek.com; " +
+          "img-src 'self' data: blob: https:; " +
+          "style-src 'self' 'unsafe-inline'; " +
+          "font-src 'self' data:; " +
+          "media-src 'self' blob:; " +
+          "worker-src 'self' blob:;",
+        ];
+      }
+      callback({ responseHeaders: headers });
+    },
+  );
+
   startDeepSeekHeaderCapture();
   Menu.setApplicationMenu(null);
     createBackgroundWindow();

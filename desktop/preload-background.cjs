@@ -6,7 +6,7 @@
 //   nativeMessaging -> child_process, browserControl -> webContents.debugger,
 //   alarms -> node-cron, sidePanel -> docked BrowserView.
 
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, contextBridge, webFrame } = require('electron');
 
 // Manifest comes from the main process so this preload doesn't pull in
 // node:fs/node:path into the renderer.
@@ -244,7 +244,23 @@ const chromeShim = {
   action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
 };
 
-// contextIsolation:false + sandbox:true for this trusted local window.
-window.__DPP_DESKTOP__ = true;
-window.chrome = chromeShim;
-window.browser = chromeShim;
+// contextIsolation:true + sandbox:true — expose shims via contextBridge so the
+// preload world stays isolated from background.html's JS context.
+// NOTE: exposeInMainWorld('chrome', ...) silently fails because Electron 33
+// pre-populates window.chrome with an empty non-configurable stub. 'browser'
+// works fine. For code that uses chrome.*, we alias chrome=browser in the
+// main world via webFrame.executeJavaScript.
+try { contextBridge.exposeInMainWorld('__DPP_DESKTOP__', true); } catch {}
+try { contextBridge.exposeInMainWorld('browser', chromeShim); } catch {}
+
+// Main-world injection: make window.chrome point to the contextBridge-exposed
+// window.browser proxy. This runs synchronously in the preload, before
+// background.html's own scripts execute.
+webFrame.executeJavaScript(`(() => {
+  try {
+    window.chrome = window.browser;
+    console.log('[DPP] chrome shim aliased to browser in background main world');
+  } catch(e) {
+    console.warn('[DPP] chrome alias failed:', e.message);
+  }
+})()`);

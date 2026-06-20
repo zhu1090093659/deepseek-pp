@@ -27,6 +27,9 @@ desktop/dpp/
 desktop/native/
 desktop/build/
 desktop/release/
+desktop/capture/
+# Local Electron run/test profiles
+.workbuddy/
 
 # Editor directories and files
 .vscode/*

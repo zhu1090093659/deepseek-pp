@@ -581,6 +581,7 @@ export class BrowserControlService {
     const expression = typeof payload.expression === 'string'
       ? payload.expression
       : requireString(payload, 'script');
+    this.validateEvaluateExpression(expression);
     const result = await this.evaluate(expression, { awaitPromise: payload.awaitPromise !== false });
     return this.withOptionalSnapshot({
       ok: true,
@@ -588,6 +589,29 @@ export class BrowserControlService {
       detail: `Result: ${JSON.stringify(result).slice(0, 4_000)}`,
       output: { tabId, result: toJsonSafe(result) },
     }, settings);
+  }
+
+  /**
+   * Static analysis guard for Runtime.evaluate expressions.
+   * Blocks patterns commonly used for data exfiltration or privilege escalation.
+   */
+  private validateEvaluateExpression(expression: string): void {
+    const BLOCKED_PATTERNS: Array<{ re: RegExp; label: string }> = [
+      { re: /document\s*\.\s*cookie/i, label: 'document.cookie access' },
+      { re: /\b(localStorage|sessionStorage)\b/i, label: 'Web Storage access' },
+      { re: /window\s*\.\s*open\s*\(/i, label: 'window.open()' },
+      { re: /navigator\s*\.\s*sendBeacon/i, label: 'navigator.sendBeacon' },
+      { re: /fetch\s*\(\s*['"`]file:/i, label: 'file:// fetch' },
+      { re: /\bXMLHttpRequest\b/i, label: 'XMLHttpRequest' },
+    ];
+    for (const { re, label } of BLOCKED_PATTERNS) {
+      if (re.test(expression)) {
+        throw new BrowserControlError(
+          'browser_script_blocked',
+          `Expression blocked: ${label} is not allowed in evaluate_script.`,
+        );
+      }
+    }
   }
 
   private async ensureTargetTabId(
@@ -943,7 +967,7 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 function normalizeUrl(input: string): string {
   try {
     const url = new URL(input);
-    if (!['http:', 'https:', 'file:'].includes(url.protocol)) {
+    if (!['http:', 'https:'].includes(url.protocol)) {
       throw new Error(`Unsupported URL protocol: ${url.protocol}`);
     }
     return url.toString();
