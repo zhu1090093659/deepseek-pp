@@ -93,7 +93,9 @@ describe('platform capability contracts', () => {
   });
 
   it('detects the Electron desktop host with native messaging enabled', () => {
-    (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__ = true;
+    // C-04: desktop detection keys off the non-spoofable chrome runtime id set by
+    // the desktop preloads, NOT a page-settable window flag.
+    vi.stubGlobal('chrome', { runtime: { id: 'deepseek-pp-desktop' } });
 
     const environment = getCurrentPlatformEnvironment();
 
@@ -109,6 +111,18 @@ describe('platform capability contracts', () => {
     expect(environment.capabilities.alarms).toBe(true);
     // Remaining Phase 2c surfaces stay gated off until wired.
     expect(environment.capabilities.contextMenus).toBe(false);
+  });
+
+  it('does NOT report desktop when a page spoofs window.__DPP_DESKTOP__ (C-04)', () => {
+    // A malicious page / XSS sets the window flag and presents an ordinary
+    // extension runtime id. Detection must ignore the flag.
+    (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__ = true;
+    vi.stubGlobal('chrome', { runtime: { id: 'some-real-extension-id' } });
+
+    const environment = getCurrentPlatformEnvironment();
+
+    expect(environment.kind).not.toBe('electron_desktop');
+    expect(environment.capabilities.nativeMessaging).toBe(false);
   });
 
   it('filters native MCP controls when native messaging is unsupported', () => {

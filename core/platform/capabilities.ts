@@ -164,17 +164,25 @@ export function getElectronDesktopEnvironment(): PlatformEnvironment {
   };
 }
 
-function hasDesktopBridgeMarker(): boolean {
+// C-04: do NOT key desktop detection off a `window` global. Any page script (or
+// XSS on any visited site) can set `window.__DPP_DESKTOP__ = true` and trick the
+// extension into advertising desktop-only capabilities (nativeMessaging, native
+// tool execution, …) to the model. Instead we trust the chrome runtime shim's
+// id, which the desktop preloads set in the isolated/extension world (it cannot
+// be forged from a page). In the browser extension the id is the real extension
+// id, so a page setting the window flag has no effect.
+const DESKTOP_RUNTIME_ID = 'deepseek-pp-desktop';
+
+function isElectronDesktopRuntime(): boolean {
   try {
-    return typeof window !== 'undefined' &&
-      (window as typeof window & { __DPP_DESKTOP__?: unknown }).__DPP_DESKTOP__ === true;
+    return safeChromeRuntime()?.id === DESKTOP_RUNTIME_ID;
   } catch {
     return false;
   }
 }
 
 export function getCurrentPlatformEnvironment(): PlatformEnvironment {
-  if (hasDesktopBridgeMarker()) return getElectronDesktopEnvironment();
+  if (isElectronDesktopRuntime()) return getElectronDesktopEnvironment();
 
   const androidBridge = typeof window !== 'undefined'
     ? (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge

@@ -578,16 +578,27 @@ export class BrowserControlService {
   ): Promise<BrowserActionResult> {
     const tabId = await this.ensureTargetTabId(settings);
     await this.ensureAttached(tabId);
+    // #238: never evaluate AI-supplied script on privileged origins (extension
+    // pages, devtools, local files, etc.) where it could read extension state or
+    // local files.
+    const target = await this.getTargetOrThrow(tabId);
+    assertEvaluableOrigin(target.url);
     const expression = typeof payload.expression === 'string'
       ? payload.expression
       : requireString(payload, 'script');
     this.validateEvaluateExpression(expression);
     const result = await this.evaluate(expression, { awaitPromise: payload.awaitPromise !== false });
+    // #238: cap the returned value so the tool result cannot be used as a bulk
+    // data-exfiltration channel.
+    const resultJson = JSON.stringify(result) ?? 'undefined';
+    const cappedResult = resultJson.length > EVALUATE_RESULT_MAX_CHARS
+      ? `${resultJson.slice(0, EVALUATE_RESULT_MAX_CHARS)}… [truncated ${resultJson.length - EVALUATE_RESULT_MAX_CHARS} chars]`
+      : resultJson;
     return this.withOptionalSnapshot({
       ok: true,
       summary: 'Evaluated script',
-      detail: `Result: ${JSON.stringify(result).slice(0, 4_000)}`,
-      output: { tabId, result: toJsonSafe(result) },
+      detail: `Result: ${cappedResult}`,
+      output: { tabId, result: cappedResult },
     }, settings);
   }
 
@@ -914,6 +925,28 @@ export async function getBrowserControlElementPoint(this: Element): Promise<Elem
   return point;
 }
 
+// #238: cap evaluate_script's returned value to keep the tool result from being
+// used as a bulk exfiltration channel.
+const EVALUATE_RESULT_MAX_CHARS = 4_000;
+
+// #238: AI-supplied script may only run on ordinary web origins. Privileged
+// schemes (extension/devtools/local files/internal pages) are refused so a
+// compromised model action cannot read extension internals or local files.
+const BLOCKED_EVALUATE_SCHEMES = [
+  'chrome:', 'chrome-extension:', 'devtools:', 'view-source:',
+  'about:', 'file:', 'data:', 'dppasset:', 'edge:', 'brave:',
+];
+
+function assertEvaluableOrigin(url: string): void {
+  const scheme = (url.split(':')[0] || '').toLowerCase() + ':';
+  if (BLOCKED_EVALUATE_SCHEMES.includes(scheme) || url === 'about:blank') {
+    throw new BrowserControlError(
+      'browser_script_blocked',
+      `evaluate_script is not allowed on privileged origin: ${url || '(unknown)'}`,
+    );
+  }
+}
+
 export function getControllableState(url: string): { controllable: boolean; reason?: string } {
   if (!url) return { controllable: true };
   if (url === 'about:blank') return { controllable: true };
@@ -1063,16 +1096,6 @@ function normalizeError(error: unknown): BrowserControlError {
   if (error instanceof BrowserControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
   return new BrowserControlError('browser_control_failed', message, { retryable: true });
-}
-
-function toJsonSafe(value: unknown): unknown {
-  if (value === undefined) return null;
-  try {
-    JSON.stringify(value);
-    return value;
-  } catch {
-    return String(value);
-  }
 }
 
 function delay(ms: number): Promise<void> {
