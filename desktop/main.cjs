@@ -30,7 +30,6 @@ const DIST_DIR = path.join(__dirname, 'dpp'); // staged copy of dist/chrome-mv3
 const REPO_ROOT = path.join(__dirname, '..');
 const STORE_FILE = path.join(app.getPath('userData'), 'dpp-store.json');
 const SIDEBAR_WIDTH = 440;
-const ENC_PREFIX = '__enc__:';
 // Keys that the chat window (remote page) must not write, and that are
 // encrypted on disk via safeStorage to protect auth tokens at rest.
 const SENSITIVE_STORE_KEYS = new Set([
@@ -40,6 +39,14 @@ const SENSITIVE_STORE_KEYS = new Set([
 
 // Navigation guard (pure, unit-tested in tests/desktop-navigation-guard).
 const { isValidNavigationUrl } = require('./navigation-guard.cjs');
+// Store at-rest encryption + browser-control gate (pure, unit-tested in
+// tests/desktop-store-crypto).
+const {
+  encryptStoreForDisk,
+  decryptStoreInPlace,
+  decryptStoreValue: decryptStoreValuePure,
+  isBrowserControlEnabled: isBrowserControlEnabledPure,
+} = require('./store-crypto.cjs');
 
 // Browser control is gated by the persisted browser-control setting so the main
 // process and the sidepanel UI share a single source of truth: the sidepanel's
@@ -101,35 +108,31 @@ try {
 } catch {
   store = {};
 }
+// Decrypt sensitive keys into memory so EVERY reader of `store`
+// (isBrowserControlEnabled, header de-dup, dpp-store-get) sees plaintext. Without
+// this, after a restart store[key] is the raw `__enc__:` string loaded from disk
+// and the browser-control gate would read s.enabled off a string (always false)
+// even while the side panel shows Browser Control enabled. safeStorage requires
+// app 'ready', so this runs from whenReady() (see decryptSensitiveStoreKeys).
+function decryptSensitiveStoreKeys() {
+  decryptStoreInPlace(store, SENSITIVE_STORE_KEYS, safeStorage);
+}
+
 let writeTimer = null;
 function persist() {
   clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
-    // Encrypt sensitive keys before writing to disk
-    const diskStore = { ...store };
-    for (const key of SENSITIVE_STORE_KEYS) {
-      if (diskStore[key] != null && safeStorage.isEncryptionAvailable()) {
-        try {
-          const json = typeof diskStore[key] === 'string' ? diskStore[key] : JSON.stringify(diskStore[key]);
-          diskStore[key] = ENC_PREFIX + safeStorage.encryptString(json).toString('base64');
-        } catch (e) { console.warn('[dpp] encrypt failed for key', key, e.message); }
-      }
-    }
+    const diskStore = encryptStoreForDisk(store, SENSITIVE_STORE_KEYS, safeStorage);
     fs.writeFile(STORE_FILE, JSON.stringify(diskStore), () => {});
   }, 50);
 }
 function decryptStoreValue(key, value) {
-  if (!SENSITIVE_STORE_KEYS.has(key) || typeof value !== 'string' || !value.startsWith(ENC_PREFIX)) return value;
-  try {
-    const buf = Buffer.from(value.slice(ENC_PREFIX.length), 'base64');
-    return JSON.parse(safeStorage.decryptString(buf));
-  } catch { return value; }
+  return decryptStoreValuePure(key, value, SENSITIVE_STORE_KEYS, safeStorage);
 }
 // Single source of truth for the browser-control gate: the persisted setting the
 // sidepanel toggles via SET_BROWSER_CONTROL_ENABLED (saved into `store`).
 function isBrowserControlEnabled() {
-  const s = store[BROWSER_CONTROL_KEY];
-  return !!(s && s.enabled === true);
+  return isBrowserControlEnabledPure(store, BROWSER_CONTROL_KEY);
 }
 
 function allSurfaces() {
@@ -871,6 +874,10 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
     if (!hasSingleInstanceLock) { app.quit(); return; }
+  // Decrypt persisted sensitive keys into memory now that safeStorage is
+  // available, so the browser-control gate and header de-dup read plaintext
+  // (fixes the restart/persisted-enabled regression).
+  decryptSensitiveStoreKeys();
   normalizeUserAgent();
   registerAssetProtocol();
   // Log script integrity hashes for audit trail (supply chain detection).
