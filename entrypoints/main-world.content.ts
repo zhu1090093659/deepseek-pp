@@ -52,36 +52,50 @@ export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
   world: 'MAIN',
   runAt: 'document_start',
-  main() {
-    installContentBridge();
-    installFetchHook();
-
-    updateHookState({
-      onRequestBody: requestAugmentedBody,
-      onHeadersCaptured(headers: Record<string, string> | null) {
-        postToContent({ type: 'HEADERS_CAPTURED', headers });
-      },
-      onToolCallStarted(call: ToolCall) {
-        postToContent({ type: 'TOOL_CALL_STARTED', data: call });
-      },
-      onToolCall(call: ToolCall) {
-        postToContent({ type: 'TOOL_CALL', data: call });
-      },
-      onToolCallsRestored(records: ToolCallRestoreRecord[]) {
-        postToContent({ type: 'RESTORE_TOOL_CALLS', records });
-      },
-      onResponseComplete(complete: ResponseCompletePayload) {
-        postToContent({ type: 'RESPONSE_COMPLETE', payload: complete });
-      },
-      onResponseTokenSpeed(progress: ResponseTokenSpeedPayload) {
-        postToContent({ type: 'RESPONSE_TOKEN_SPEED', payload: progress });
-      },
-      onMemoriesUsed(ids: number[]) {
-        postToContent({ type: 'MEMORIES_USED', ids });
-      },
-    });
-  },
+  main,
 });
+
+// Desktop injects main-world.js directly via webFrame.executeJavaScript
+// without the WXT content-script runtime that normally calls main().
+// Auto-run here with a guard so it also works on desktop, while the
+// guard prevents double-execution when the WXT runtime calls it in
+// the browser extension build.
+if (typeof window !== 'undefined' && (window as any).__DPP_DESKTOP__ && !(window as any).__DPP_MAIN_WORLD_INITIALIZED__) {
+  main();
+}
+
+function main(): void {
+  if ((window as any).__DPP_MAIN_WORLD_INITIALIZED__) return;
+  (window as any).__DPP_MAIN_WORLD_INITIALIZED__ = true;
+
+  installContentBridge();
+  installFetchHook();
+
+  updateHookState({
+    onRequestBody: requestAugmentedBody,
+    onHeadersCaptured(headers: Record<string, string> | null) {
+      postToContent({ type: 'HEADERS_CAPTURED', headers });
+    },
+    onToolCallStarted(call: ToolCall) {
+      postToContent({ type: 'TOOL_CALL_STARTED', data: call });
+    },
+    onToolCall(call: ToolCall) {
+      postToContent({ type: 'TOOL_CALL', data: call });
+    },
+    onToolCallsRestored(records: ToolCallRestoreRecord[]) {
+      postToContent({ type: 'RESTORE_TOOL_CALLS', records });
+    },
+    onResponseComplete(complete: ResponseCompletePayload) {
+      postToContent({ type: 'RESPONSE_COMPLETE', payload: complete });
+    },
+    onResponseTokenSpeed(progress: ResponseTokenSpeedPayload) {
+      postToContent({ type: 'RESPONSE_TOKEN_SPEED', payload: progress });
+    },
+    onMemoriesUsed(ids: number[]) {
+      postToContent({ type: 'MEMORIES_USED', ids });
+    },
+  });
+}
 
 function installContentBridge(): void {
   window.addEventListener('message', (event) => {

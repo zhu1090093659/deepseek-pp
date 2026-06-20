@@ -96,6 +96,7 @@ import {
 } from '../core/multimodal';
 
 import { buildDeepSeekSessionUrl, createClientHeaders, rememberDeepSeekClientHeaders, saveClientHeadersToStorage } from '../core/deepseek/adapter';
+import { getCurrentPlatformEnvironment } from '../core/platform';
 import type {
   ConversationExportArtifact,
   ConversationExportProgress,
@@ -418,16 +419,26 @@ function formatContentAge(timestamp: number): string {
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
   runAt: 'document_start',
-  async main() {
-    registerDefaultToolResultRenderers();
-    await refreshContentLocale();
-    watchLocalePreference(() => {
-      void refreshContentLocale()
-        .then(() => loadAndSyncRuntimeState())
-        .catch(() => undefined);
-    });
-    installExtensionInvalidationGuards();
-    installMainWorldBridge();
+  main: contentMain,
+});
+
+// Desktop injects content.js directly via eval in the isolated preload world
+// without the WXT content-script runtime that normally calls main().
+// Auto-run here when the desktop flag is present.
+if (typeof globalThis !== 'undefined' && (globalThis as any).__DPP_DESKTOP__) {
+  void contentMain();
+}
+
+async function contentMain() {
+  registerDefaultToolResultRenderers();
+  await refreshContentLocale();
+  watchLocalePreference(() => {
+    void refreshContentLocale()
+      .then(() => loadAndSyncRuntimeState())
+      .catch(() => undefined);
+  });
+  installExtensionInvalidationGuards();
+  installMainWorldBridge();
 
     const handleMainWorldMessage = async (data: any) => {
       if (data?.source !== MAIN_WORLD_SOURCE) return;
@@ -454,6 +465,13 @@ export default defineContentScript({
             break;
           }
           case 'HEADERS_CAPTURED': {
+            // Desktop captures auth headers directly in the main process
+            // (session.webRequest.onSendHeaders) so a compromised page cannot
+            // spoof them over the main-world bridge. Ignore bridge-sourced
+            // headers on desktop; keep the extension path unchanged.
+            if (getCurrentPlatformEnvironment().kind === 'electron_desktop') {
+              break;
+            }
             await persistDeepSeekClientHeaders(normalizeCapturedClientHeaders(data.headers));
             break;
           }
@@ -587,8 +605,7 @@ export default defineContentScript({
       }
       return undefined;
     });
-  },
-});
+}
 
 let mainWorldMessageHandler: ((data: any) => void | Promise<void>) | null = null;
 const pendingMainWorldMessages: Record<string, unknown>[] = [];

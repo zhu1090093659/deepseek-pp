@@ -16,7 +16,7 @@
 //                      messaging hosts (shell host / MCP) as child processes.
 
 const {
-  app, BrowserWindow, ipcMain, protocol, net, Menu, globalShortcut, session, screen,
+  app, BrowserWindow, ipcMain, protocol, net, Menu, globalShortcut, session, screen, dialog,
 } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -44,6 +44,16 @@ const BROWSER_CONTROL_KEY = 'deepseek_pp_browser_control_settings';
 let appManifest = {};
 try { appManifest = JSON.parse(fs.readFileSync(path.join(DIST_DIR, 'manifest.json'), 'utf8')); } catch {}
 ipcMain.on('dpp-manifest', (event) => { event.returnValue = appManifest; });
+
+function readDist(rel) {
+  try { return fs.readFileSync(path.join(DIST_DIR, rel), 'utf8'); } catch { return null; }
+}
+ipcMain.on('dpp-content-scripts', (e) => {
+  e.returnValue = {
+    mainWorld: readDist('content-scripts/main-world.js') || '',
+    content: readDist('content-scripts/content.js') || '',
+  };
+});
 
 let chatWindow = null;
 let backgroundWindow = null;
@@ -206,6 +216,41 @@ ipcMain.on('dpp-tabs-send', (_e, _tabId, message) => {
 // ---------------------------------------------------------------------------
 const nativeChildren = new Map(); // portId -> { child, buffer }
 
+// Tool-execution confirmation gate (Finding #1, §5b.1). Intercepts every
+// `tools/call` JSON-RPC frame before it reaches the native host child process.
+// Read-only/status tools are allowed silently; anything that can mutate the
+// local machine requires an explicit user confirmation per session.
+let trustAllToolsThisSession = false;
+const READ_ONLY_TOOLS = new Set([
+  'shell_status', 'python_status', 'local_skill_preview', 'local_folder_pick',
+]);
+
+function summarizeToolCall(name, args) {
+  if (name === 'shell_exec') return `命令:\n${String(args?.command ?? '').slice(0, 800)}`;
+  if (name === 'python_exec') return `Python 代码:\n${String(args?.code ?? '').slice(0, 800)}`;
+  try { return JSON.stringify(args ?? {}, null, 2).slice(0, 800); } catch { return '(无法显示参数)'; }
+}
+
+async function confirmToolExecution(hostName, name, args) {
+  if (trustAllToolsThisSession) return true;
+  const parent = (chatWindow && !chatWindow.isDestroyed()) ? chatWindow : undefined;
+  const { response, checkboxChecked } = await dialog.showMessageBox(parent, {
+    type: 'warning',
+    noLink: true,
+    title: 'DeepSeek++ · 工具执行确认',
+    message: `允许在你的电脑上执行「${name}」?`,
+    detail: `来源:${hostName}\n\n${summarizeToolCall(name, args)}`,
+    buttons: ['拒绝', '允许这一次'],
+    defaultId: 0,
+    cancelId: 0,
+    checkboxLabel: '本次会话内信任(不再询问)',
+    checkboxChecked: false,
+  });
+  const allowed = response === 1;
+  if (allowed && checkboxChecked) trustAllToolsThisSession = true;
+  return allowed;
+}
+
 ipcMain.on('dpp-native-connect', (e, portId, hostName) => {
   const sender = e.sender;
   const def = NATIVE_HOSTS[hostName];
@@ -250,9 +295,29 @@ ipcMain.on('dpp-native-connect', (e, portId, hostName) => {
   });
 });
 
-ipcMain.on('dpp-native-post', (_e, portId, message) => {
+ipcMain.on('dpp-native-post', async (e, portId, message) => {
   const state = nativeChildren.get(portId);
   if (!state) return;
+
+  const rpc = message && message.message;
+  if (rpc && rpc.method === 'tools/call') {
+    const name = rpc.params?.name;
+    if (name && !READ_ONLY_TOOLS.has(name)) {
+      const ok = await confirmToolExecution(message.server?.id || 'native host',
+                                            name, rpc.params?.arguments);
+      if (!ok) {
+        if (!e.sender.isDestroyed()) {
+          e.sender.send('dpp-native-message', portId, {
+            jsonrpc: '2.0',
+            id: rpc.id ?? null,
+            error: { code: -32001, message: '用户拒绝了该工具执行。' },
+          });
+        }
+        return;
+      }
+    }
+  }
+
   const body = Buffer.from(JSON.stringify(message), 'utf8');
   const header = Buffer.alloc(4);
   header.writeUInt32LE(body.length, 0);
@@ -453,48 +518,6 @@ ipcMain.handle('dpp-debugger-detach', (_e, tabId) => {
 });
 
 // ---------------------------------------------------------------------------
-// Content-script injection — the same built files the Chrome/Android builds use.
-// This is how the extension enhances the DeepSeek chat (memory, tools, tok/s,
-// /skill popup, tool-result blocks); the side panel is the control surface.
-// ---------------------------------------------------------------------------
-function readDist(rel) {
-  try { return fs.readFileSync(path.join(DIST_DIR, rel), 'utf8'); } catch { return null; }
-}
-async function injectContentScripts(win) {
-  // main-world.js runs in the page's main world and sets up the extension
-  // platform detection. Inject it as-is.
-  const mwCode = readDist('content-scripts/main-world.js');
-  if (mwCode) {
-    try {
-      await win.webContents.executeJavaScript(`${mwCode}\n//# sourceURL=dpp/content-scripts/main-world.js`, true);
-    } catch (err) {
-      console.error('[DeepSeek++] inject failed main-world.js', err);
-    }
-  } else {
-    console.warn('[DeepSeek++] missing content-scripts/main-world.js');
-  }
-
-  // content.js accesses chrome.runtime, chrome.storage, etc. directly.
-  // Electron's sandbox makes window.chrome a non-configurable Proxy that
-  // throws on property access. We prepend `var chrome = window.__DPP_CHROME__`
-  // to shadow the global. Using `var` (not let/const) ensures the variable
-  // is hoisted to the top of the executeJavaScript function scope, so the
-  // content script (even if wrapped in its own IIFE) resolves the bare
-  // `chrome` identifier to our shim instead of window.chrome.
-  const ctCode = readDist('content-scripts/content.js');
-  if (ctCode) {
-    try {
-      const wrapped = `var chrome = window.__DPP_CHROME__;\nvar browser = chrome;\n${ctCode}\n//# sourceURL=dpp/content-scripts/content.js`;
-      await win.webContents.executeJavaScript(wrapped, true);
-    } catch (err) {
-      console.error('[DeepSeek++] inject failed content.js', err);
-    }
-  } else {
-    console.warn('[DeepSeek++] missing content-scripts/content.js');
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Sidebar (docked WebContentsView running the built sidepanel.html).
 // ---------------------------------------------------------------------------
 function createSidebarWindow() {
@@ -575,55 +598,15 @@ function createChatWindow() {
     icon: path.join(DIST_DIR, 'logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload-chat.cjs'),
-      contextIsolation: true,
-      sandbox: true,
+      contextIsolation: true,   // remote page cannot see the preload world
+      sandbox: false,           // preload needs require/eval; Node stays in the isolated preload world
       nodeIntegration: false,
     },
   });
 
-  chatWindow.webContents.on('did-finish-load', async () => {
-    const url = chatWindow.webContents.getURL();
-    if (url.startsWith('https://chat.deepseek.com')) {
-      // The preload exposes __DPP_CHROME__ via contextBridge (can't use 'chrome'
-      // key because Electron pre-populates window.chrome for web pages). Alias
-      // it to window.chrome before injecting content scripts so they find the
-      // familiar chrome.runtime / chrome.storage API.
-      try {
-        await chatWindow.webContents.executeJavaScript(`
-          (function() {
-            var s = window.__DPP_CHROME__;
-            if (!s) return;
-            // Create a PLAIN object (not a contextBridge Proxy) so the content
-            // script's own Proxy wrapper (Lv) can use Reflect.get without
-            // triggering invariant violations on contextBridge's internal proxy.
-            var plain = {
-              runtime: {
-                id: s.runtime.id,
-                getURL: function(p) { return s.runtime.getURL(p); },
-                getManifest: function() { return s.runtime.getManifest(); },
-                sendMessage: function(m) { return s.runtime.sendMessage(m); },
-                onMessage: { addListener: function(fn) { s.runtime.onMessage.addListener(fn); }, removeListener: function(fn) { s.runtime.onMessage.removeListener(fn); } },
-                onInstalled: { addListener: function() {}, removeListener: function() {} },
-                lastError: undefined
-              },
-              storage: {
-                local: { get: function(k) { return s.storage.local.get(k); }, set: function(v) { return s.storage.local.set(v); }, remove: function(k) { return s.storage.local.remove(k); } },
-                session: { get: function(k) { return s.storage.session.get(k); }, set: function(v) { return s.storage.session.set(v); }, remove: function(k) { return s.storage.session.remove(k); } },
-                onChanged: { addListener: function(fn) { s.storage.onChanged.addListener(fn); }, removeListener: function(fn) { s.storage.onChanged.removeListener(fn); } }
-              },
-              tabs: { query: function(q) { return s.tabs.query(q); }, sendMessage: function(t, m) { return s.tabs.sendMessage(t, m); } }
-            };
-            try { Object.defineProperty(globalThis, 'browser', { value: plain, writable: true, configurable: true }); }
-            catch(e) { try { globalThis.browser = plain; } catch(e2) {} }
-          })();
-        `);
-      } catch (err) {
-        console.error('[DeepSeek++] chrome alias injection failed', err);
-      }
-      injectContentScripts(chatWindow);
-    }
-  });
-  // Block navigation to privileged URLs (file://, chrome://, etc.)
+  // Content-script injection is now handled by preload-chat.cjs inside the
+  // isolated preload world, so the remote page's main world never sees the
+  // chrome shim. Navigation guard stays here.
   chatWindow.webContents.on('will-navigate', (event, navUrl) => {
     if (!isValidNavigationUrl(navUrl)) event.preventDefault();
   });
@@ -631,6 +614,50 @@ function createChatWindow() {
     const template = buildSelectionMenu(params.selectionText || '', params.isEditable);
     if (template.length > 0) Menu.buildFromTemplate(template).popup({ window: chatWindow });
   });
+  // --- Security audit probe (Finding #1) ---
+  // Runs in the MAIN world to verify the chrome shim is NOT exposed there.
+  chatWindow.webContents.on('did-finish-load', () => {
+    chatWindow.webContents.executeJavaScript(`
+      (function() {
+        let sendMessageResult;
+        try {
+          if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+            // Native chrome.runtime.sendMessage exists (Electron pre-populates it);
+            // calling it should NOT reach our background because it's the browser
+            // native Proxy, not our shim.
+            sendMessageResult = 'native_proxy_present';
+          } else {
+            sendMessageResult = 'chrome.runtime unavailable';
+          }
+        } catch (e) {
+          sendMessageResult = 'error: ' + e.message;
+        }
+        const fetchStr = String(window.fetch);
+        const fetchHooked = fetchStr.includes('async function') || fetchStr.length > 200;
+        const mainWorldVal = window.mainWorld;
+        return JSON.stringify({
+          __DPP_CHROME__: typeof window.__DPP_CHROME__,
+          browser: typeof window.browser,
+          chrome_runtime: typeof window.chrome?.runtime,
+          sendMessageResult: sendMessageResult,
+          fetchHooked: fetchHooked,
+          fetchHasAsync: fetchStr.includes('async function'),
+          fetchHasNative: fetchStr.includes('native code'),
+          fetchLength: fetchStr.length,
+          fetchStrPreview: fetchStr.slice(0, 100),
+          mainWorldType: typeof mainWorldVal,
+          __DPP_DESKTOP__: window.__DPP_DESKTOP__,
+          __DPP_MAIN_WORLD_INITIALIZED__: window.__DPP_MAIN_WORLD_INITIALIZED__,
+          timestamp: Date.now()
+        });
+      })()
+    `, true).then((result) => {
+      console.log('[AUDIT] Main world security probe:', result);
+    }).catch((err) => {
+      console.log('[AUDIT] Main world security probe FAILED:', err.message);
+    });
+  });
+  // --- End security audit probe ---
   chatWindow.loadURL(CHAT_URL);
   chatWindow.on('closed', () => {
     chatWindow = null;
@@ -652,6 +679,47 @@ function normalizeUserAgent() {
   console.log('[DeepSeek++] UA:', clean);
 }
 
+// ---------------------------------------------------------------------------
+// DeepSeek auth-header capture (Finding #1, §5b.2).
+//
+// Instead of trusting the main-world script to forward HEADERS_CAPTURED over
+// the page-visible bridge (which a compromised page could spoof), observe the
+// real outbound request headers directly in the main process and persist them.
+// This keeps the bridge untrusted for authentication data and also makes the
+// captured headers available to the sidebar web chat.
+// ---------------------------------------------------------------------------
+const DEEPSEEK_HEADERS_KEY = 'deepseekCachedClientHeaders';
+
+function lcHeaders(h) {
+  const out = {};
+  for (const [k, v] of Object.entries(h || {})) out[k.toLowerCase()] = Array.isArray(v) ? v[0] : v;
+  return out;
+}
+
+function startDeepSeekHeaderCapture() {
+  const filter = { urls: ['*://chat.deepseek.com/*'] };
+  session.defaultSession.webRequest.onSendHeaders(filter, (details) => {
+    const h = lcHeaders(details.requestHeaders);
+    const auth = h['authorization'];
+    if (!auth || !/^Bearer\s+\S/i.test(auth)) return;
+
+    const captured = {
+      Authorization: auth,
+      'X-App-Version': h['x-app-version'] || '',
+      'x-client-platform': h['x-client-platform'] || '',
+      'x-client-version': h['x-client-version'] || '',
+      'x-client-locale': h['x-client-locale'] || '',
+      'x-client-timezone-offset': h['x-client-timezone-offset'] || '',
+    };
+
+    const prev = store[DEEPSEEK_HEADERS_KEY];
+    if (prev && prev.Authorization === captured.Authorization) return;
+    store[DEEPSEEK_HEADERS_KEY] = captured;
+    persist();
+    broadcastStorageChange({ [DEEPSEEK_HEADERS_KEY]: { oldValue: prev, newValue: captured } });
+  });
+}
+
 // One instance only: a second launch can't share the session profile (locked
 // cookie/storage DBs), which would surface as being logged out. Defer to the
 // running instance and (re)open its DeepSeek window.
@@ -669,6 +737,7 @@ app.whenReady().then(() => {
     if (!hasSingleInstanceLock) { app.quit(); return; }
   normalizeUserAgent();
   registerAssetProtocol();
+  startDeepSeekHeaderCapture();
   Menu.setApplicationMenu(null);
     createBackgroundWindow();
   createChatWindow();
