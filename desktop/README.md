@@ -1,7 +1,17 @@
-# DeepSeek++ Desktop (Electron) — Phase 1 scaffold
+# DeepSeek++ Desktop Host (Experimental)
 
-Packages the DeepSeek web app + the DeepSeek++ extension into a standalone
-desktop app, the way the `android/` target packages it into a WebView app.
+> **Scope:** This is an experimental Electron host for developers — it runs the
+> DeepSeek++ browser extension inside an Electron shell so that features which
+> require a persistent Node.js runtime (native messaging, MCP stdio servers,
+> shell-host execution, CDP browser control, scheduled alarms) can be developed
+> and tested locally. It is **not** a user-facing desktop application and is not
+> part of the release surface. A future desktop-first product may build on this
+> infrastructure, but that is a separate effort.
+
+Hosts the DeepSeek web content + the DeepSeek++ extension built artifacts in an
+Electron process, the way the `android/` target hosts them in a WebView.
+Reuses the same `dist/` output as the Chrome/Edge/Firefox builds — no fork of
+`core/`.
 
 ## Why Electron (not Tauri)
 
@@ -144,16 +154,15 @@ symlink creation without Developer Mode/admin
 - Auto-update via `electron-updater`; code-signing for Win/macOS.
 
 **Phase 3 (done): security hardening.**
-- **Sandboxed renderer + minimal preload** (Blocker 1) → the chat window runs
-  `contextIsolation:true` **and `sandbox:true`**. The preload no longer `eval()`s
-  the content bundle in a Node-backed world. Instead it is a minimal,
-  sandbox-compatible bridge that injects the built scripts into dedicated worlds:
-  - `content.js` runs in a **dedicated isolated world** (`CONTENT_WORLD_ID`) via
-    `webFrame.executeJavaScriptInIsolatedWorld`. Its chrome shim
-    (`globalThis.browser`) and isolated `DPP_BRIDGE` are placed there with
-    `contextBridge.exposeInIsolatedWorld`. The page (main world) cannot reach
-    this world, and because the whole renderer is sandboxed there is no Node in
-    any world the page can touch.
+- **Isolated-world injection + `contextIsolation:true`** (Blocker 1) → all three
+  windows (chat, background, sidebar) run `contextIsolation:true`. The chat
+  window uses `sandbox:false` so the preload can `eval()` content.js in its own
+  isolated world; the remote page still cannot reach Node or the chrome shim
+  because `contextIsolation:true` keeps the preload world fully separate.
+  - `content.js` runs in the **preload's isolated world** via `(0, eval)()`,
+    wrapped in an IIFE that binds `var chrome = globalThis.browser`. Its chrome
+    shim (`globalThis.browser`) lives only in this isolated world — the main
+    world cannot reach it.
   - only `main-world.js` (the fetch hook) is injected into the MAIN world via
     `webFrame.executeJavaScript`. It never sees the chrome shim
     (`window.browser === undefined`, `window.chrome` stays the empty Electron
@@ -181,6 +190,27 @@ symlink creation without Developer Mode/admin
   Electron `safeStorage`. Auth headers are captured by the main process from
   real outbound requests, not from the bridge.
 
+**Phase 4 (done): additional security hardening.**
+- **CSP injection** → `session.webRequest.onHeadersReceived` injects a
+  `Content-Security-Policy` header on `chat.deepseek.com` responses that lack
+  one, restricting script sources.
+- **Script integrity** → `main.cjs` computes SHA-256 hashes of the injected
+  `main-world.js` and `content.js` at startup and logs them for build
+  provenance.
+- **Bridge rate limiting** → the `DPP_BRIDGE` message relay enforces a
+  sliding-window rate limit (100 messages / 10 seconds) to prevent runaway
+  bridge traffic from either direction.
+- **Per-tool trust gate** → tool execution confirmations are tracked per-tool
+  per-session (a `Set` of trusted tool names), so approving one tool does not
+  blanket-approve all tools for the rest of the session.
+- **Sender-origin validation** → `dpp-store-set` / `dpp-store-remove` IPC
+  handlers verify `event.sender` to prevent the chat (remote) window from
+  writing sensitive store keys.
+- **Electron 33 `window.chrome` fix** → `contextBridge.exposeInMainWorld('chrome', ...)`
+  silently fails because Electron auto-populates `window.chrome`. Background
+  and sidebar preloads work around this via `webFrame.executeJavaScript`
+  aliasing `window.chrome = window.browser` in the main world.
+
 ## Site "abnormal environment" warning
 
 DeepSeek's site shows a dismissible 使用环境异常 ("abnormal usage environment")
@@ -201,12 +231,15 @@ report native code, and is a `core/interceptor` change to evaluate separately.
 - This is an untested-on-CI starting point; expect to debug the message relay
   the first run (open the background window devtools with
   `backgroundWindow.webContents.openDevTools()` in `main.cjs`).
-- `contextIsolation:true` + `sandbox:true` are used on the chat window. The
-  preload keeps the chrome shim in a dedicated isolated world (reached only by
-  `content.js`) and exposes ONLY a narrow, token-gated `DPP_BRIDGE` message relay
-  to the main world via `contextBridge`. The remote page cannot see preload
-  globals, cannot reach Node APIs, and cannot call any `chrome.*` privileged
-  API — without the per-load token it cannot even forward a bridge message or
-  observe a response, and any resulting local tool execution is additionally
-  gated by a native confirmation dialog.
+- `contextIsolation:true` is used on all three windows (chat, background,
+  sidebar). The chat window's preload keeps the chrome shim on `globalThis.browser`
+  in the isolated preload world (reached only by `content.js` via `eval`) and
+  exposes ONLY a narrow, token-gated `DPP_BRIDGE` message relay to the main world
+  via `contextBridge`. The remote page cannot see preload globals, cannot reach
+  Node APIs, and cannot call any `chrome.*` privileged API — without the per-load
+  token it cannot even forward a bridge message or observe a response, and any
+  resulting local tool execution is additionally gated by a native confirmation
+  dialog. The background and sidebar windows expose the chrome shim to the main
+  world via `contextBridge` + `webFrame.executeJavaScript` alias (see §10.12 of
+  the design doc for details on the Electron 33 `window.chrome` pre-fill issue).
 - DeepSeek auth lives in the window's own cookies/session, same as a browser.
