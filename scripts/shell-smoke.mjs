@@ -64,10 +64,12 @@ function readNativeMessage(child) {
   });
 }
 
-function spawnHost() {
-  return spawn(process.execPath, [HOST_SCRIPT], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+function spawnHost(extraHostEnv) {
+  const options = { stdio: ['pipe', 'pipe', 'pipe'] };
+  // extraHostEnv simulates secrets present in the host's OWN environment
+  // (e.g. AWS_SECRET_ACCESS_KEY, DATABASE_URL). When absent, inherit unchanged.
+  if (extraHostEnv) options.env = { ...process.env, ...extraHostEnv };
+  return spawn(process.execPath, [HOST_SCRIPT], options);
 }
 
 function makeEnvelope(method, params, id) {
@@ -377,6 +379,90 @@ await testMethod('shell_session_end missing session_id', 'tools/call', {
 }, (res) => {
   assert(res.result?.isError === true, 'expected isError for missing session_id');
 });
+
+// --- H-01 regression: child env isolation (issue #236) ---
+// The host must NOT leak its own environment secrets into spawned tools, must
+// still pass explicit safe env through, and must drop dynamic-loader hijack
+// keys. Drive this through the real shell_exec / shell_session tool path so the
+// old `{ ...process.env, ...extraEnv }` implementation would fail here.
+{
+  const FAKE_HOST_SECRETS = {
+    AWS_SECRET_ACCESS_KEY: 'FAKE_AWS_LEAK_SHOULD_NOT_APPEAR',
+    DATABASE_URL: 'postgres://FAKE_DB_LEAK_SHOULD_NOT_APPEAR',
+  };
+  const TOOL_ENV = {
+    DPP_SAFE_ENV: 'safe-value-7f3a',
+    LD_PRELOAD: '/tmp/dpp-evil.so',
+    DYLD_INSERT_LIBRARIES: '/tmp/dpp-evil.dylib',
+  };
+  const PROBE = platform() === 'win32'
+    ? 'Write-Output "DPP_ENV_PROBE|SAFE=$env:DPP_SAFE_ENV|AWS=$env:AWS_SECRET_ACCESS_KEY|DB=$env:DATABASE_URL|LD=$env:LD_PRELOAD|DYLD=$env:DYLD_INSERT_LIBRARIES"'
+    : 'printf "DPP_ENV_PROBE|SAFE=%s|AWS=%s|DB=%s|LD=%s|DYLD=%s\\n" "$DPP_SAFE_ENV" "$AWS_SECRET_ACCESS_KEY" "$DATABASE_URL" "$LD_PRELOAD" "$DYLD_INSERT_LIBRARIES"';
+
+  function assertEnvIsolated(out, context) {
+    assert(out.includes('SAFE=safe-value-7f3a'), `${context}: explicit env should pass through, got "${out}"`);
+    assert(!out.includes('FAKE_AWS_LEAK'), `${context}: host AWS secret leaked into child — "${out}"`);
+    assert(!out.includes('FAKE_DB_LEAK'), `${context}: host DATABASE_URL leaked into child — "${out}"`);
+    assert(!out.includes('dpp-evil.so'), `${context}: LD_PRELOAD was not blocked — "${out}"`);
+    assert(!out.includes('dpp-evil.dylib'), `${context}: DYLD_INSERT_LIBRARIES was not blocked — "${out}"`);
+  }
+
+  // shell_exec
+  {
+    const child = spawnHost(FAKE_HOST_SECRETS);
+    const label = 'shell_exec env isolation: drops host secrets + loader keys, keeps explicit env (H-01)';
+    try {
+      sendNativeMessage(child, makeEnvelope('tools/call', {
+        name: 'shell_exec',
+        arguments: { command: PROBE, env: TOOL_ENV },
+      }));
+      const res = await readNativeMessage(child);
+      assertEnvIsolated(res.result?.structuredContent?.data?.stdout || '', 'shell_exec');
+      passed++;
+      console.log(`  PASS: ${label}`);
+    } catch (err) {
+      failed++;
+      console.log(`  FAIL: ${label} — ${err.message}`);
+    } finally {
+      child.kill();
+    }
+  }
+
+  // shell_session_begin + shell_session_exec (same invariants on a persistent shell)
+  {
+    const child = spawnHost(FAKE_HOST_SECRETS);
+    const label = 'shell_session env isolation: persistent shell keeps explicit env, no host secrets/loader keys (H-01)';
+    try {
+      sendNativeMessage(child, makeEnvelope('tools/call', {
+        name: 'shell_session_begin',
+        arguments: { env: TOOL_ENV },
+      }));
+      let res = await readNativeMessage(child);
+      const sessionId = res.result?.structuredContent?.data?.session_id;
+      assert(sessionId, 'expected session_id from begin');
+
+      sendNativeMessage(child, makeEnvelope('tools/call', {
+        name: 'shell_session_exec',
+        arguments: { session_id: sessionId, command: PROBE },
+      }));
+      res = await readNativeMessage(child);
+      assertEnvIsolated(res.result?.structuredContent?.data?.stdout || '', 'shell_session_exec');
+
+      sendNativeMessage(child, makeEnvelope('tools/call', {
+        name: 'shell_session_end',
+        arguments: { session_id: sessionId },
+      }));
+      await readNativeMessage(child).catch(() => {});
+      passed++;
+      console.log(`  PASS: ${label}`);
+    } catch (err) {
+      failed++;
+      console.log(`  FAIL: ${label} — ${err.message}`);
+    } finally {
+      child.kill();
+    }
+  }
+}
 
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
