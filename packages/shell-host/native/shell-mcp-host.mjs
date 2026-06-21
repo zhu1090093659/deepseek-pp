@@ -920,14 +920,23 @@ async function beginShellSession(args) {
     // resident process) — with a single negative-PID kill. Without this, a
     // SIGKILL to the shell alone leaves the resident as an orphan holding the
     // document file lock, which is exactly the failure mode in issue #230.
-    child = spawn(shellBin, shellArgs, {
+    //
+    // detached:true is POSIX-only here. On Windows, CREATE_NEW_PROCESS_GROUP +
+    // `powershell -Command -` makes PowerShell see stdin as a non-console
+    // stream, treat the empty read as a completed script, and exit immediately
+    // (exit 0) — so the session dies before any shell_session_exec runs. The
+    // Windows tear-down path in killSessionProcessGroup already falls back to a
+    // direct kill (no process groups on Win32), so dropping detached there loses
+    // nothing.
+    const spawnOptions = {
       cwd,
       env,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      detached: true,
-    });
+    };
+    if (platform() !== 'win32') spawnOptions.detached = true;
+    child = spawn(shellBin, shellArgs, spawnOptions);
   } catch (err) {
     return {
       isError: true,
