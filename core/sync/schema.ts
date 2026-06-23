@@ -114,7 +114,7 @@ export function validateGitHubSkillSource(value: unknown, path = 'skillSource'):
     repo: requiredString(object.repo, `${path}.repo`),
     repository: requiredString(object.repository, `${path}.repository`),
     ref: requiredString(object.ref, `${path}.ref`),
-    rootPath: requiredString(object.rootPath, `${path}.rootPath`),
+    rootPath: requiredStringAllowEmpty(object.rootPath, `${path}.rootPath`),
     commitSha: requiredString(object.commitSha, `${path}.commitSha`),
     defaultBranch: requiredString(object.defaultBranch, `${path}.defaultBranch`),
     repoUrl: requiredString(object.repoUrl, `${path}.repoUrl`),
@@ -272,6 +272,17 @@ function arrayValue(value: unknown, path: string): unknown[] {
 function requiredString(value: unknown, path: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+// GitHub skill sources use an empty rootPath to denote the repository root
+// (consistent with createSourceId's `rootPath || '.'` fallback and the UI's
+// `rootPath || repoRoot` display). Allow empty here so a snapshot uploaded from
+// a repo-root import can be re-downloaded on a new device.
+function requiredStringAllowEmpty(value: unknown, path: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${path} must be a string`);
   }
   return value;
 }

@@ -211,4 +211,32 @@ describe('persisted user data i18n boundaries', () => {
     expect(parseValidatedArray('skill-sources.json', JSON.stringify([localSource]), validateSkillImportSource)[0])
       .toEqual(localSource);
   });
+
+  it('accepts a GitHub source imported from the repository root (empty rootPath)', () => {
+    // Regression for https://github.com/zhu1090093659/deepseek-pp/issues/250
+    // Importing from a bare repo URL (no sub-path) stores rootPath as "".
+    // The download validation must accept it, not reject it as a non-empty string.
+    const repoRootSource: GitHubSkillSource = {
+      id: 'github:example/skills:main:.',
+      provider: 'github',
+      url: 'https://github.com/example/skills',
+      owner: 'example',
+      repo: 'skills',
+      repository: 'example/skills',
+      ref: 'main',
+      rootPath: '',
+      commitSha: 'abc123',
+      defaultBranch: 'main',
+      repoUrl: 'https://github.com/example/skills',
+      skillPaths: ['SKILL.md'],
+      importedSkillNames: ['demo'],
+      importedAt: 1,
+      updatedAt: 2,
+    };
+
+    expect(validateGitHubSkillSource(repoRootSource)).toEqual(repoRootSource);
+    expect(validateSkillImportSource(repoRootSource)).toEqual(repoRootSource);
+    expect(parseValidatedArray('skill-sources.json', JSON.stringify([repoRootSource]), validateSkillImportSource)[0])
+      .toEqual(repoRootSource);
+  });
 });
