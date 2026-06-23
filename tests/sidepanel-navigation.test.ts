@@ -25,6 +25,7 @@ beforeEach(() => {
         if (message.type === 'GET_VOICE_SETTINGS') return {};
         if (message.type === 'GET_USAGE_SUMMARY') return createUsageSummary();
         if (message.type === 'CLEAR_USAGE_STATS') return { ok: true };
+        if (message.type === 'GET_SYNC_CONFIG') return null;
         return null;
       }),
       onMessage: {
@@ -45,6 +46,9 @@ beforeEach(() => {
         addListener: vi.fn(),
         removeListener: vi.fn(),
       },
+    },
+    identity: {
+      getRedirectURL: vi.fn(() => 'https://test-extension.chromiumapp.org/'),
     },
   });
 });

@@ -1,20 +1,20 @@
-import type { SyncConfig } from '../types';
+import type { WebdavSyncConfig } from '../types';
 
-function buildUrl(config: SyncConfig, file?: string): string {
+function buildUrl(config: WebdavSyncConfig, file?: string): string {
   const base = config.url.replace(/\/+$/, '');
   const path = config.remotePath.replace(/^\/+|\/+$/g, '');
   if (file) return `${base}/${path}/${file}`;
   return `${base}/${path}`;
 }
 
-function headers(config: SyncConfig, extra?: Record<string, string>): Record<string, string> {
+function headers(config: WebdavSyncConfig, extra?: Record<string, string>): Record<string, string> {
   return {
     Authorization: 'Basic ' + btoa(`${config.username}:${config.password}`),
     ...extra,
   };
 }
 
-export async function webdavTest(config: SyncConfig): Promise<void> {
+export async function webdavTest(config: WebdavSyncConfig): Promise<void> {
   const url = config.url.replace(/\/+$/, '') + '/';
   const res = await fetch(url, {
     method: 'PROPFIND',
@@ -26,7 +26,7 @@ export async function webdavTest(config: SyncConfig): Promise<void> {
   if (res.status !== 207 && !res.ok) throw new Error(`连接失败 (HTTP ${res.status})`);
 }
 
-export async function webdavMkcol(config: SyncConfig): Promise<void> {
+export async function webdavMkcol(config: WebdavSyncConfig): Promise<void> {
   const url = buildUrl(config) + '/';
   const res = await fetch(url, {
     method: 'MKCOL',
@@ -37,7 +37,7 @@ export async function webdavMkcol(config: SyncConfig): Promise<void> {
   throw new Error(`创建远程目录失败 (HTTP ${res.status})`);
 }
 
-export async function webdavGet(config: SyncConfig, file: string): Promise<string | null> {
+export async function webdavGet(config: WebdavSyncConfig, file: string): Promise<string | null> {
   const url = buildUrl(config, file);
   const res = await fetch(url, {
     method: 'GET',
@@ -48,7 +48,7 @@ export async function webdavGet(config: SyncConfig, file: string): Promise<strin
   return res.text();
 }
 
-export async function webdavPut(config: SyncConfig, file: string, content: string): Promise<void> {
+export async function webdavPut(config: WebdavSyncConfig, file: string, content: string): Promise<void> {
   const url = buildUrl(config, file);
   const res = await fetch(url, {
     method: 'PUT',

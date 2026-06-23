@@ -49,7 +49,9 @@ import { clearUsageRecords, getUsageSummary, recordUsageTurn } from '../core/usa
 import { getExtensionVersion } from '../core/version';
 import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
-import { webdavTest, webdavMkcol, webdavGet, webdavPut } from '../core/sync/webdav-client';
+import { createStorageBackend, type StorageBackend } from '../core/sync/storage-backend';
+import { authorizeGDrive } from '../core/sync/gdrive-client';
+import { authorizeOneDrive } from '../core/sync/onedrive-client';
 import {
   parseValidatedArray,
   parseValidatedJson,
@@ -220,7 +222,7 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
+import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
 import type { McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
@@ -1081,20 +1083,37 @@ async function handleMessage(
     }
 
     case 'WEBDAV_TEST': {
-      await webdavTest(message.payload as SyncConfig);
+      const backend = createStorageBackend(message.payload as SyncConfig);
+      await backend.test();
       return { ok: true };
+    }
+
+    case 'SYNC_AUTHORIZE': {
+      // Must run in background: chrome.identity.launchWebAuthFlow requires the
+      // extension context and cannot be called from a content/offscreen context.
+      const draft = message.payload as SyncConfigDraft;
+      if (draft.provider === 'gdrive') {
+        const refreshToken = await authorizeGDrive(draft);
+        return { ok: true, refreshToken };
+      }
+      if (draft.provider === 'onedrive') {
+        const refreshToken = await authorizeOneDrive(draft);
+        return { ok: true, refreshToken };
+      }
+      throw new Error('当前同步方式不需要授权');
     }
 
     case 'WEBDAV_UPLOAD_LOCAL': {
       const config = await getSyncConfig();
-      if (!config) throw new Error(backgroundT('background.sync.missingWebDav'));
+      if (!config) throw new Error(backgroundT('background.sync.missingSync'));
 
+      const backend = createStorageBackend(config);
       const [, snapshot] = await Promise.all([
-        webdavMkcol(config),
+        backend.ensureStore(),
         getLocalSyncDataSnapshot(),
       ]);
 
-      await uploadSyncDataSnapshot(config, snapshot);
+      await uploadSyncDataSnapshot(backend, snapshot);
 
       const now = Date.now();
       await saveSyncConfig({ ...config, lastSyncAt: now });
@@ -1103,9 +1122,10 @@ async function handleMessage(
 
     case 'WEBDAV_DOWNLOAD_REMOTE': {
       const config = await getSyncConfig();
-      if (!config) throw new Error(backgroundT('background.sync.missingWebDav'));
+      if (!config) throw new Error(backgroundT('background.sync.missingSync'));
 
-      const snapshot = await mergeSyncSnapshotWithLocalImports(await getRemoteSyncDataSnapshot(config));
+      const backend = createStorageBackend(config);
+      const snapshot = await mergeSyncSnapshotWithLocalImports(await getRemoteSyncDataSnapshot(backend));
 
       const replacements: Promise<unknown>[] = [
         replaceAllMemories(snapshot.memories),
@@ -1944,29 +1964,29 @@ async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
   };
 }
 
-async function uploadSyncDataSnapshot(config: SyncConfig, snapshot: SyncDataSnapshot): Promise<void> {
+async function uploadSyncDataSnapshot(backend: StorageBackend, snapshot: SyncDataSnapshot): Promise<void> {
   await Promise.all([
-    webdavPut(config, 'memories.json', JSON.stringify(snapshot.memories)),
-    webdavPut(config, 'skills.json', JSON.stringify(snapshot.skills)),
-    webdavPut(config, 'skill-sources.json', JSON.stringify(snapshot.skillSources)),
-    webdavPut(config, 'presets.json', JSON.stringify(snapshot.presets)),
+    backend.put('memories.json', JSON.stringify(snapshot.memories)),
+    backend.put('skills.json', JSON.stringify(snapshot.skills)),
+    backend.put('skill-sources.json', JSON.stringify(snapshot.skillSources)),
+    backend.put('presets.json', JSON.stringify(snapshot.presets)),
     snapshot.projectContext
-      ? webdavPut(config, 'project-context.json', JSON.stringify(snapshot.projectContext))
+      ? backend.put('project-context.json', JSON.stringify(snapshot.projectContext))
       : Promise.resolve(),
     snapshot.savedItems
-      ? webdavPut(config, 'saved-items.json', JSON.stringify(snapshot.savedItems))
+      ? backend.put('saved-items.json', JSON.stringify(snapshot.savedItems))
       : Promise.resolve(),
   ]);
 }
 
-async function getRemoteSyncDataSnapshot(config: SyncConfig): Promise<SyncDataSnapshot> {
+async function getRemoteSyncDataSnapshot(backend: StorageBackend): Promise<SyncDataSnapshot> {
   const [remoteMemJson, remoteSkillJson, remotePresetJson, remoteSkillSourceJson, remoteProjectContextJson, remoteSavedItemsJson] = await Promise.all([
-    webdavGetRequired(config, 'memories.json'),
-    webdavGetRequired(config, 'skills.json'),
-    webdavGetRequired(config, 'presets.json'),
-    webdavGet(config, 'skill-sources.json'),
-    webdavGet(config, 'project-context.json'),
-    webdavGet(config, 'saved-items.json'),
+    backendGetRequired(backend, 'memories.json'),
+    backendGetRequired(backend, 'skills.json'),
+    backendGetRequired(backend, 'presets.json'),
+    backend.get('skill-sources.json'),
+    backend.get('project-context.json'),
+    backend.get('saved-items.json'),
   ]);
 
   const memories = parseValidatedArray('memories.json', remoteMemJson, (item, path) => {
@@ -2026,8 +2046,8 @@ async function mergeSyncSnapshotWithLocalImports(snapshot: SyncDataSnapshot): Pr
   };
 }
 
-async function webdavGetRequired(config: SyncConfig, file: string): Promise<string> {
-  const content = await webdavGet(config, file);
+async function backendGetRequired(backend: StorageBackend, file: string): Promise<string> {
+  const content = await backend.get(file);
   if (content === null) {
     throw new Error(backgroundT('background.sync.missingRemoteFile', { file }));
   }

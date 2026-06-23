@@ -229,13 +229,42 @@ export type NewMemory = Omit<
   projectId?: string;
 };
 
-export interface SyncConfig {
+export interface SyncConfigBase {
+  lastSyncAt: number | null;
+}
+
+export interface WebdavSyncConfig extends SyncConfigBase {
+  provider: 'webdav';
   url: string;
   username: string;
   password: string;
   remotePath: string;
-  lastSyncAt: number | null;
 }
+
+export interface GDriveSyncConfig extends SyncConfigBase {
+  provider: 'gdrive';
+  clientId: string;
+  clientSecret: string;
+  refreshToken?: string;
+}
+
+export interface OneDriveSyncConfig extends SyncConfigBase {
+  provider: 'onedrive';
+  clientId: string;
+  clientSecret: string;
+  refreshToken?: string;
+}
+
+export type SyncConfig = WebdavSyncConfig | GDriveSyncConfig | OneDriveSyncConfig;
+
+export type SyncProvider = SyncConfig['provider'];
+
+// Distributive Omit: applies Omit to each member of a union separately,
+// preserving provider discrimination when stripping shared fields like lastSyncAt.
+type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
+
+// Strip lastSyncAt from any SyncConfig variant for "save without timestamp" flows.
+export type SyncConfigDraft = DistributiveOmit<SyncConfig, 'lastSyncAt'>;
 
 export interface SyncCounts {
   memories: number;
@@ -552,9 +581,10 @@ export type MessageAction =
   | { type: 'SAVE_OFFICIAL_API_CHAT_CONFIG'; payload: Partial<OfficialApiChatConfigType> }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
   | { type: 'MEMORIES_UPDATED' }
-  | { type: 'WEBDAV_TEST'; payload: Omit<SyncConfig, 'lastSyncAt'> }
+  | { type: 'WEBDAV_TEST'; payload: SyncConfigDraft }
   | { type: 'WEBDAV_UPLOAD_LOCAL' }
   | { type: 'WEBDAV_DOWNLOAD_REMOTE' }
+  | { type: 'SYNC_AUTHORIZE'; payload: SyncConfigDraft }
   | { type: 'GET_SYNC_CONFIG' }
   | { type: 'SAVE_SYNC_CONFIG'; payload: SyncConfig }
   | { type: 'GET_BACKGROUND' }

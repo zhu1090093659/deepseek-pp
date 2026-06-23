@@ -13,14 +13,19 @@ import {
 } from '../../../../core/pet/config';
 import type {
   BackgroundConfig,
+  GDriveSyncConfig,
   Memory,
   MultimodalSettingsStatus,
+  OneDriveSyncConfig,
   PetConfig,
   PetPosition,
   SyncConfig,
   SyncCounts,
+  SyncProvider,
+  WebdavSyncConfig,
 } from '../../../../core/types';
 import { validateImportedMemory } from '../../../../core/sync/schema';
+import { getRedirectUri } from '../../../../core/sync/oauth-client';
 
 /**
  * Central settings state + handlers.
@@ -31,13 +36,59 @@ import { validateImportedMemory } from '../../../../core/sync/schema';
  * contract byte-for-byte identical to the legacy implementation.
  */
 
-const DEFAULT_SYNC_CONFIG: SyncConfig = {
+const DEFAULT_WEBDAV_CONFIG: WebdavSyncConfig = {
+  provider: 'webdav',
   url: '',
   username: '',
   password: '',
   remotePath: 'DeepSeekPP',
   lastSyncAt: null,
 };
+
+const DEFAULT_GDRIVE_CONFIG: GDriveSyncConfig = {
+  provider: 'gdrive',
+  clientId: '',
+  clientSecret: '',
+  refreshToken: undefined,
+  lastSyncAt: null,
+};
+
+const DEFAULT_ONEDRIVE_CONFIG: OneDriveSyncConfig = {
+  provider: 'onedrive',
+  clientId: '',
+  clientSecret: '',
+  refreshToken: undefined,
+  lastSyncAt: null,
+};
+
+function defaultConfigForProvider(provider: SyncProvider): SyncConfig {
+  if (provider === 'gdrive') return { ...DEFAULT_GDRIVE_CONFIG };
+  if (provider === 'onedrive') return { ...DEFAULT_ONEDRIVE_CONFIG };
+  return { ...DEFAULT_WEBDAV_CONFIG };
+}
+
+// Legacy configs saved before multi-provider support had no `provider` field.
+// Treat them as WebDAV so existing users keep working until they reconfigure.
+function normalizeLoadedConfig(raw: unknown): SyncConfig {
+  if (raw && typeof raw === 'object' && (raw as { provider?: string }).provider) {
+    return raw as SyncConfig;
+  }
+  // Pre-multi-provider WebDAV shape — backfill provider. If the user has not
+  // configured anything yet, raw may be a bare object without sync fields;
+  // fall through to the default WebDAV config in that case.
+  const legacy = raw as Partial<WebdavSyncConfig> | null;
+  if (legacy && (legacy.url || legacy.username || legacy.password || legacy.remotePath)) {
+    return {
+      provider: 'webdav',
+      url: legacy.url ?? '',
+      username: legacy.username ?? '',
+      password: legacy.password ?? '',
+      remotePath: legacy.remotePath ?? 'DeepSeekPP',
+      lastSyncAt: legacy.lastSyncAt ?? null,
+    };
+  }
+  return { ...DEFAULT_WEBDAV_CONFIG };
+}
 
 const DEFAULT_BACKGROUND_CONFIG: BackgroundConfig = {
   enabled: false,
@@ -100,7 +151,7 @@ export function useSettingsState() {
   const [petMotion, setPetMotion] = useState(DEFAULT_PET_CONFIG.motion);
 
   // --- sync ---
-  const [syncConfig, setSyncConfig] = useState<SyncConfig>(DEFAULT_SYNC_CONFIG);
+  const [syncConfig, setSyncConfig] = useState<SyncConfig>(DEFAULT_WEBDAV_CONFIG);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [syncMessage, setSyncMessage] = useState('');
 
@@ -162,7 +213,7 @@ export function useSettingsState() {
       if (mm?.ok) syncMultimodalStatus(mm);
       setMemoryCount((memories as Memory[])?.length ?? 0);
       setVersion((cfg as { version?: string } | undefined)?.version ?? '');
-      if (syncCfg) setSyncConfig(syncCfg as SyncConfig);
+      if (syncCfg) setSyncConfig(normalizeLoadedConfig(syncCfg));
       setExpertMode(modelType === 'expert');
       const normalizedBg = normalizeBackgroundConfig(bgCfg as BackgroundConfig | null);
       if (normalizedBg) syncBgState(normalizedBg);
@@ -482,17 +533,31 @@ export function useSettingsState() {
   );
 
   // --- sync ---
-  const updateSyncField = useCallback((field: keyof SyncConfig, value: string) => {
-    setSyncConfig((prev) => ({ ...prev, [field]: value }));
+  const updateSyncField = useCallback((field: string, value: string) => {
+    setSyncConfig((prev) => ({ ...prev, [field]: value }) as SyncConfig);
   }, []);
 
-  const requestPermission = useCallback(async (url: string): Promise<boolean> => {
+  const switchSyncProvider = useCallback((provider: SyncProvider) => {
+    setSyncConfig(defaultConfigForProvider(provider));
+    setSyncStatus('idle');
+    setSyncMessage('');
+  }, []);
+
+  // OAuth providers don't need host permissions — launchWebAuthFlow handles auth.
+  // WebDAV needs an optional host permission requested per-origin.
+  const ensurePermission = useCallback(async (config: SyncConfig): Promise<boolean> => {
+    if (config.provider !== 'webdav') return true;
     try {
-      const origin = new URL(url).origin + '/*';
+      const origin = new URL(config.url).origin + '/*';
       return await chrome.permissions.request({ origins: [origin] });
     } catch {
       return false;
     }
+  }, []);
+
+  const isConfigFilled = useCallback((config: SyncConfig): boolean => {
+    if (config.provider === 'webdav') return Boolean(config.url);
+    return Boolean(config.clientId && config.clientSecret);
   }, []);
 
   const runSyncAction = useCallback(
@@ -501,10 +566,10 @@ export function useSettingsState() {
       action: () => Promise<void>,
       labels: { permissionDenied: string; operationFailed: string },
     ) => {
-      if (!syncConfig.url) return;
+      if (!isConfigFilled(syncConfig)) return;
       setSyncStatus(status);
       setSyncMessage('');
-      const granted = await requestPermission(syncConfig.url);
+      const granted = await ensurePermission(syncConfig);
       if (!granted) {
         setSyncStatus('error');
         setSyncMessage(labels.permissionDenied);
@@ -518,7 +583,32 @@ export function useSettingsState() {
         setSyncMessage((e as Error).message || labels.operationFailed);
       }
     },
-    [syncConfig, requestPermission],
+    [syncConfig, ensurePermission, isConfigFilled],
+  );
+
+  const handleAuthorizeSync = useCallback(
+    async (labels: { success: string; failed: string }) => {
+      if (!isConfigFilled(syncConfig)) return;
+      setSyncStatus('testing');
+      setSyncMessage('');
+      try {
+        const result = await chrome.runtime.sendMessage({ type: 'SYNC_AUTHORIZE', payload: syncConfig });
+        if (!result?.ok || !result.refreshToken) {
+          throw new Error(result?.error || labels.failed);
+        }
+        // Persist the refresh token immediately so a background restart before
+        // the next sync doesn't lose authorization.
+        const authorized = { ...syncConfig, refreshToken: result.refreshToken } as SyncConfig;
+        setSyncConfig(authorized);
+        await chrome.runtime.sendMessage({ type: 'SAVE_SYNC_CONFIG', payload: authorized });
+        setSyncStatus('success');
+        setSyncMessage(labels.success);
+      } catch (e) {
+        setSyncStatus('error');
+        setSyncMessage((e as Error).message || labels.failed);
+      }
+    },
+    [syncConfig, isConfigFilled],
   );
 
   const handleTestSync = useCallback(
@@ -551,7 +641,7 @@ export function useSettingsState() {
       void runSyncAction('uploading', async () => {
         const result = await chrome.runtime.sendMessage({ type: 'WEBDAV_UPLOAD_LOCAL' });
         if (result?.ok) {
-          setSyncConfig((prev) => ({ ...prev, lastSyncAt: result.lastSyncAt }));
+          setSyncConfig((prev) => ({ ...prev, lastSyncAt: result.lastSyncAt }) as SyncConfig);
           setSyncStatus('success');
           setSyncMessage(labels.success(result.counts));
         } else {
@@ -572,7 +662,7 @@ export function useSettingsState() {
       void runSyncAction('downloading', async () => {
         const result = await chrome.runtime.sendMessage({ type: 'WEBDAV_DOWNLOAD_REMOTE' });
         if (result?.ok) {
-          setSyncConfig((prev) => ({ ...prev, lastSyncAt: result.lastSyncAt }));
+          setSyncConfig((prev) => ({ ...prev, lastSyncAt: result.lastSyncAt }) as SyncConfig);
           setSyncStatus('success');
           setSyncMessage(labels.success(result.counts));
           setMemoryCount(result.counts?.memories ?? 0);
@@ -699,12 +789,15 @@ export function useSettingsState() {
     // sync
     syncConfig,
     updateSyncField,
+    switchSyncProvider,
+    syncRedirectUri: getRedirectUri(),
     syncStatus,
     syncBusy,
     syncMessage,
     handleTestSync,
     handleUploadSync,
     handleDownloadSync,
+    handleAuthorizeSync,
     // data
     handleExport,
     handleImport,
