@@ -46,8 +46,9 @@ function createManifest(env: ConfigEnv): UserManifest {
   const isChromiumTarget = CHROMIUM_BROWSERS.has(env.browser);
   const permissions = ['storage', 'alarms', 'nativeMessaging', 'contextMenus'];
   // identity: required for chrome.identity.launchWebAuthFlow (Google Drive / OneDrive OAuth).
-  // The two cloud providers' API hosts are covered by optional_host_permissions
-  // ('https://*/*') and requested at runtime when the user picks a provider.
+  // The providers' fixed API hosts are declared as required host_permissions below
+  // so the background service worker can fetch them without a runtime permission
+  // request; WebDAV URLs are arbitrary and stay in optional_host_permissions.
   const chromiumPermissions = [...permissions, 'offscreen', 'debugger', 'tabs', 'identity'];
 
   return {
@@ -57,7 +58,22 @@ function createManifest(env: ConfigEnv): UserManifest {
     version: extensionVersion,
     permissions: isChromiumTarget ? [...chromiumPermissions, 'sidePanel'] : permissions,
     optional_host_permissions: ['http://*/*', 'https://*/*'],
-    host_permissions: ['*://chat.deepseek.com/*', 'https://api.deepseek.com/*', '*://cn.bing.com/*', '*://www.bing.com/*'],
+    host_permissions: [
+      // DeepSeek + Bing: core extension hosts.
+      '*://chat.deepseek.com/*',
+      'https://api.deepseek.com/*',
+      '*://cn.bing.com/*',
+      '*://www.bing.com/*',
+      // Cloud sync OAuth providers — required (not optional) because their API
+      // hosts are fixed and the background service worker's fetch to these hosts
+      // needs host permission to bypass CORS. Declaring them as required avoids a
+      // runtime permission-request round-trip on every sync operation.
+      'https://accounts.google.com/*',
+      'https://oauth2.googleapis.com/*',
+      'https://www.googleapis.com/*',
+      'https://login.microsoftonline.com/*',
+      'https://graph.microsoft.com/*',
+    ],
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
       sandbox: SANDBOX_CSP,
