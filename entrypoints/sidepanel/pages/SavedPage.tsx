@@ -7,11 +7,7 @@ import { SVG_PATHS } from '../constants';
 import { useI18n } from '../i18n';
 import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 
-interface SavedPageProps {
-  onInsertPrompt: (text: string) => void;
-}
-
-export default function SavedPage({ onInsertPrompt }: SavedPageProps) {
+export default function SavedPage() {
   const { t } = useI18n();
   const [items, setItems] = useState<SavedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,6 +84,22 @@ export default function SavedPage({ onInsertPrompt }: SavedPageProps) {
     if (!ok) return;
     await chrome.runtime.sendMessage({ type: 'DELETE_SAVED_ITEM', payload: { id } });
     await load();
+  };
+
+  const insertPrompt = async (text: string) => {
+    try {
+      banner.clear();
+      unwrapRuntimeResponse<{ ok: true }>(
+        await chrome.runtime.sendMessage({
+          type: 'INSERT_SAVED_PROMPT_INTO_CHAT',
+          payload: { text },
+        }),
+        t('sidepanel.savedPage.backendUnavailable'),
+      );
+      banner.show('success', t('sidepanel.savedPage.inserted'));
+    } catch (error) {
+      banner.show('error', t('sidepanel.savedPage.insertFailed', { error: getRuntimeErrorMessage(error) }));
+    }
   };
 
   const exportItems = (format: 'markdown' | 'json') => {
@@ -238,7 +250,7 @@ export default function SavedPage({ onInsertPrompt }: SavedPageProps) {
             )}
             <button
               type="button"
-              onClick={() => onInsertPrompt(item.content)}
+              onClick={() => insertPrompt(item.content)}
               className="ds-btn-secondary w-full py-2 text-[11px] font-medium rounded-lg transition-all duration-150"
             >
               {t('sidepanel.savedPage.insertPrompt')}

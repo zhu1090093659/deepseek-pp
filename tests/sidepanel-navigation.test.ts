@@ -69,7 +69,7 @@ describe('sidepanel navigation', () => {
     expect(topLabels).toEqual(['对话', '资料', '项目', '能力', '设置']);
 
     unmountRoot();
-    await renderElement(React.createElement(LibraryPage, { onInsertPrompt: vi.fn() }));
+    await renderElement(React.createElement(LibraryPage));
     expect(navButtonLabels('资料子导航')).toEqual(['记忆', '保存']);
 
     unmountRoot();

@@ -679,6 +679,11 @@ async function handleMessage(
       return { ok: true };
     }
 
+    case 'INSERT_SAVED_PROMPT_INTO_CHAT': {
+      const { text } = (message.payload ?? {}) as { text?: unknown };
+      return insertPromptIntoActiveDeepSeekTab(typeof text === 'string' ? text : '');
+    }
+
     case 'GET_VOICE_SETTINGS':
       return getVoiceSettings();
 
@@ -1373,6 +1378,51 @@ function isDeepSeekChatUrl(url: string | undefined): boolean {
   try {
     const parsed = new URL(url);
     return parsed.hostname === 'chat.deepseek.com' && /\/(?:a\/)?chat\/s\//.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function insertPromptIntoActiveDeepSeekTab(
+  text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (text.length === 0) {
+    return { ok: false, error: 'empty_prompt_text' };
+  }
+
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs.find((item) => item.id != null && isDeepSeekPageUrl(item.url));
+  if (!tab?.id) {
+    return { ok: false, error: backgroundT('background.auth.missingDeepSeek') };
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'INSERT_PROMPT_TEXT', text });
+    if (response?.ok) return { ok: true };
+    return {
+      ok: false,
+      error: getPromptInsertionErrorMessage(response?.error),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function getPromptInsertionErrorMessage(error: unknown): string {
+  if (error === 'empty_prompt_text') return 'empty_prompt_text';
+  if (error === 'prompt_input_not_found') return backgroundT('background.auth.missingDeepSeek');
+  return typeof error === 'string' && error.length > 0
+    ? error
+    : backgroundT('background.auth.missingDeepSeek');
+}
+
+function isDeepSeekPageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname === 'chat.deepseek.com';
   } catch {
     return false;
   }

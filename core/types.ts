@@ -538,6 +538,7 @@ export type MessageAction =
   | { type: 'GET_SAVED_ITEMS' }
   | { type: 'SAVE_SAVED_ITEM'; payload: SavedItemInput }
   | { type: 'DELETE_SAVED_ITEM'; payload: { id: string } }
+  | { type: 'INSERT_SAVED_PROMPT_INTO_CHAT'; payload: { text: string } }
   | { type: 'GET_VOICE_SETTINGS' }
   | { type: 'SAVE_VOICE_SETTINGS'; payload: Partial<VoiceSettingsType> }
   | { type: 'GET_VOICE_CAPABILITIES' }

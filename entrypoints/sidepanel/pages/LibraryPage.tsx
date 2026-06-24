@@ -11,11 +11,7 @@ const SUB_TABS: { key: LibrarySubTab; labelKey: 'sidepanel.libraryPage.tabs.memo
   { key: 'saved', labelKey: 'sidepanel.libraryPage.tabs.saved' },
 ];
 
-interface LibraryPageProps {
-  onInsertPrompt: (text: string) => void;
-}
-
-export default function LibraryPage({ onInsertPrompt }: LibraryPageProps) {
+export default function LibraryPage() {
   const [sub, setSub] = useState<LibrarySubTab>('memory');
   const { t } = useI18n();
 
@@ -30,7 +26,7 @@ export default function LibraryPage({ onInsertPrompt }: LibraryPageProps) {
 
       <div className="flex-1 overflow-y-auto">
         {sub === 'memory' && <MemoryPage />}
-        {sub === 'saved' && <SavedPage onInsertPrompt={onInsertPrompt} />}
+        {sub === 'saved' && <SavedPage />}
       </div>
     </div>
   );

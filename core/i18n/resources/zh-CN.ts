@@ -232,6 +232,8 @@ export const zhCN = {
       exportMarkdown: '导出 Markdown',
       exportJson: '导出 JSON',
       saved: '已保存',
+      inserted: '已插入当前 DeepSeek 对话',
+      insertFailed: '插入到对话失败：{error}',
       deleteConfirm: '确定删除这条保存项吗？',
       backendUnavailable: '保存项后端不可用，请重新加载扩展后再试。',
       operationFailed: '保存项操作失败：{error}',

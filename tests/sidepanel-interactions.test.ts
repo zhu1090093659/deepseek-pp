@@ -49,7 +49,7 @@ describe('sidepanel interactions', () => {
     });
     stubChrome(sendMessage);
 
-    await renderElement(React.createElement(SavedPage, { onInsertPrompt: vi.fn() }));
+    await renderElement(React.createElement(SavedPage));
     await enterText('标题', 'Review prompt');
     await enterText('Prompt 片段、笔记或可复用文本', 'Summarize this thread.');
     await enterText('标签（逗号分隔）', 'prompt');
@@ -65,6 +65,64 @@ describe('sidepanel interactions', () => {
       },
     });
     expect(inputByPlaceholder('标题').value).toBe('');
+  });
+
+  it('requests insertion into the active DeepSeek chat when a saved item is clicked', async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
+      if (message.type === 'GET_SAVED_ITEMS') {
+        return [{
+          id: 'saved-1',
+          syncId: 'sync-1',
+          kind: 'snippet',
+          title: 'Review prompt',
+          content: 'Summarize this thread.',
+          tags: ['prompt'],
+          createdAt: 1,
+          updatedAt: 1,
+        }];
+      }
+      if (message.type === 'INSERT_SAVED_PROMPT_INTO_CHAT') return { ok: true };
+      return null;
+    });
+    stubChrome(sendMessage);
+
+    await renderElement(React.createElement(SavedPage));
+    await flushPromises();
+    await clickButton('插入到对话');
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'INSERT_SAVED_PROMPT_INTO_CHAT',
+      payload: { text: 'Summarize this thread.' },
+    });
+    expect(container.textContent).toContain('已插入当前 DeepSeek 对话');
+  });
+
+  it('shows insertion failures from the active DeepSeek chat route', async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
+      if (message.type === 'GET_SAVED_ITEMS') {
+        return [{
+          id: 'saved-1',
+          syncId: 'sync-1',
+          kind: 'snippet',
+          title: 'Review prompt',
+          content: 'Summarize this thread.',
+          tags: [],
+          createdAt: 1,
+          updatedAt: 1,
+        }];
+      }
+      if (message.type === 'INSERT_SAVED_PROMPT_INTO_CHAT') {
+        return { ok: false, error: '请先在 chat.deepseek.com 登录，或刷新 DeepSeek 页面后重试。' };
+      }
+      return null;
+    });
+    stubChrome(sendMessage);
+
+    await renderElement(React.createElement(SavedPage));
+    await flushPromises();
+    await clickButton('插入到对话');
+
+    expect(container.textContent).toContain('插入到对话失败：请先在 chat.deepseek.com 登录，或刷新 DeepSeek 页面后重试。');
   });
 
   it('persists prompt control select changes instead of reverting to defaults', async () => {
@@ -154,6 +212,12 @@ async function clickButton(label: string) {
   expect(button).toBeTruthy();
   await act(async () => {
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+async function flushPromises() {
+  await act(async () => {
+    await Promise.resolve();
   });
 }
 

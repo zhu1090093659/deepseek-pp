@@ -232,6 +232,8 @@ export const en = {
       exportMarkdown: 'Export Markdown',
       exportJson: 'Export JSON',
       saved: 'Saved',
+      inserted: 'Inserted into the current DeepSeek chat',
+      insertFailed: 'Could not insert into chat: {error}',
       deleteConfirm: 'Delete this saved item?',
       backendUnavailable: 'Saved items backend is unavailable. Reload the extension and try again.',
       operationFailed: 'Saved item action failed: {error}',

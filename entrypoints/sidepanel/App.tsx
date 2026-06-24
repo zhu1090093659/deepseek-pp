@@ -105,14 +105,7 @@ export default function App() {
         <WhatsNewPanel />
         <Suspense fallback={<div className="p-4"><SkeletonList rows={3} /></div>}>
           {tab === 'chat' && <ChatPage />}
-          {tab === 'library' && (
-            <LibraryPage
-              onInsertPrompt={(text) => {
-                setPendingText(text);
-                setTab('chat');
-              }}
-            />
-          )}
+          {tab === 'library' && <LibraryPage />}
           {tab === 'projects' && <ProjectsPage />}
           {tab === 'capabilities' && <CapabilitiesPage />}
           {tab === 'settings' && <SettingsPage />}

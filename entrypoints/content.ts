@@ -67,6 +67,10 @@ import {
 } from '../core/ui/tool-result-renderer';
 import { injectInjectedThemeStyles } from '../core/ui/injected-theme';
 import {
+  findPromptTextarea,
+  insertTextIntoPromptTextarea,
+} from '../core/ui/prompt-text-insertion';
+import {
   normalizeRestoredToolExecution,
   sanitizeToolExecutionForRestoreStorage,
 } from '../core/tool/execution-restore';
@@ -571,6 +575,10 @@ export default defineContentScript({
         return true;
       } else if (message.type === 'DEEPSEEK_EXPORT_PROGRESS') {
         updateConversationExportProgress(message.progress as ConversationExportProgress | undefined);
+      } else if (message.type === 'INSERT_PROMPT_TEXT') {
+        const text = typeof message.text === 'string' ? message.text : '';
+        sendResponse(insertPromptText(text));
+        return true;
       } else if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') {
         const conversationId = getCurrentChatSessionId();
         sendResponse(conversationId
@@ -1766,13 +1774,7 @@ function isPromptPasteTarget(target: EventTarget | null): boolean {
 }
 
 function insertPromptText(text: string) {
-  const textarea = getPromptTextarea();
-  if (!textarea) return;
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? start;
-  textarea.value = `${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`;
-  textarea.selectionStart = textarea.selectionEnd = start + text.length;
-  textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: text }));
+  return insertTextIntoPromptTextarea(text, getPromptTextarea());
 }
 
 async function consumePendingMultimodalMediaForRequest(
@@ -5620,8 +5622,7 @@ function hasVisibleBackground(style: CSSStyleDeclaration): boolean {
 }
 
 function getPromptTextarea(): HTMLTextAreaElement | null {
-  const textarea = document.querySelector('textarea');
-  return textarea?.tagName === 'TEXTAREA' ? textarea as HTMLTextAreaElement : null;
+  return findPromptTextarea(document);
 }
 
 function findDeepSeekInputBox(): HTMLElement | null {
