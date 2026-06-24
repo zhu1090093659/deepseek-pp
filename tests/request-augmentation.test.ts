@@ -23,6 +23,27 @@ describe('augmentRequestBody', () => {
     expect(result?.usedMemoryIds).toEqual([]);
   });
 
+  it('applies vision mode while preserving official file references', () => {
+    const result = augmentRequestBody(JSON.stringify({
+      prompt: 'describe this image',
+      parent_message_id: 12,
+      thinking_enabled: false,
+      ref_file_ids: ['file-image-1'],
+    }), {
+      memories: [],
+      skills: [],
+      activePreset: null,
+      modelType: 'vision',
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      messageCount: 2,
+    });
+
+    const body = JSON.parse(result?.body ?? '{}');
+    expect(result?.messageCount).toBe(3);
+    expect(body.model_type).toBe('vision');
+    expect(body.ref_file_ids).toEqual(['file-image-1']);
+  });
+
   it('emits English prompt scaffolding while keeping XML tool tags stable', () => {
     const result = buildPromptAugmentation('search latest DeepSeek news', {
       memories: [],

@@ -15,6 +15,7 @@ import type {
   BackgroundConfig,
   GDriveSyncConfig,
   Memory,
+  ModelType,
   MultimodalSettingsStatus,
   OneDriveSyncConfig,
   PetConfig,
@@ -115,7 +116,7 @@ export function useSettingsState() {
   // --- shared / general ---
   const [memoryCount, setMemoryCount] = useState(0);
   const [version, setVersion] = useState('');
-  const [expertMode, setExpertMode] = useState(false);
+  const [modelType, setModelTypeState] = useState<ModelType>(null);
   const [chatEnabled, setChatEnabledState] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -214,7 +215,7 @@ export function useSettingsState() {
       setMemoryCount((memories as Memory[])?.length ?? 0);
       setVersion((cfg as { version?: string } | undefined)?.version ?? '');
       if (syncCfg) setSyncConfig(normalizeLoadedConfig(syncCfg));
-      setExpertMode(modelType === 'expert');
+      setModelTypeState(modelType === 'expert' || modelType === 'vision' ? modelType : null);
       const normalizedBg = normalizeBackgroundConfig(bgCfg as BackgroundConfig | null);
       if (normalizedBg) syncBgState(normalizedBg);
       syncPetState(normalizePetConfig(petCfg as PetConfig | null));
@@ -233,12 +234,12 @@ export function useSettingsState() {
     };
   }, [syncBgState, syncPetState, syncMultimodalStatus]);
 
-  // --- expert mode ---
-  const handleExpertToggle = useCallback(async (enabled: boolean) => {
-    setExpertMode(enabled);
+  // --- webpage model mode ---
+  const handleModelTypeChange = useCallback(async (nextModelType: ModelType) => {
+    setModelTypeState(nextModelType);
     await chrome.runtime.sendMessage({
       type: 'SET_MODEL_TYPE',
-      payload: enabled ? 'expert' : null,
+      payload: nextModelType,
     });
   }, []);
 
@@ -731,9 +732,9 @@ export function useSettingsState() {
     loading,
     memoryCount,
     version,
-    expertMode,
+    modelType,
     chatEnabled,
-    handleExpertToggle,
+    handleModelTypeChange,
     handleChatToggle,
     // deepseek api key
     apiKeyConfigured,
