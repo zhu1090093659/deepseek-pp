@@ -49,7 +49,7 @@ const lineAllowlist = [
   },
   {
     path: 'core/inline-agent/prompt.ts',
-    includes: '我(?:将|会|先|直接|现在|继续|尝试|开始|需要)',
+    includes: '我(?:将|会|先|直接|现在|继续|尝试|开始|需要|还需要|仍需)',
     reason: 'regex detects Chinese pending-action text from model output',
   },
   {

@@ -80,30 +80,53 @@ export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
 }
 
 export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  await setSkillsEnabled([{ name, enabled }]);
+}
+
+export async function setSkillsEnabled(updates: Array<{ name: string; enabled: boolean }>): Promise<void> {
+  if (updates.length === 0) return;
+
+  const updateByName = new Map<string, boolean>();
+  for (const update of updates) {
+    updateByName.set(update.name, update.enabled);
+  }
+
   const userSkills = await getUserSkills();
-  let found = false;
+  let userSkillsChanged = false;
   const next = userSkills.map((skill) => {
-    if (skill.name !== name) return skill;
-    found = true;
+    if (!updateByName.has(skill.name)) return skill;
+    const enabled = updateByName.get(skill.name) ?? true;
+    updateByName.delete(skill.name);
+    userSkillsChanged = true;
     return { ...skill, enabled };
   });
-  if (found) {
+
+  const bundledUpdates: Record<string, boolean> = {};
+  for (const [name, enabled] of updateByName) {
+    const bundledSkill = BUILTIN_SKILLS.find((skill) => (
+      skill.name === name &&
+      TOGGLEABLE_BUNDLED_SKILL_SOURCES.has(skill.source)
+    ));
+    if (!bundledSkill) throw new Error(`Skill cannot be enabled or disabled because it was not found: ${name}`);
+    bundledUpdates[name] = enabled;
+  }
+
+  if (Object.keys(bundledUpdates).length === 0) {
+    if (!userSkillsChanged) return;
     await chrome.storage.local.set({ [STORAGE_KEY]: next });
     return;
   }
 
-  const bundledSkill = BUILTIN_SKILLS.find((skill) => (
-    skill.name === name &&
-    TOGGLEABLE_BUNDLED_SKILL_SOURCES.has(skill.source)
-  ));
-  if (!bundledSkill) throw new Error(`Skill cannot be enabled or disabled because it was not found: ${name}`);
-
   const bundledEnabled = await getBundledSkillEnabledOverrides();
-  await chrome.storage.local.set({
+  const patch: Record<string, unknown> = {
     [BUNDLED_ENABLED_STORAGE_KEY]: {
       ...bundledEnabled,
-      [name]: enabled,
+      ...bundledUpdates,
     },
+  };
+  if (userSkillsChanged) patch[STORAGE_KEY] = next;
+  await chrome.storage.local.set({
+    ...patch,
   });
 }
 

@@ -1,7 +1,7 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import type { ToolExecutionRecord } from '../types';
 
-const PENDING_ACTION_RE = /(?:我(?:将|会|先|直接|现在|继续|尝试|开始|需要)|(?:接下来|下一步|然后).{0,24}(?:调用|创建|编辑|检查|验证|生成|保存|尝试)|(?:i(?:'ll| will| need to)|let me|next,? i).{0,48}(?:call|create|edit|inspect|validate|generate|save|try))/i;
+const PENDING_ACTION_RE = /(?:我(?:将|会|先|直接|现在|继续|尝试|开始|需要|还需要|仍需)|(?:接下来|下一步|然后).{0,24}(?:调用|创建|编辑|检查|验证|生成|保存|尝试)|(?:i(?:'ll| will| (?:still\s+)?need to)|let me|next,? i).{0,48}(?:call|create|edit|inspect|validate|generate|save|try))/i;
 const FINALISH_RE = /(?:已(?:完成|创建|生成|保存|验证|写入|更新)|完成了|保存于|输出文件|最终|final answer|done|completed|created|saved|validated|written)/i;
 const TASK_COMPLETE_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/;
 const TASK_COMPLETE_BLOCK_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/g;
@@ -100,27 +100,6 @@ export function buildNudgePrompt(
     '<tool_results_so_far>',
     JSON.stringify(results, null, 2),
     '</tool_results_so_far>',
-  ].join('\n');
-}
-
-export function buildFinalizationPrompt(
-  originalTask: string,
-  executions: ToolExecutionRecord[],
-  locale: SupportedLocale = DEFAULT_LOCALE,
-): string {
-  const results = renderToolResults(executions);
-
-  return [
-    translate(locale, 'prompt.inlineAgent.finalizationIntro'),
-    translate(locale, 'prompt.inlineAgent.finalizationNoTools'),
-    '',
-    '<original_task>',
-    clampText(originalTask, 8000),
-    '</original_task>',
-    '',
-    '<tool_results>',
-    JSON.stringify(results, null, 2),
-    '</tool_results>',
   ].join('\n');
 }
 

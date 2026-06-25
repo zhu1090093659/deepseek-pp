@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildContinuationPrompt,
-  buildFinalizationPrompt,
   buildNudgePrompt,
   replaceTaskCompleteBlocks,
 } from '../core/inline-agent/prompt';
@@ -65,15 +64,12 @@ describe('inline-agent model prompts', () => {
     expect(prompt).not.toContain('Continue like a real agent');
   });
 
-  it('localizes nudge and finalization prompts without changing task_complete', () => {
+  it('localizes nudge prompts without changing task_complete', () => {
     const nudge = buildNudgePrompt('Ship it', 'I will continue.', [SUCCESS_EXECUTION], 1, 'en');
-    const final = buildFinalizationPrompt('Ship it', [SUCCESS_EXECUTION], 'en');
 
     expect(nudge).toContain('did not include executable tool XML');
     expect(nudge).toContain('<task_complete>{"summary":"..."}</task_complete>');
     expect(nudge).toContain('<tool_results_so_far>');
-    expect(final).toContain('final answer');
-    expect(final).toContain('<tool_results>');
   });
 
   it('renders task_complete control blocks as their user-visible summary', () => {

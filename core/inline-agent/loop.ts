@@ -9,13 +9,12 @@ import { extractToolCalls } from '../interceptor/tool-parser';
 import { createStreamingToolTextAccumulator } from '../interceptor/streaming-tool-text';
 import { createStreamingToolCallParser } from '../interceptor/streaming-tool-call-parser';
 import type { ResponseTokenSpeedPayload } from '../interceptor/token-speed';
-import { DEFAULT_LOCALE } from '../i18n';
+import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { executeToolCallsSequentially } from '../tool-loop/engine';
 import type { ToolCall, ToolDescriptor, ToolExecutionRecord } from '../types';
 import type { ToolParsingInput } from '../tool/invocation';
 import {
   buildContinuationPrompt,
-  buildFinalizationPrompt,
   buildNudgePrompt,
   extractTaskCompleteSignal,
   shouldNudge,
@@ -62,9 +61,8 @@ export async function runInlineAgentLoop(
   let nudgeCount = 0;
   let totalSteps = 0;
   let totalTools = allExecutions.length;
-  // When the model emits `<task_complete>` we already have the final answer;
-  // reuse its summary and skip the redundant finalization step.
   let resolvedFinalText: string | null = null;
+  let stopNotice: string | null = null;
 
   try {
     const clientHeaders = createClientHeaders();
@@ -143,6 +141,7 @@ export async function runInlineAgentLoop(
 
       if (toolCalls.length === 0) {
         if (!shouldNudge(payload.originalPrompt, allExecutions, visibleText, nudgeCount)) {
+          resolvedFinalText = visibleText;
           post('AGENT_STEP_COMPLETE', {
             loopId,
             stepIndex: step,
@@ -155,6 +154,7 @@ export async function runInlineAgentLoop(
 
         nudgeCount++;
         if (nudgeCount > INLINE_AGENT_MAX_NUDGES) {
+          stopNotice = buildInlineAgentBudgetNotice(locale);
           post('AGENT_STEP_COMPLETE', {
             loopId,
             stepIndex: step,
@@ -222,6 +222,12 @@ export async function runInlineAgentLoop(
             throw new Error('DeepSeek returned an empty agent continuation after a delayed retry.');
           }
 
+          const finalCandidate = nudgeVisibleText.trim() ? nudgeVisibleText : visibleText;
+          if (shouldNudge(payload.originalPrompt, allExecutions, finalCandidate, nudgeCount)) {
+            stopNotice = buildInlineAgentBudgetNotice(locale);
+          } else {
+            resolvedFinalText = finalCandidate;
+          }
           post('AGENT_STEP_COMPLETE', {
             loopId,
             stepIndex: step,
@@ -264,84 +270,15 @@ export async function runInlineAgentLoop(
       if (signal.aborted) break;
     }
 
+    if (!signal.aborted && resolvedFinalText === null && stopNotice === null && totalTools > 0 && totalSteps >= INLINE_AGENT_MAX_STEPS) {
+      stopNotice = buildInlineAgentBudgetNotice(locale);
+    }
+
     let finalText = '';
     if (resolvedFinalText !== null) {
-      // The model already emitted `<task_complete>` with a summary; reuse it
-      // instead of issuing a redundant finalization request.
       finalText = resolvedFinalText;
-    } else if (!signal.aborted && totalTools > 0 && totalSteps > 0 && parentMessageId != null) {
-      try {
-        await waitBetweenDeepSeekRequests(signal);
-        if (signal.aborted) {
-          post('AGENT_LOOP_COMPLETE', {
-            loopId,
-            totalSteps,
-            totalTools,
-            finalText,
-          } satisfies InlineAgentLoopCompleteMsg);
-          return;
-        }
-
-        const powHeaders = await createPowHeaders(clientHeaders, powWasmUrl);
-        const finalizationPrompt = buildFinalizationPrompt(payload.originalPrompt, allExecutions, locale);
-        const finalInput: SubmitPromptInput = {
-          chatSessionId,
-          parentMessageId,
-          modelType: promptOptions.modelType,
-          prompt: finalizationPrompt,
-          refFileIds: promptOptions.refFileIds,
-          thinkingEnabled: promptOptions.thinkingEnabled,
-          searchEnabled: promptOptions.searchEnabled,
-          clientHeaders,
-          powHeaders,
-        };
-
-        let finalStepStarted = false;
-        const finalStreamState = createInlineAgentStreamState({
-          loopId,
-          stepIndex: totalSteps,
-          toolDescriptors,
-          parsingInput,
-          post,
-        });
-        const finalTurn = await submitPromptStreaming(finalInput, {
-          retainAssistantText: false,
-          onTokenSpeed(progress) {
-            postAgentTokenSpeed(post, payload, `step:${totalSteps}:final`, progress);
-          },
-          onTextChunk(text) {
-            if (!text.trim()) return;
-            if (!finalStepStarted) {
-              post('AGENT_STEP_STARTED', { loopId, stepIndex: totalSteps });
-              finalStepStarted = true;
-            }
-            finalStreamState.onTextChunk(text);
-          },
-        }, signal);
-        const finalStreamSnapshot = finalStreamState.flush();
-
-        finalText = finalStreamSnapshot.visibleText;
-        if (finalText.trim()) {
-          if (!finalStepStarted) {
-            post('AGENT_STEP_STARTED', { loopId, stepIndex: totalSteps });
-            post('AGENT_STREAM_CHUNK', {
-              loopId,
-              stepIndex: totalSteps,
-              text: '',
-              fullText: clampStreamEventText(finalText),
-            } satisfies InlineAgentStreamChunkMsg);
-          }
-          post('AGENT_STEP_COMPLETE', {
-            loopId,
-            stepIndex: totalSteps,
-            responseMessageId: finalTurn.responseMessageId,
-            toolExecutions: [],
-          } satisfies InlineAgentStepCompleteMsg);
-          totalSteps++;
-        }
-      } catch {
-        // Finalization is best-effort; loop still completes
-      }
+    } else if (!signal.aborted && stopNotice !== null) {
+      finalText = stopNotice;
     }
 
     post('AGENT_LOOP_COMPLETE', {
@@ -510,4 +447,8 @@ function createStepSignal(parentSignal: AbortSignal): { signal: AbortSignal; cle
     parentSignal.removeEventListener('abort', onParentAbort);
   };
   return { signal: controller.signal, clear };
+}
+
+function buildInlineAgentBudgetNotice(locale: SupportedLocale): string {
+  return translate(locale, 'content.agent.budgetReached', { count: INLINE_AGENT_MAX_STEPS });
 }

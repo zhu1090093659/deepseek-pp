@@ -476,22 +476,33 @@ function pickLocalFolderOnMac(title, defaultPath) {
 
 function pickLocalFolderOnWindows(title, defaultPath) {
   const script = [
+    WINDOWS_POWERSHELL_UTF8_PREAMBLE,
     'Add-Type -AssemblyName System.Windows.Forms',
     '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
-    '$dialog.Description = $args[0]',
+    '$dialog.Description = [Environment]::GetEnvironmentVariable("DPP_FOLDER_PICK_TITLE", "Process")',
     '$dialog.ShowNewFolderButton = $false',
-    'if ($args.Count -gt 1 -and $args[1]) { $dialog.SelectedPath = $args[1] }',
+    '$defaultPath = [Environment]::GetEnvironmentVariable("DPP_FOLDER_PICK_DEFAULT_PATH", "Process")',
+    'if ($defaultPath) { $dialog.SelectedPath = $defaultPath }',
     'if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {',
     '  [Console]::Out.Write($dialog.SelectedPath)',
     '} else {',
     '  [Environment]::Exit(2)',
     '}',
   ].join('; ');
-  return execFileSync('powershell.exe', ['-NoProfile', '-STA', '-Command', script, title, defaultPath || ''], {
+  return execFileSync('powershell.exe', ['-NoProfile', '-STA', '-EncodedCommand', encodePowerShellCommand(script)], {
     encoding: 'utf8',
+    env: {
+      ...process.env,
+      DPP_FOLDER_PICK_TITLE: title,
+      DPP_FOLDER_PICK_DEFAULT_PATH: defaultPath || '',
+    },
     timeout: DEFAULT_TIMEOUT_MS,
     windowsHide: false,
   }).trim();
+}
+
+function encodePowerShellCommand(script) {
+  return Buffer.from(script, 'utf16le').toString('base64');
 }
 
 function pickLocalFolderOnLinux(title, defaultPath) {

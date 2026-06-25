@@ -116,10 +116,12 @@ export default function SkillPage() {
 
   const handleToggleGroupEnabled = async (group: ThirdPartySkillGroup) => {
     const shouldEnable = group.skills.some((skill) => skill.enabled === false);
-    await Promise.all(group.skills.map((skill) => chrome.runtime.sendMessage({
-      type: 'SET_SKILL_ENABLED',
-      payload: { name: skill.name, enabled: shouldEnable },
-    })));
+    await chrome.runtime.sendMessage({
+      type: 'SET_SKILLS_ENABLED',
+      payload: {
+        updates: group.skills.map((skill) => ({ name: skill.name, enabled: shouldEnable })),
+      },
+    });
     await load();
   };
 

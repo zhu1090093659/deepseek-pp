@@ -938,6 +938,7 @@ export const en = {
       complete: 'Complete',
       completeWithTools: 'Complete ({count} tools)',
       executingTools: 'Executing tools',
+      budgetReached: 'DeepSeek++ paused after {count} automated tool-continuation rounds to avoid presenting incomplete work as a final answer. Send "continue" in this conversation to resume the remaining work.',
       error: 'Execution error',
       footerComplete: 'Agent complete ({steps} steps, {tools} tool calls)',
       footerError: 'Agent error ({steps} steps, {tools} tool calls)',
@@ -1228,8 +1229,6 @@ export const en = {
       nudgeNextTool: '1. If the task is still incomplete, this turn MUST directly output the next executable tool XML.',
       nudgeComplete: '2. If the task is complete, output <task_complete>{"summary":"..."}</task_complete>.',
       nudgeCount: 'This is no-tool-call correction attempt {count}.',
-      finalizationIntro: 'These are the tool results that were just executed automatically. Give the final answer based on the original task and these results.',
-      finalizationNoTools: 'This is the final-answer turn: do not call any more tools.',
     },
     automation: {
       continuationIntro: 'These are the MCP tool results just executed for the automation. Continue completing the automation based on these results.',

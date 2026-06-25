@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,17 @@ describe('shell native host local_skill_preview', () => {
     expect(nestedSkill?.scriptFiles).toEqual([
       expect.objectContaining({ path: 'nested/scripts/run.py' }),
     ]);
+  });
+});
+
+describe('shell native host local_folder_pick', () => {
+  it('keeps Windows folder picker arguments out of the PowerShell command text', () => {
+    const source = readFileSync(hostPath, 'utf8');
+
+    expect(source).toContain("'-EncodedCommand', encodePowerShellCommand(script)");
+    expect(source).toContain('DPP_FOLDER_PICK_TITLE');
+    expect(source).toContain('DPP_FOLDER_PICK_DEFAULT_PATH');
+    expect(source).not.toContain("'-Command', script, title");
   });
 });
 

@@ -528,6 +528,7 @@ export type MessageAction =
   | { type: 'SAVE_SKILL'; payload: SaveSkillPayload }
   | { type: 'DELETE_SKILL'; payload: { name: string } }
   | { type: 'SET_SKILL_ENABLED'; payload: { name: string; enabled: boolean } }
+  | { type: 'SET_SKILLS_ENABLED'; payload: { updates: Array<{ name: string; enabled: boolean }> } }
   | { type: 'GET_PRESETS' }
   | { type: 'SAVE_PRESET'; payload: SystemPromptPreset }
   | { type: 'DELETE_PRESET'; payload: { id: string } }

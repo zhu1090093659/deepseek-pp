@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from '../core/skill/builtin';
-import { getAllSkills, setSkillEnabled } from '../core/skill/registry';
+import { getAllSkills, setSkillEnabled, setSkillsEnabled } from '../core/skill/registry';
 import type { Skill } from '../core/types';
 
 const SKILL_STORAGE_KEY = 'deepseek_pp_skills';
+const BUNDLED_ENABLED_STORAGE_KEY = 'deepseek_pp_bundled_skill_enabled';
 
 let storage: Record<string, unknown>;
 
@@ -102,6 +103,52 @@ describe('builtin skill localization', () => {
 
   it('does not treat first-party builtin skills as locally toggleable', async () => {
     await expect(setSkillEnabled('shell', false)).rejects.toThrow('Skill cannot be enabled or disabled');
+  });
+
+  it('toggles multiple custom and remote skills with one storage write', async () => {
+    storage[SKILL_STORAGE_KEY] = [
+      {
+        name: 'custom-note',
+        description: 'Custom',
+        instructions: 'Custom instructions',
+        source: 'custom',
+        memoryEnabled: false,
+        enabled: false,
+      },
+      {
+        name: 'remote-skill',
+        description: 'Remote',
+        instructions: 'Remote instructions',
+        source: 'remote',
+        memoryEnabled: false,
+        enabled: false,
+      },
+    ];
+
+    await setSkillsEnabled([
+      { name: 'custom-note', enabled: true },
+      { name: 'remote-skill', enabled: true },
+    ]);
+
+    const saved = storage[SKILL_STORAGE_KEY] as Skill[];
+    expect(saved.map((skill) => [skill.name, skill.enabled])).toEqual([
+      ['custom-note', true],
+      ['remote-skill', true],
+    ]);
+    expect(chrome.storage.local.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles multiple bundled third-party skills in one override write', async () => {
+    await setSkillsEnabled([
+      { name: 'officecli', enabled: true },
+      { name: 'officecli-styles', enabled: true },
+    ]);
+
+    expect(storage[BUNDLED_ENABLED_STORAGE_KEY]).toMatchObject({
+      officecli: true,
+      'officecli-styles': true,
+    });
+    expect(chrome.storage.local.set).toHaveBeenCalledTimes(1);
   });
 
   it('keeps custom and remote skills exactly as authored while localizing builtins', async () => {

@@ -938,6 +938,7 @@ export const zhCN = {
       complete: '完成',
       completeWithTools: '完成（{count} 个工具）',
       executingTools: '执行工具中',
+      budgetReached: 'DeepSeek++ 已执行 {count} 轮自动工具续跑并暂停，避免把未完成任务伪装成最终答案。请发送“继续”让当前对话接着处理剩余工作。',
       error: '执行出错',
       footerComplete: 'Agent 完成（{steps} 步，{tools} 次工具调用）',
       footerError: 'Agent 执行出错（{steps} 步，{tools} 次工具调用）',
@@ -1228,8 +1229,6 @@ export const zhCN = {
       nudgeNextTool: '1. 如果任务仍未完成，本轮必须直接输出下一步可执行工具 XML。',
       nudgeComplete: '2. 如果任务已经完成，输出 <task_complete>{"summary":"..."}</task_complete>。',
       nudgeCount: '这是第 {count} 次无工具调用纠偏。',
-      finalizationIntro: '以下是刚才已经自动执行完成的工具结果。请基于原始任务和这些结果给出最终回答。',
-      finalizationNoTools: '这是最终回答轮次：不要再调用任何工具。',
     },
     automation: {
       continuationIntro: '以下是自动化任务刚刚执行的 MCP 工具结果。请基于这些结果继续完成自动化任务。',

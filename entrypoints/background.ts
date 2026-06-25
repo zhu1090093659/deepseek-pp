@@ -20,6 +20,7 @@ import {
   replaceAllSkillSources,
   saveSkill,
   setSkillEnabled,
+  setSkillsEnabled,
   deleteSkill,
 } from '../core/skill/registry';
 import {
@@ -582,6 +583,13 @@ async function handleMessage(
     case 'SET_SKILL_ENABLED': {
       const { name, enabled } = message.payload as { name: string; enabled: boolean };
       await setSkillEnabled(name, enabled);
+      await broadcastStateUpdate(sender.tab?.id);
+      return { ok: true };
+    }
+
+    case 'SET_SKILLS_ENABLED': {
+      const { updates } = message.payload as { updates: Array<{ name: string; enabled: boolean }> };
+      await setSkillsEnabled(updates);
       await broadcastStateUpdate(sender.tab?.id);
       return { ok: true };
     }

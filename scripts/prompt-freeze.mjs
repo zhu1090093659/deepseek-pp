@@ -12,11 +12,10 @@ const EXPECTED_HASHES = {
   memoryToolSchemas: 'a64e0a8874552177eba10089d5acfdc2996d0b703f83b1a57e9d76c733da9a7b',
   promptAugmentationBuild: '2f7ee320df74f397beae7537c16083de0322abecf800e1d56275c2639887ffca',
   promptToolSchemaRenderer: '86df1accccfa1f43a95483625970d54f399d57b0b7c1ea1294b5662e09202d3f',
-  promptLocaleResourcesEn: 'a45a9496c0fffc863d39fd941a51b7c2f6e39593f8d116153ea011ca09fdec3d',
-  promptLocaleResourcesZhCN: '3089a5e8b422bbe8a80c95d8b71c26044e0c03e2468c1cee4aa0fa272f43e1a9',
+  promptLocaleResourcesEn: 'bcbdf3a412056174efe876284cadc87b9eab7bbd58960eeec3028394b793c0e5',
+  promptLocaleResourcesZhCN: '8bbbf8a458578a56b4f42b787e9770fea2708c7e635d2c6fba7e049096ccf1b3',
   inlineAgentContinuationPrompt: 'c7c6d857cd4c14015329bccd7ce2e551b0f3490593e89c163db713e842cbfc22',
   inlineAgentNudgePrompt: '4717a41143efacf66a2554c8d7d72c08f7192c0b0b93105a869f0638bd7ba4ea',
-  inlineAgentFinalizationPrompt: '7586a53173b5843865119a1e3ab266353baefcddc86f2f97e165a8e5303b6b01',
   inlineAgentPromptHelpers: 'cdb723464379a5ead572eff1d93fd4585d7f845739d67fa214fbbdc0694153c6',
 };
 
@@ -67,7 +66,6 @@ const cases = {
   ),
   inlineAgentContinuationPrompt: extractFunction('buildContinuationPrompt', sources.inlinePrompt),
   inlineAgentNudgePrompt: extractFunction('buildNudgePrompt', sources.inlinePrompt),
-  inlineAgentFinalizationPrompt: extractFunction('buildFinalizationPrompt', sources.inlinePrompt),
   inlineAgentPromptHelpers: [
     extractFunction('extractTaskCompleteSignal', sources.inlinePrompt),
     extractFunction('shouldNudge', sources.inlinePrompt),
