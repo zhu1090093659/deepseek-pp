@@ -1,5 +1,6 @@
 import { DEEPSEEK_API_URL } from '../constants';
 import type { ToolCall, ToolCallRestoreRecord, ToolCallSource, ToolDescriptor } from '../types';
+import { isInlineAgentContinuationRequest } from '../inline-agent/prompt';
 import { sanitizeInternalPromptText } from '../prompt';
 import {
   DEFAULT_TOOL_DESCRIPTORS,
@@ -105,6 +106,7 @@ interface RequestContext {
   chatSessionId: string | null;
   parentMessageId: number | null;
   promptOptions: ResponseCompletePayload['promptOptions'];
+  suppressPageEvents: boolean;
 }
 
 interface RequestContextOverrides {
@@ -274,6 +276,7 @@ function createRequestContext(bodyStr: string, overrides: RequestContextOverride
         thinkingEnabled: body.thinking_enabled === true,
         refFileIds: Array.isArray(body.ref_file_ids) ? body.ref_file_ids.filter((item): item is string => typeof item === 'string') : [],
       },
+      suppressPageEvents: isInlineAgentContinuationRequest(originalPrompt, overrides.agentTaskPrompt ?? bodyPrompt),
     };
   } catch {
     return {
@@ -288,6 +291,7 @@ function createRequestContext(bodyStr: string, overrides: RequestContextOverride
         thinkingEnabled: false,
         refFileIds: [],
       },
+      suppressPageEvents: isInlineAgentContinuationRequest(overrides.originalPrompt ?? '', overrides.agentTaskPrompt ?? ''),
     };
   }
 }
@@ -320,7 +324,20 @@ function normalizeMessageId(value: unknown): number | null {
 function createStreamingResponseToolState(
   descriptors: readonly ToolDescriptor[],
   getSource: () => ToolCallSource,
+  options: { suppressEvents?: boolean } = {},
 ) {
+  // Internal inline-agent continuation requests suppress all page-facing
+  // events, so the streaming tool parsers' output is never consumed (the
+  // suppressed path returns before reading getVisibleText). Skip building and
+  // feeding the accumulators/parsers entirely.
+  if (options.suppressEvents) {
+    return {
+      append() {},
+      finish() {},
+      getVisibleText() { return ''; },
+    };
+  }
+
   const toolText = createStreamingToolTextAccumulator(descriptors);
   const toolCalls = createStreamingToolCallParser(descriptors);
   const notifiedToolSignatures = new Set<string>();
@@ -956,11 +973,16 @@ async function interceptFetchResponse(
   const responseToolState = createStreamingResponseToolState(
     toolDescriptors,
     () => createManualChatToolCallSource(requestContext, assistantMessageId),
+    { suppressEvents: requestContext.suppressPageEvents },
   );
   const speedTracker = createResponseTokenSpeedTracker(
-    (progress) => hookState.onResponseTokenSpeed(
-      attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
-    ),
+    (progress) => {
+      if (!requestContext.suppressPageEvents) {
+        hookState.onResponseTokenSpeed(
+          attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
+        );
+      }
+    },
     TOKEN_SPEED_EMIT_INTERVAL_MS,
   );
   const fullTextParser = createBufferedSSEParser((parsed, event) => {
@@ -1005,7 +1027,7 @@ async function interceptFetchResponse(
       try {
         responseToolState.finish();
 
-        if (!cancelled) {
+        if (!cancelled && !requestContext.suppressPageEvents) {
           hookState.onResponseComplete({
             requestId: requestContext.requestId,
             text: responseToolState.getVisibleText(),
@@ -1059,11 +1081,16 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
   const responseToolState = createStreamingResponseToolState(
     toolDescriptors,
     () => createManualChatToolCallSource(requestContext, assistantMessageId),
+    { suppressEvents: requestContext.suppressPageEvents },
   );
   const speedTracker = createResponseTokenSpeedTracker(
-    (progress) => hookState.onResponseTokenSpeed(
-      attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
-    ),
+    (progress) => {
+      if (!requestContext.suppressPageEvents) {
+        hookState.onResponseTokenSpeed(
+          attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
+        );
+      }
+    },
     TOKEN_SPEED_EMIT_INTERVAL_MS,
   );
 
@@ -1072,6 +1099,7 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
     completed = true;
     responseToolState.finish();
     speedTracker.finish();
+    if (requestContext.suppressPageEvents) return;
     hookState.onResponseComplete({
       requestId: requestContext.requestId,
       text: responseToolState.getVisibleText(),

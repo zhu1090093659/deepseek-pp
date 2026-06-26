@@ -53,9 +53,9 @@ const lineAllowlist = [
     reason: 'regex detects Chinese pending-action text from model output',
   },
   {
-    path: 'core/inline-agent/prompt.ts',
-    includes: '已(?:完成|创建|生成|保存|验证|写入|更新)',
-    reason: 'regex detects Chinese final-ish text from model output',
+    path: 'core/project/title.ts',
+    includes: '探索未至之境',
+    reason: 'default DeepSeek conversation title suffix detection',
   },
   {
     path: 'core/interceptor/history-cleanup.ts',
@@ -63,19 +63,19 @@ const lineAllowlist = [
     reason: 'legacy managed-agent prompt marker detection',
   },
   {
-    path: 'core/interceptor/history-cleanup.ts',
+    path: 'core/inline-agent/prompt.ts',
     includes: '工具续跑任务',
-    reason: 'inline-agent historical continuation prompt marker detection',
+    reason: 'inline-agent continuation prompt marker detection',
   },
   {
-    path: 'core/interceptor/history-cleanup.ts',
+    path: 'core/inline-agent/prompt.ts',
     includes: '工具结果',
-    reason: 'inline-agent historical continuation prompt marker detection',
+    reason: 'inline-agent continuation prompt marker detection',
   },
   {
-    path: 'core/interceptor/history-cleanup.ts',
+    path: 'core/inline-agent/prompt.ts',
     includes: '不要调用任何工具',
-    reason: 'inline-agent historical continuation prompt marker detection',
+    reason: 'inline-agent continuation prompt marker detection',
   },
   {
     path: 'core/interceptor/tool-parser.ts',

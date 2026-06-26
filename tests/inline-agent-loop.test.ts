@@ -53,6 +53,47 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
+  it('does not replay the same step when planning text is followed by a complete answer', async () => {
+    const answer = [
+      '要求查看贵金属走势，之前的搜索已经提供了一些结果。我需要基于这些结果给出一个全面的回答。',
+      '为了更全面地获取信息，我将同时打开这些相关的链接。',
+      '',
+      '根据截至2026年6月下旬的多份市场分析，贵金属市场在经历前期暴涨后，已进入高位震荡与分化的新阶段。',
+      '',
+      '### 黄金',
+      '黄金短期震荡，但长期逻辑仍受央行购金和避险需求支撑。',
+      '',
+      '总的来看，黄金偏震荡，白银和铂金更受产业需求影响。',
+    ].join('\n');
+
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
+      handlers.onTextChunk(answer);
+      return {
+        assistantText: '',
+        responseMessageId: 102,
+        requestMessageId: 101,
+        finished: true,
+      };
+    });
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    await runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: answer,
+      totalSteps: 1,
+      totalTools: 1,
+    }));
+  });
+
   it('pauses instead of presenting pending nudge text as the final answer', async () => {
     vi.useFakeTimers();
     adapterMocks.submitPromptStreaming

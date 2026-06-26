@@ -8,6 +8,7 @@ import {
   getProjectForConversation,
   getProjectPromptContextForConversation,
   normalizeProjectContextState,
+  refreshProjectConversation,
   removeConversationFromProject,
   setPendingProjectContext,
   updateProjectContext,
@@ -95,6 +96,37 @@ describe('session-based project context', () => {
     expect(state.pendingProjectId).toBeNull();
     expect(formatProjectPromptContext(context!)).toContain('Project: Plotforge');
     expect(formatProjectPromptContext(context!)).toContain('Keep track of story continuity.');
+  });
+
+  it('refreshes stale project conversation titles without letting default DeepSeek titles overwrite real titles', async () => {
+    const project = await createProjectContext({ name: 'Alpha' });
+
+    await addConversationToProject(project.id, {
+      conversationId: 'session-1',
+      title: 'DeepSeek-探索未至之境',
+      url: 'https://chat.deepseek.com/a/chat/s/session-1',
+    });
+    await expect(getProjectContextState()).resolves.toMatchObject({
+      conversations: [expect.objectContaining({ title: 'Untitled conversation' })],
+    });
+
+    await refreshProjectConversation({
+      conversationId: 'session-1',
+      title: '真实项目标题',
+      url: 'https://chat.deepseek.com/a/chat/s/session-1',
+    });
+    await expect(getProjectContextState()).resolves.toMatchObject({
+      conversations: [expect.objectContaining({ title: '真实项目标题' })],
+    });
+
+    await refreshProjectConversation({
+      conversationId: 'session-1',
+      title: 'DeepSeek-探索未至之境',
+      url: 'https://chat.deepseek.com/a/chat/s/session-1',
+    });
+    await expect(getProjectContextState()).resolves.toMatchObject({
+      conversations: [expect.objectContaining({ title: '真实项目标题' })],
+    });
   });
 
   it('updates project instructions and removes conversation membership', async () => {

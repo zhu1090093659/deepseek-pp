@@ -140,7 +140,7 @@ export async function runInlineAgentLoop(
       }
 
       if (toolCalls.length === 0) {
-        if (!shouldNudge(payload.originalPrompt, allExecutions, visibleText, nudgeCount)) {
+        if (!shouldNudge(payload.originalPrompt, allExecutions, visibleText)) {
           resolvedFinalText = visibleText;
           post('AGENT_STEP_COMPLETE', {
             loopId,
@@ -223,7 +223,7 @@ export async function runInlineAgentLoop(
           }
 
           const finalCandidate = nudgeVisibleText.trim() ? nudgeVisibleText : visibleText;
-          if (shouldNudge(payload.originalPrompt, allExecutions, finalCandidate, nudgeCount)) {
+          if (shouldNudge(payload.originalPrompt, allExecutions, finalCandidate)) {
             stopNotice = buildInlineAgentBudgetNotice(locale);
           } else {
             resolvedFinalText = finalCandidate;

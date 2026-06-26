@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { requireBridgeMessage, validateBridgeMessage } from '../core/messaging/schema';
 
@@ -40,5 +42,15 @@ describe('bridge message schema', () => {
   it('throws a clear error for required bridge messages', () => {
     expect(() => requireBridgeMessage({ source: 'deepseek-pp-main', type: 'NOPE' }))
       .toThrow('Invalid DeepSeek++ bridge message.');
+  });
+
+  it('lets main-world augmentation fail open after extension reloads', () => {
+    const path = join(process.cwd(), 'entrypoints/main-world.content.ts');
+    const source = readFileSync(path, 'utf8');
+
+    expect(source).toContain('function isExtensionUnavailableMessage(message: string): boolean');
+    expect(source).toContain("message.includes('Extension context is unavailable')");
+    expect(source).toContain('pending.resolve(null);');
+    expect(source).toContain('return Promise.resolve(null);');
   });
 });

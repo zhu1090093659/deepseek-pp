@@ -153,6 +153,7 @@ await testMethod('tools/call shell_status', 'tools/call', {
   assert(data?.shell, 'expected shell in status');
   assert(data?.osRelease, 'expected osRelease in status');
   assert(Array.isArray(data?.pathEntries), 'expected pathEntries in status');
+  assert(data?.features?.windowsFolderPickerEncodedCommand === true, 'expected encoded Windows folder picker capability');
   if (data.platform === 'win32') {
     assert(data.windowsVersion, 'expected windowsVersion on Windows');
   }

@@ -89,6 +89,7 @@ import {
   getProjectContextState,
   getProjectForConversation,
   getProjectPromptContextForConversation,
+  refreshProjectConversation,
   removeConversationFromProject,
   saveProjectContextState,
   setPendingProjectContext,
@@ -955,7 +956,7 @@ async function handleMessage(
       };
       const bound = bindPendingProject === true
         ? await bindPendingProjectConversation(conversation)
-        : null;
+        : await refreshProjectConversation(conversation);
       if (bound) await broadcastProjectContextUpdate(sender.tab?.id);
       const project = await getProjectForConversation(conversation.conversationId);
       if (!project) return null;

@@ -100,6 +100,22 @@ describe('local Skill importer', () => {
     expect(executeMcpToolCall).toHaveBeenCalledTimes(2);
   });
 
+  it('explains legacy Windows folder picker failures as stale Shell Native Host installs', async () => {
+    vi.mocked(executeMcpToolCall).mockResolvedValueOnce({
+      ok: false,
+      summary: 'MCP tool failed',
+      detail: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {}; Choose a local Skill folder Choose : CommandNotFoundException',
+      name: 'local_folder_pick',
+      error: {
+        code: 'mcp_tool_failed',
+        message: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; Choose a local Skill folder Choose : CommandNotFoundException',
+        retryable: false,
+      },
+    });
+
+    await expect(pickLocalSkillFolder()).rejects.toThrow('Reinstall Shell Native Host');
+  });
+
   it('previews and imports local Skills while preserving script execution boundaries', async () => {
     const preview = await previewLocalSkillSource('/Users/me/.codex/skills/demo');
 

@@ -8,9 +8,9 @@ import type {
   ProjectPromptContext,
 } from './types';
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
+import { PROJECT_UNTITLED_CONVERSATION, isPlaceholderProjectConversationTitle } from './title';
 
 const STORAGE_KEY = 'deepseek_pp_project_context';
-const UNTITLED_CONVERSATION = 'Untitled conversation';
 
 const DEFAULT_STATE: ProjectContextState = {
   schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
@@ -93,7 +93,7 @@ export async function addConversationToProject(
   const conversation: ProjectConversation = {
     conversationId,
     projectId,
-    title: normalizeConversationTitle(input.title ?? existing?.title),
+    title: selectConversationTitle(input.title, existing?.title),
     url: normalizeConversationUrl(input.url ?? existing?.url),
     addedAt: existing?.addedAt ?? now,
     lastSeenAt: now,
@@ -107,6 +107,31 @@ export async function addConversationToProject(
       conversation,
     ],
     pendingProjectId: state.pendingProjectId === projectId ? null : state.pendingProjectId,
+  });
+
+  return conversation;
+}
+
+export async function refreshProjectConversation(
+  input: ProjectConversationInput,
+): Promise<ProjectConversation | null> {
+  const state = await getProjectContextState();
+  const conversationId = requiredTrimmed(input.conversationId, 'Conversation id');
+  const existing = state.conversations.find((item) => item.conversationId === conversationId);
+  if (!existing) return null;
+
+  const now = Date.now();
+  const conversation: ProjectConversation = {
+    ...existing,
+    title: selectConversationTitle(input.title, existing.title),
+    url: normalizeConversationUrl(input.url ?? existing.url),
+    lastSeenAt: now,
+  };
+
+  await saveProjectContextState({
+    ...state,
+    projects: state.projects.map((item) => item.id === existing.projectId ? { ...item, updatedAt: now } : item),
+    conversations: state.conversations.map((item) => item.conversationId === conversationId ? conversation : item),
   });
 
   return conversation;
@@ -214,8 +239,16 @@ function requiredTrimmed(value: unknown, label: string): string {
 }
 
 function normalizeConversationTitle(value: unknown): string {
-  if (typeof value !== 'string') return UNTITLED_CONVERSATION;
-  return value.trim() || UNTITLED_CONVERSATION;
+  if (typeof value !== 'string') return PROJECT_UNTITLED_CONVERSATION;
+  const title = value.trim();
+  if (!title || isPlaceholderProjectConversationTitle(title)) return PROJECT_UNTITLED_CONVERSATION;
+  return title;
+}
+
+function selectConversationTitle(incoming: unknown, existing: unknown): string {
+  const incomingTitle = typeof incoming === 'string' ? incoming.trim() : '';
+  if (incomingTitle && !isPlaceholderProjectConversationTitle(incomingTitle)) return incomingTitle;
+  return normalizeConversationTitle(existing);
 }
 
 function normalizeConversationUrl(value: unknown): string {

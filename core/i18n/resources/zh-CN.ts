@@ -894,6 +894,7 @@ export const zhCN = {
       currentProjectNamed: '已在项目：{name}',
       removeFromProjectNamed: '移除项目：{name}',
       conversationActions: '会话操作',
+      newConversationInProject: '在 {name} 下开启新对话',
       useNextConversation: '下一条新会话使用 {name}',
       cancelNextConversation: '取消下一条新会话使用 {name}',
       pendingNextConversation: '下一条新会话将使用此项目',

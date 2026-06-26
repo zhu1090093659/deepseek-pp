@@ -21,6 +21,7 @@ export {
   getProjectForConversation,
   getProjectPromptContextForConversation,
   normalizeProjectContextState,
+  refreshProjectConversation,
   removeConversationFromProject,
   saveProjectContextState,
   setPendingProjectContext,

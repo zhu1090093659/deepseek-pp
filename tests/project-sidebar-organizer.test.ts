@@ -23,6 +23,7 @@ const labels: ProjectSidebarOrganizerLabels = {
   currentProjectNamed: (name) => `已在项目：${name}`,
   removeFromProjectNamed: (name) => `移除项目：${name}`,
   conversationActions: '会话操作',
+  newConversationInProject: (name) => `在 ${name} 下开启新对话`,
   useNextConversation: (name) => `下一条新会话使用 ${name}`,
   cancelNextConversation: (name) => `取消下一条新会话使用 ${name}`,
   pendingNextConversation: '下一条新会话将使用此项目',
@@ -138,6 +139,25 @@ describe('DeepSeek project sidebar organizer', () => {
     document.querySelector<HTMLAnchorElement>('a[data-dpp-project-conversation-id="session-one"]')?.click();
 
     expect(nativeOpen).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it('does not reschedule renders from its own injected project DOM mutations', async () => {
+    const state = createProjectState({ conversations: [] });
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      return { ok: true };
+    });
+    mountHistoryDom();
+
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+    const row = document.querySelector('.dpp-project-sidebar__project-row');
+
+    await flushProjectSidebar();
+
+    expect(row).not.toBeNull();
+    expect(document.querySelector('.dpp-project-sidebar__project-row')).toBe(row);
     controller.stop();
   });
 
@@ -360,6 +380,67 @@ describe('DeepSeek project sidebar organizer', () => {
     expect(toggleButton?.getAttribute('aria-label')).toBe('取消下一条新会话使用 deepseek-pp');
   });
 
+  it('exposes a one-step action to start a new conversation in a project', () => {
+    const state = createProjectState({ conversations: [] });
+    const onNewProjectConversation = vi.fn();
+    mountHistoryDom();
+
+    const section = renderProjectSidebar(document, createRenderOptions({
+      state,
+      onNewProjectConversation,
+    }));
+
+    const button = section?.querySelector<HTMLButtonElement>('[data-dpp-project-action="new-project-conversation"]');
+    expect(button?.getAttribute('aria-label')).toBe('在 deepseek-pp 下开启新对话');
+    button?.click();
+
+    expect(onNewProjectConversation).toHaveBeenCalledWith('project-deepseek');
+  });
+
+  it('uses the native history title when a project conversation still has the default DeepSeek title', () => {
+    const state = createProjectState({
+      conversations: [{
+        conversationId: 'session-one',
+        projectId: 'project-deepseek',
+        title: 'DeepSeek-探索未至之境',
+        url: 'https://chat.deepseek.com/a/chat/s/session-one',
+        addedAt: NOW - 60_000,
+        lastSeenAt: NOW - 60_000,
+      }],
+    });
+    mountHistoryDom();
+
+    const section = renderProjectSidebar(document, createRenderOptions({
+      state,
+      expandedProjectIds: new Set(['project-deepseek']),
+    }));
+
+    expect(section?.querySelector('[data-dpp-project-conversation-id="session-one"]')?.textContent)
+      .toContain('发布 0.7.3 版本');
+  });
+
+  it('localizes stored untitled project conversation placeholders', () => {
+    const state = createProjectState({
+      conversations: [{
+        conversationId: 'session-missing',
+        projectId: 'project-deepseek',
+        title: 'Untitled conversation',
+        url: 'https://chat.deepseek.com/a/chat/s/session-missing',
+        addedAt: NOW - 60_000,
+        lastSeenAt: NOW - 60_000,
+      }],
+    });
+    mountHistoryDom();
+
+    const section = renderProjectSidebar(document, createRenderOptions({
+      state,
+      expandedProjectIds: new Set(['project-deepseek']),
+    }));
+
+    expect(section?.querySelector('[data-dpp-project-conversation-id="session-missing"]')?.textContent)
+      .toContain('未命名对话');
+  });
+
   it('shows a toggle to expand conversations beyond the project limit', () => {
     const conversations = Array.from({ length: 6 }, (_, index) => ({
       conversationId: `session-${index}`,
@@ -421,6 +502,7 @@ function createRenderOptions(
     onOpenProjectConversationMenu: vi.fn(),
     onRemoveConversationFromProject: vi.fn(),
     onMoveCurrent: vi.fn(),
+    onNewProjectConversation: vi.fn(),
     onTogglePending: vi.fn(),
     ...overrides,
   };

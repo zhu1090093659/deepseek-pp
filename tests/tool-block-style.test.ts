@@ -75,6 +75,18 @@ describe('content tool block styles', () => {
     expect(source).toContain("finalText: clampText(finalText, INLINE_AGENT_FINAL_RENDER_MAX_CHARS) ?? '',");
   });
 
+  it('hides internal inline-agent continuation user messages instead of rendering empty turns', () => {
+    const path = join(process.cwd(), 'entrypoints/content.ts');
+    const source = readFileSync(path, 'utf8');
+
+    expect(source).toContain('startInlineAgentContinuationMessageHider();');
+    expect(source).toContain('INLINE_AGENT_CONTINUATION_PLACEHOLDER');
+    expect(source).toContain('isInlineAgentContinuationStructure(text)');
+    expect(source).toContain('hideInlineAgentContinuationMessages(root);');
+    expect(source).toContain("message.style.display = 'none';");
+    expect(source).toContain("data-dpp-hidden-inline-agent-continuation");
+  });
+
   it('keeps permission banner text on the same injected theme contract', () => {
     const path = join(process.cwd(), 'entrypoints/content.ts');
     const source = readFileSync(path, 'utf8');

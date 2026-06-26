@@ -16,7 +16,7 @@ const EXPECTED_HASHES = {
   promptLocaleResourcesZhCN: '8bbbf8a458578a56b4f42b787e9770fea2708c7e635d2c6fba7e049096ccf1b3',
   inlineAgentContinuationPrompt: 'c7c6d857cd4c14015329bccd7ce2e551b0f3490593e89c163db713e842cbfc22',
   inlineAgentNudgePrompt: '4717a41143efacf66a2554c8d7d72c08f7192c0b0b93105a869f0638bd7ba4ea',
-  inlineAgentPromptHelpers: 'cdb723464379a5ead572eff1d93fd4585d7f845739d67fa214fbbdc0694153c6',
+  inlineAgentPromptHelpers: '709593b0c176e0055018670d017d473bb75fd80696303340b9f902834aa705bf',
 };
 
 const sources = {

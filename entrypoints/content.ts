@@ -30,7 +30,13 @@ import { createRestoredArtifactToolResult, executeArtifactToolCall, isArtifactTo
 import type { ResponseCompletePayload, ResponseTokenSpeedPayload } from '../core/interceptor/fetch-hook';
 import { shouldIgnoreEmptyTokenSpeedProgress } from '../core/interceptor/token-speed';
 import { runInlineAgentLoop } from '../core/inline-agent/loop';
-import { replaceTaskCompleteBlocks } from '../core/inline-agent/prompt';
+import {
+  INLINE_AGENT_CONTINUATION_PLACEHOLDER,
+  isInlineAgentContinuationRequest,
+  isInlineAgentContinuationStructure,
+  normalizeInlineAgentFinalAnswerText,
+  replaceTaskCompleteBlocks,
+} from '../core/inline-agent/prompt';
 import type {
   InlineAgentStartPayload,
   InlineAgentStreamChunkMsg,
@@ -296,6 +302,7 @@ let inlineAgentContainer: HTMLElement | null = null;
 let inlineAgentCurrentStep: HTMLElement | null = null;
 let inlineAgentLoopId: string | null = null;
 let inlineAgentContainerObserver: MutationObserver | null = null;
+let inlineAgentContinuationMessageObserver: MutationObserver | null = null;
 let activeInlineAgentTrace: InlineAgentTraceRecord | null = null;
 let inlineAgentTraceWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let inlineAgentStreamRenderFrame: number | null = null;
@@ -393,6 +400,7 @@ function getProjectSidebarOrganizerLabels() {
     currentProjectNamed: (name: string) => contentT('content.projectSidebar.currentProjectNamed', { name }),
     removeFromProjectNamed: (name: string) => contentT('content.projectSidebar.removeFromProjectNamed', { name }),
     conversationActions: contentT('content.projectSidebar.conversationActions'),
+    newConversationInProject: (name: string) => contentT('content.projectSidebar.newConversationInProject', { name }),
     useNextConversation: (name: string) => contentT('content.projectSidebar.useNextConversation', { name }),
     cancelNextConversation: (name: string) => contentT('content.projectSidebar.cancelNextConversation', { name }),
     pendingNextConversation: contentT('content.projectSidebar.pendingNextConversation'),
@@ -529,6 +537,7 @@ export default defineContentScript({
     contentUxPolishController = startContentUxPolish(getContentUxPolishLabels);
 
     startRenderedToolCallCleaner();
+    startInlineAgentContinuationMessageHider();
     void restorePersistedToolBlocks();
     void restorePersistedInlineAgentTraces();
 
@@ -696,6 +705,17 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
         : null,
     });
   } catch (error) {
+    if (isExtensionInvalidatedError(error)) {
+      invalidateExtensionContext();
+      postToMainWorld({
+        type: 'AUGMENT_REQUEST_BODY_RESULT',
+        id,
+        ok: true,
+        result: null,
+      });
+      return;
+    }
+
     postToMainWorld({
       type: 'AUGMENT_REQUEST_BODY_RESULT',
       id,
@@ -806,7 +826,8 @@ function installExtensionInvalidationGuards() {
 function isExtensionInvalidatedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('Extension context invalidated') ||
-    message.includes('context invalidated');
+    message.includes('context invalidated') ||
+    message.includes('Extension context is unavailable');
 }
 
 function invalidateExtensionContext() {
@@ -2768,6 +2789,8 @@ function startInlineAgentIfNeeded(
   complete: ResponseCompletePayload,
   executions: ToolExecutionRecord[],
 ): void {
+  if (isInlineAgentResponseComplete(complete)) return;
+
   // Collect executions that should trigger a continuation:
   // MCP tools + local web and browser-control tools.
   const continuableExecutions = executions.filter(
@@ -2834,6 +2857,10 @@ function startInlineAgentIfNeeded(
   mountInlineAgentContainer(target, container);
 
   void startInlineAgentLoop(payload);
+}
+
+function isInlineAgentResponseComplete(complete: ResponseCompletePayload): boolean {
+  return isInlineAgentContinuationRequest(complete.originalPrompt, complete.agentTaskPrompt);
 }
 
 function mountInlineAgentContainer(message: Element, container: HTMLElement): void {
@@ -3001,7 +3028,7 @@ function handleAgentStreamChunk(msg: InlineAgentStreamChunkMsg): void {
 function renderInlineAgentStreamChunk(msg: InlineAgentStreamChunkMsg): void {
   if (msg.loopId !== inlineAgentLoopId || !inlineAgentCurrentStep) return;
   const previousText = getInlineAgentStepText(inlineAgentCurrentStep);
-  const nextText = clampText(msg.fullText.trim() || previousText, INLINE_AGENT_STEP_RENDER_MAX_CHARS) ?? '';
+  const nextText = clampText(getInlineAgentDisplayStepText(msg.fullText) || previousText, INLINE_AGENT_STEP_RENDER_MAX_CHARS) ?? '';
   updateStepStreamText(inlineAgentCurrentStep, nextText);
   updateActiveInlineAgentTrace((trace) => updateInlineAgentTraceStep(trace, msg.stepIndex, {
     text: nextText,
@@ -3098,7 +3125,11 @@ function handleAgentLoopComplete(msg: InlineAgentLoopCompleteMsg): void {
 
 function getInlineAgentDisplayFinalText(text: string): string {
   const withoutToolCalls = stripToolCalls(text, { descriptors: currentToolDescriptors });
-  return replaceTaskCompleteBlocks(withoutToolCalls).trim();
+  return normalizeInlineAgentFinalAnswerText(withoutToolCalls);
+}
+
+function getInlineAgentDisplayStepText(text: string): string {
+  return getInlineAgentDisplayFinalText(text);
 }
 
 function appendInlineAgentFinalAnswer(container: HTMLElement, text: string, loopId: string): void {
@@ -5382,6 +5413,7 @@ function containsToolMarker(text: string | null | undefined): boolean {
 
 function containsCleanableText(text: string | null | undefined): boolean {
   if (typeof text !== 'string' || !text) return false;
+  if (isInlineAgentContinuationRenderedText(text)) return true;
   if (containsInternalPromptMarker(text)) return true;
   if (text.includes('<task_complete>') || text.includes('</task_complete>')) return true;
   if (text.includes(LEGACY_TOOL_CALLS_OPEN_TAG) || text.includes('｜DSML｜')) return true;
@@ -5413,8 +5445,64 @@ function hasLikelyToolMarkerPrefix(text: string): boolean {
 function cleanRenderedToolCalls() {
   const roots = getToolCleanupRoots();
   for (const root of roots) {
+    hideInlineAgentContinuationMessages(root);
     stripToolCallTextNodes(root);
   }
+}
+
+function startInlineAgentContinuationMessageHider() {
+  hideInlineAgentContinuationMessages(document);
+  inlineAgentContinuationMessageObserver?.disconnect();
+  inlineAgentContinuationMessageObserver = new MutationObserver((mutations) => {
+    const roots = new Set<ParentNode>();
+    for (const mutation of mutations) {
+      if (mutation.type === 'characterData') {
+        const parent = mutation.target.parentElement;
+        if (isInlineAgentContinuationRenderedText(parent?.textContent)) {
+          const root = parent?.closest('.ds-message') ?? parent;
+          if (root) roots.add(root);
+        }
+        continue;
+      }
+
+      for (const node of mutation.addedNodes) {
+        if (node instanceof Element) roots.add(node);
+      }
+    }
+
+    roots.forEach(hideInlineAgentContinuationMessages);
+  });
+  inlineAgentContinuationMessageObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
+function hideInlineAgentContinuationMessages(root: ParentNode) {
+  const messages = getInlineAgentContinuationMessageCandidates(root);
+  for (const message of messages) {
+    if (!isInlineAgentContinuationRenderedText(message.textContent)) continue;
+    message.setAttribute('data-dpp-hidden-inline-agent-continuation', 'true');
+    message.style.display = 'none';
+  }
+}
+
+function isInlineAgentContinuationRenderedText(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !text) return false;
+  // isInlineAgentContinuationStructure (tags only) is a strict superset of
+  // isInlineAgentContinuationPrompt (tags + keywords), so the keyword check
+  // is redundant here — the placeholder covers the history-restored case and
+  // the structural check covers the live-rendered case.
+  return text.includes(INLINE_AGENT_CONTINUATION_PLACEHOLDER) ||
+    isInlineAgentContinuationStructure(text);
+}
+
+function getInlineAgentContinuationMessageCandidates(root: ParentNode): HTMLElement[] {
+  const messages: HTMLElement[] = [];
+  if (root instanceof HTMLElement && root.matches('.ds-message')) {
+    messages.push(root);
+  }
+  if ('querySelectorAll' in root) {
+    messages.push(...Array.from(root.querySelectorAll<HTMLElement>('.ds-message')));
+  }
+  return messages;
 }
 
 function getToolCleanupRoots(): Element[] {
@@ -5451,6 +5539,11 @@ function stripToolCallTextNodes(root: Element) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
       if (
+        // A message already flagged as an inline-agent continuation bubble is
+        // owned by hideInlineAgentContinuationMessages (which hides the whole
+        // .ds-message). Letting strip touch it here can leave an empty shell
+        // when DeepSeek re-renders and drops the display:none, so skip it.
+        parent.closest('[data-dpp-hidden-inline-agent-continuation]') ||
         // Detached artifact cards live outside .dpp-tool-block but must be
         // exempt from tool-call text stripping just like the block itself.
         parent.closest('.dpp-tool-block, .dpp-artifact-results') ||

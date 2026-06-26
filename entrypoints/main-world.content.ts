@@ -143,7 +143,7 @@ function handlePortMessage(data: unknown): void {
 
 function requestAugmentedBody(body: string): Promise<RequestBodyModification | null> {
   if (!contentPort) {
-    throw new Error('DeepSeek++ main/content bridge is not connected.');
+    return Promise.resolve(null);
   }
 
   const id = crypto.randomUUID();
@@ -187,11 +187,23 @@ function settleAugmentRequest(message: AugmentResultMessage): void {
   clearTimeout(pending.timeout);
 
   if (message.ok === false) {
-    pending.reject(new Error(message.error || 'DeepSeek++ request augmentation failed.'));
+    const error = message.error || 'DeepSeek++ request augmentation failed.';
+    if (isExtensionUnavailableMessage(error)) {
+      pending.resolve(null);
+    } else {
+      pending.reject(new Error(error));
+    }
     return;
   }
 
   pending.resolve(message.result ?? null);
+}
+
+function isExtensionUnavailableMessage(message: string): boolean {
+  return message.includes('Extension context invalidated') ||
+    message.includes('context invalidated') ||
+    message.includes('Extension context is unavailable') ||
+    message.includes('main/content bridge is not connected');
 }
 
 function postToContent(message: Record<string, unknown>): void {

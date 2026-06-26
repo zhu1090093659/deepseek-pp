@@ -23,9 +23,6 @@ export function injectInlineAgentStyles(): void {
       padding-left: 12px;
       border-left: 1px solid var(--dpp-ui-border);
     }
-    [data-dpp-agent-host-hidden] > :not(.dpp-agent-container):not(.dpp-tool-block) {
-      display: none !important;
-    }
     .dpp-agent-container[data-restored="true"] {
       margin-bottom: 12px;
     }

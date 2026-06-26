@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { stripToolCallsFromHistory } from '../core/interceptor/history-cleanup';
 import { createArtifactToolDescriptors } from '../core/artifact';
+import { INLINE_AGENT_CONTINUATION_PLACEHOLDER } from '../core/inline-agent/prompt';
 import { createDefaultToolDescriptors } from '../core/tool';
 
 describe('history cleanup', () => {
-  it('keeps inline-agent continuation prompt nodes but hides their internal prompt text', () => {
+  it('keeps inline-agent continuation prompt nodes but marks them as hidden internal turns', () => {
     const json = {
       data: {
         biz_data: {
@@ -52,7 +53,7 @@ describe('history cleanup', () => {
     });
 
     expect(json.data.biz_data.chat_messages.map((message: { message_id: number }) => message.message_id)).toEqual([1, 2, 3, 4]);
-    expect(json.data.biz_data.chat_messages[2].content).toBe('\u200b');
+    expect(json.data.biz_data.chat_messages[2].content).toBe(INLINE_AGENT_CONTINUATION_PLACEHOLDER);
     expect(json.data.biz_data.chat_messages[3].parent_message_id).toBe(3);
   });
 
@@ -99,6 +100,65 @@ describe('history cleanup', () => {
     });
   });
 
+  it('strips inline-agent continuation assistant tool calls without restoring duplicate tool blocks', () => {
+    const records: unknown[] = [];
+    const json = {
+      data: {
+        biz_data: {
+          chat_messages: [
+            {
+              message_id: 21,
+              message_role: 'user',
+              content: '查一下港股行情',
+            },
+            {
+              message_id: 22,
+              message_role: 'assistant',
+              parent_message_id: 21,
+              content: '我帮你搜索一下港股最新行情。',
+            },
+            {
+              message_id: 23,
+              message_role: 'user',
+              parent_message_id: 22,
+              content: [
+                '以下是工具续跑任务刚刚执行的工具结果。请像真正的 Agent 一样继续推进。',
+                '',
+                '<original_task>',
+                '查一下港股行情',
+                '</original_task>',
+                '',
+                '<tool_results>',
+                '[]',
+                '</tool_results>',
+              ].join('\n'),
+            },
+            {
+              message_id: 24,
+              message_role: 'assistant',
+              parent_message_id: 23,
+              content: [
+                '，需要重新获取页面。',
+                '<web_fetch>',
+                '{"url":"https://example.com/hk"}',
+                '</web_fetch>',
+              ].join('\n'),
+            },
+          ],
+        },
+      },
+    };
+
+    stripToolCallsFromHistory(json, {
+      toolDescriptors: createDefaultToolDescriptors(),
+      onToolCallsRestored: (next) => records.push(...next),
+    });
+
+    expect(records).toHaveLength(0);
+    expect(json.data.biz_data.chat_messages[2].content).toBe(INLINE_AGENT_CONTINUATION_PLACEHOLDER);
+    expect(json.data.biz_data.chat_messages[3].content).toBe('，需要重新获取页面。');
+  });
+
   it('replaces inline-agent task_complete markers with their summary in restored history', () => {
     const json = {
       data: {
@@ -135,7 +195,7 @@ describe('history cleanup', () => {
       onToolCallsRestored: () => undefined,
     });
 
-    expect(json.data.biz_data.chat_messages[0].content).toBe('\u200b');
+    expect(json.data.biz_data.chat_messages[0].content).toBe(INLINE_AGENT_CONTINUATION_PLACEHOLDER);
     expect(json.data.biz_data.chat_messages[1].content).toBe('回答已经整理完成。');
   });
 

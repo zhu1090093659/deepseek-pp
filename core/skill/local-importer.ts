@@ -625,5 +625,17 @@ function formatToolFailure(result: ToolResult): string {
   if (result.error?.code === 'mcp_tool_not_found' && result.name === 'local_skill_preview') {
     return 'Current Shell Native Host does not expose local_skill_preview. Reinstall Shell Native Host from the MCP page, restart the browser, then try again.';
   }
-  return result.error?.message || result.detail || result.summary || 'Local Skill scan failed';
+  const message = result.error?.message || result.detail || result.summary || 'Local Skill scan failed';
+  if (isLegacyWindowsFolderPickerFailure(message)) {
+    return [
+      'The installed Shell Native Host is older than the extension and still passes folder picker labels as PowerShell command text.',
+      'Reinstall Shell Native Host from the MCP page or run `npx deepseek-pp-shell-host install --browser chrome --extension-id <your-extension-id>`, restart the browser, then try local Skill import again.',
+    ].join(' ');
+  }
+  return message;
+}
+
+function isLegacyWindowsFolderPickerFailure(message: string): boolean {
+  return /powershell\.exe[\s\S]*-Command[\s\S]*FolderBrowserDialog/i.test(message) &&
+    /CommandNotFoundException|ObjectNotFound|Choose a local Skill folder|Choose\s*:/i.test(message);
 }

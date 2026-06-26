@@ -79,6 +79,10 @@ const WINDOWS_POWERSHELL_UTF8_PREAMBLE = [
   '$OutputEncoding = [Console]::OutputEncoding',
   'try { chcp.com 65001 > $null } catch {}',
 ].join('; ');
+const HOST_FEATURES = {
+  windowsFolderPickerEncodedCommand: true,
+  localSkillNestedResourceBoundary: true,
+};
 
 // --- Persistent shell session ---
 //
@@ -345,6 +349,7 @@ async function handleCallTool(id, params) {
           hostname: hostname(),
           path: getEnvironmentPath(process.env),
           pathEntries: splitPath(getEnvironmentPath(process.env)),
+          features: HOST_FEATURES,
         },
       },
     });

@@ -1,5 +1,9 @@
 import { DPP_MANAGED_AGENT_PROMPT_MARKER } from '../constants';
-import { replaceTaskCompleteBlocks } from '../inline-agent/prompt';
+import {
+  INLINE_AGENT_CONTINUATION_PLACEHOLDER,
+  isInlineAgentContinuationPrompt,
+  replaceTaskCompleteBlocks,
+} from '../inline-agent/prompt';
 import { sanitizeInternalPromptText } from '../prompt';
 import type { ToolCall, ToolCallRestoreRecord, ToolDescriptor } from '../types';
 import {
@@ -94,6 +98,7 @@ function stripMessageToolCalls(
   const inlineAgentContinuationMessageIds = collectInlineAgentContinuationMessageIds(visibleMessages);
   visibleMessages.forEach((msg: any, index: number) => {
     const replaceTaskComplete = shouldReplaceStoredTaskCompleteBlocks(msg, inlineAgentContinuationMessageIds);
+    const shouldRestoreToolCalls = !replaceTaskComplete;
     sanitizeInlineAgentContinuationMessage(msg);
     sanitizeStoredMessageInternalPrompt(msg, { replaceTaskComplete });
     const hasStoredToolCall = storedMessageHasToolCallMarker(msg, toolDescriptors);
@@ -102,20 +107,24 @@ function stripMessageToolCalls(
     const metadata = createMessageRestoreMetadata(msg, index, currentAssistantMessageIndex);
     const messageKey = getMessageRestoreKey(msg, index);
     if (typeof msg.content === 'string' && hasToolCallMarker(msg.content, toolDescriptors)) {
-      const record = collectToolCallRestoreRecord(msg.content, `${messageKey}:content`, toolDescriptors, metadata);
-      if (record) restoredRecords.push(record);
+      if (shouldRestoreToolCalls) {
+        const record = collectToolCallRestoreRecord(msg.content, `${messageKey}:content`, toolDescriptors, metadata);
+        if (record) restoredRecords.push(record);
+      }
       msg.content = stripToolCallsForHistoryText(msg.content, toolDescriptors);
     }
     if (msg.fragments && Array.isArray(msg.fragments)) {
       msg.fragments.forEach((frag: any, fragIndex: number) => {
         if (typeof frag.content === 'string' && hasToolCallMarker(frag.content, toolDescriptors)) {
-          const record = collectToolCallRestoreRecord(
-            frag.content,
-            `${messageKey}:fragment:${fragIndex}`,
-            toolDescriptors,
-            metadata,
-          );
-          if (record) restoredRecords.push(record);
+          if (shouldRestoreToolCalls) {
+            const record = collectToolCallRestoreRecord(
+              frag.content,
+              `${messageKey}:fragment:${fragIndex}`,
+              toolDescriptors,
+              metadata,
+            );
+            if (record) restoredRecords.push(record);
+          }
           frag.content = stripToolCallsForHistoryText(frag.content, toolDescriptors);
         }
       });
@@ -556,7 +565,7 @@ function sanitizeInlineAgentContinuationMessage(msg: any) {
   if (!isInlineAgentContinuationMessage(msg)) return;
 
   if (typeof msg.content === 'string' && isInlineAgentContinuationPrompt(msg.content)) {
-    msg.content = '\u200b';
+    msg.content = INLINE_AGENT_CONTINUATION_PLACEHOLDER;
   }
 
   if (!Array.isArray(msg.fragments)) return;
@@ -564,7 +573,7 @@ function sanitizeInlineAgentContinuationMessage(msg: any) {
   let replaced = false;
   for (const frag of msg.fragments) {
     if (!frag || typeof frag.content !== 'string' || !isInlineAgentContinuationPrompt(frag.content)) continue;
-    frag.content = replaced ? '' : '\u200b';
+    frag.content = replaced ? '' : INLINE_AGENT_CONTINUATION_PLACEHOLDER;
     replaced = true;
   }
 }
@@ -577,16 +586,4 @@ function isInternalManagedAgentContent(content: string): boolean {
     content.includes('Available tool tag names:') &&
     content.includes('<original_user_task>') &&
     content.includes('</original_user_task>');
-}
-
-function isInlineAgentContinuationPrompt(content: string): boolean {
-  if (!content.includes('<original_task>') || !content.includes('</original_task>')) return false;
-  if (!content.includes('<tool_results>') && !content.includes('<tool_results_so_far>')) return false;
-
-  return content.includes('工具续跑任务') ||
-    content.includes('工具结果') ||
-    content.includes('Continue like a real agent') ||
-    content.includes('tool results') ||
-    content.includes('do not call any tools') ||
-    content.includes('不要调用任何工具');
 }

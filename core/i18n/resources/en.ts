@@ -894,6 +894,7 @@ export const en = {
       currentProjectNamed: 'In project: {name}',
       removeFromProjectNamed: 'Remove from project: {name}',
       conversationActions: 'Conversation actions',
+      newConversationInProject: 'Start a new conversation in {name}',
       useNextConversation: 'Use {name} for the next new conversation',
       cancelNextConversation: 'Cancel using {name} for the next new conversation',
       pendingNextConversation: 'The next new conversation will use this project',

@@ -11,6 +11,7 @@ import {
   type HistoryItem,
 } from './history-organizer';
 import { injectInjectedThemeStyles } from '../../../core/ui/injected-theme';
+import { isUsableProjectConversationTitle } from '../../../core/project/title';
 
 export interface ProjectSidebarOrganizerController {
   stop(): void;
@@ -32,6 +33,7 @@ export interface ProjectSidebarOrganizerLabels {
   currentProjectNamed: (name: string) => string;
   removeFromProjectNamed: (name: string) => string;
   conversationActions: string;
+  newConversationInProject: (name: string) => string;
   useNextConversation: (name: string) => string;
   cancelNextConversation: (name: string) => string;
   pendingNextConversation: string;
@@ -56,7 +58,7 @@ const NATIVE_MENU_TEXT = {
 
 type ProjectSectionHandlers = Pick<
   Parameters<typeof renderProjectSidebar>[1],
-  'onMoveCurrent' | 'onTogglePending' | 'onToggleProject' | 'onToggleShowAll'
+  'onMoveCurrent' | 'onNewProjectConversation' | 'onTogglePending' | 'onToggleProject' | 'onToggleShowAll'
   | 'onOpenProjectConversation' | 'onOpenProjectConversationMenu' | 'onRemoveConversationFromProject'
 >;
 
@@ -189,6 +191,15 @@ export function startDeepSeekProjectSidebarOrganizer(
               }));
             });
           },
+          onNewProjectConversation(projectId) {
+            void mutateProjectSidebarState(async () => {
+              assertRuntimeSuccess(await chrome.runtime.sendMessage({
+                type: 'SET_PENDING_PROJECT_CONTEXT',
+                payload: { projectId },
+              }));
+              window.location.assign(new URL('/a/chat/new', location.origin).href);
+            });
+          },
           nativeMenuConversation,
           activeProjectConversationMenu: projectConversationMenu,
           onNativeJoinProject(projectId) {
@@ -268,7 +279,10 @@ export function startDeepSeekProjectSidebarOrganizer(
   };
 
   void loadState();
-  const observer = new MutationObserver(schedule);
+  const observer = new MutationObserver((mutations) => {
+    if (isProjectSidebarSelfMutation(mutations)) return;
+    schedule();
+  });
   observer.observe(document.body, { childList: true, subtree: true });
   chrome.runtime.onMessage.addListener(messageHandler);
   document.addEventListener('click', clickCaptureHandler, true);
@@ -297,6 +311,24 @@ export function startDeepSeekProjectSidebarOrganizer(
   };
 }
 
+function isProjectSidebarSelfMutation(mutations: readonly MutationRecord[]): boolean {
+  return mutations.length > 0 && mutations.every((mutation) => {
+    if (isProjectSidebarSyntheticNode(mutation.target)) return true;
+    const changedNodes = [...Array.from(mutation.addedNodes), ...Array.from(mutation.removedNodes)];
+    return changedNodes.length > 0 && changedNodes.every(isProjectSidebarSyntheticNode);
+  });
+}
+
+function isProjectSidebarSyntheticNode(node: Node): boolean {
+  if (!(node instanceof Element)) return false;
+  return Boolean(
+    node.closest(`#${PROJECT_SECTION_ID}`) ||
+    node.id === PROJECT_SECTION_ID ||
+    node.closest(`[${NATIVE_MENU_ENHANCER_ATTR}="true"]`) ||
+    node.getAttribute(NATIVE_MENU_ENHANCER_ATTR) === 'true',
+  );
+}
+
 export function renderProjectSidebar(
   root: ParentNode,
   options: {
@@ -311,6 +343,7 @@ export function renderProjectSidebar(
     onOpenProjectConversationMenu(menu: ProjectConversationMenuState): void;
     onRemoveConversationFromProject(conversationId: string): void;
     onMoveCurrent(projectId: string): void;
+    onNewProjectConversation(projectId: string): void;
     onTogglePending(projectId: string): void;
     nativeMenuConversation?: NativeMenuConversation | null;
     activeProjectConversationMenu?: ProjectConversationMenuState | null;
@@ -397,6 +430,12 @@ function renderProjectSection(
       }));
     }
     actions.appendChild(createIconButton({
+      action: 'new-project-conversation',
+      projectId: project.id,
+      label: labels.newConversationInProject(project.name),
+      icon: newConversationIcon(),
+    }));
+    actions.appendChild(createIconButton({
       action: 'toggle-pending',
       projectId: project.id,
       label: state.pendingProjectId === project.id
@@ -420,7 +459,7 @@ function renderProjectSection(
       list.className = 'dpp-project-sidebar__conversation-list';
       const visibleConversations = showAll ? conversations : conversations.slice(0, PROJECT_LIMIT);
       for (const conversation of visibleConversations) {
-        list.appendChild(createConversationRow(conversation, project, labels, options.activeProjectConversationMenu));
+        list.appendChild(createConversationRow(conversation, project, labels, options.activeProjectConversationMenu, historyItems));
       }
       if (conversations.length > PROJECT_LIMIT) {
         const showMore = document.createElement('button');
@@ -469,6 +508,8 @@ function bindProjectSection(
       if (!projectId) return;
       if (actionButton.dataset.dppProjectAction === 'move-current') {
         handlers.onMoveCurrent(projectId);
+      } else if (actionButton.dataset.dppProjectAction === 'new-project-conversation') {
+        handlers.onNewProjectConversation(projectId);
       } else if (actionButton.dataset.dppProjectAction === 'toggle-pending') {
         handlers.onTogglePending(projectId);
       }
@@ -631,11 +672,12 @@ function createConversationRow(
   project: ProjectContext,
   labels: ProjectSidebarOrganizerLabels,
   activeMenu: ProjectConversationMenuState | null | undefined,
+  historyItems: readonly HistoryItem[],
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'dpp-project-sidebar__conversation-row';
   row.dataset.dppProjectConversationRow = conversation.conversationId;
-  row.appendChild(createConversationLink(conversation, labels));
+  row.appendChild(createConversationLink(conversation, labels, historyItems));
 
   const menuButton = document.createElement('button');
   menuButton.type = 'button';
@@ -667,13 +709,18 @@ function createConversationRow(
   return row;
 }
 
-function createConversationLink(conversation: ProjectConversation, labels: ProjectSidebarOrganizerLabels): HTMLElement {
+function createConversationLink(
+  conversation: ProjectConversation,
+  labels: ProjectSidebarOrganizerLabels,
+  historyItems: readonly HistoryItem[],
+): HTMLElement {
   const link = document.createElement('a');
   link.className = 'dpp-project-sidebar__conversation';
   link.href = normalizeConversationHref(conversation);
   link.dataset.dppProjectConversationId = conversation.conversationId;
+  const title = getConversationDisplayTitle(conversation, labels, historyItems);
   link.innerHTML = `
-    <span class="dpp-project-sidebar__conversation-title">${escapeHtml(conversation.title || labels.untitledConversation)}</span>
+    <span class="dpp-project-sidebar__conversation-title">${escapeHtml(title)}</span>
     <span class="dpp-project-sidebar__conversation-age">${escapeHtml(labels.age(conversation.lastSeenAt))}</span>
   `;
   return link;
@@ -945,7 +992,18 @@ function getCurrentConversationTitle(labels: ProjectSidebarOrganizerLabels): str
   const title = document.title
     .replace(/\s*[-|]\s*DeepSeek.*$/i, '')
     .trim();
-  return title || labels.untitledConversation;
+  return isUsableProjectConversationTitle(title) ? title : labels.untitledConversation;
+}
+
+function getConversationDisplayTitle(
+  conversation: ProjectConversation,
+  labels: ProjectSidebarOrganizerLabels,
+  historyItems: readonly HistoryItem[],
+): string {
+  const historyTitle = historyItems.find((item) => item.sessionId === conversation.conversationId)?.title;
+  if (isUsableProjectConversationTitle(historyTitle)) return historyTitle;
+  if (isUsableProjectConversationTitle(conversation.title)) return conversation.title;
+  return labels.untitledConversation;
 }
 
 function normalizeConversationHref(conversation: ProjectConversation): string {
@@ -1006,6 +1064,10 @@ function folderIcon(): string {
 
 function addIcon(): string {
   return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+}
+
+function newConversationIcon(): string {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5h8a2 2 0 0 1 2 2v1M5 12.5v-5a2 2 0 0 1 2-2h1M5 12.5v4a2 2 0 0 0 2 2h5.5M5 12.5h7.5M17 13v6M14 16h6"/></svg>';
 }
 
 function unlinkIcon(): string {
