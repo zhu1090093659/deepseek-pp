@@ -181,6 +181,63 @@ describe('DeepSeek web adapter streaming', () => {
     expect((options as RequestInit).body).toBeInstanceOf(FormData);
   });
 
+  it('accepts successful image uploads while DeepSeek reports audit_result unknown', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({
+      data: {
+        biz_code: 0,
+        biz_data: {
+          id: 'file-image-1',
+          file_name: 'shot.png',
+          file_size: 3,
+          mime_type: 'image/png',
+          status: 'SUCCESS',
+          audit_result: 'unknown',
+        },
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const uploaded = await uploadDeepSeekFile({
+      file: new Blob(['abc'], { type: 'image/png' }),
+      filename: 'shot.png',
+      modelType: 'vision',
+      clientHeaders: { Authorization: 'Bearer token' },
+      powHeaders: { 'X-DS-PoW-Response': 'pow' },
+    });
+
+    expect(uploaded).toMatchObject({
+      id: 'file-image-1',
+      status: 'SUCCESS',
+      auditResult: 'unknown',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects image uploads when DeepSeek reports explicit audit rejection', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({
+      data: {
+        biz_code: 0,
+        biz_data: {
+          id: 'file-image-1',
+          file_name: 'shot.png',
+          file_size: 3,
+          mime_type: 'image/png',
+          status: 'SUCCESS',
+          audit_result: 'REJECTED',
+        },
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(uploadDeepSeekFile({
+      file: new Blob(['abc'], { type: 'image/png' }),
+      filename: 'shot.png',
+      modelType: 'vision',
+      clientHeaders: { Authorization: 'Bearer token' },
+      powHeaders: { 'X-DS-PoW-Response': 'pow' },
+    })).rejects.toThrow('DeepSeek rejected shot.png: audit_result=REJECTED.');
+  });
+
   it('waits for uploaded images to finish processing before returning', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn<typeof fetch>(async (input) => {

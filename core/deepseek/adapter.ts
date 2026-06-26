@@ -33,6 +33,9 @@ const SUPPORTED_MODEL_TYPES = new Set(['DEFAULT', 'default', 'expert', 'vision']
 const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 const FILE_READY_POLL_INTERVAL_MS = 500;
 const FILE_READY_TIMEOUT_MS = 15_000;
+// DeepSeek can return audit_result=unknown together with status=SUCCESS for usable image uploads.
+const ACCEPTED_FILE_AUDIT_RESULTS = new Set(['PASS', 'PASSED', 'SUCCESS', 'OK', 'UNKNOWN']);
+const REJECTED_FILE_AUDIT_RESULTS = new Set(['REJECT', 'REJECTED', 'FAIL', 'FAILED', 'ERROR', 'BLOCK', 'BLOCKED', 'DENY', 'DENIED']);
 export const BYPASS_HOOK_HEADER = 'X-DPP-Bypass-Hook';
 
 let rememberedClientHeaders: Record<string, string> | null = null;
@@ -731,14 +734,12 @@ function normalizeUploadedFile(raw: unknown): DeepSeekUploadedFile | null {
 
 function isUploadedFileReady(file: DeepSeekUploadedFile): boolean {
   const status = file.status?.toUpperCase();
-  const auditResult = file.auditResult?.toUpperCase();
-  return status === 'SUCCESS' && (!auditResult || auditResult === 'PASS');
+  return status === 'SUCCESS' && isUploadedFileAuditAccepted(file);
 }
 
 function assertUploadedFileNotRejected(file: DeepSeekUploadedFile): void {
   const status = file.status?.toUpperCase();
-  const auditResult = file.auditResult?.toUpperCase();
-  if (auditResult && auditResult !== 'PASS') {
+  if (isUploadedFileAuditRejected(file)) {
     throw new DeepSeekPayloadError(`DeepSeek rejected ${file.fileName ?? file.id}: audit_result=${file.auditResult}.`);
   }
   if (status === 'FAILED' || status === 'FAIL' || status === 'ERROR') {
@@ -746,6 +747,21 @@ function assertUploadedFileNotRejected(file: DeepSeekUploadedFile): void {
       retryable: file.retryable ?? false,
     });
   }
+}
+
+function normalizeFileAuditResult(file: DeepSeekUploadedFile): string | null {
+  const auditResult = file.auditResult?.trim();
+  return auditResult ? auditResult.toUpperCase() : null;
+}
+
+function isUploadedFileAuditAccepted(file: DeepSeekUploadedFile): boolean {
+  const auditResult = normalizeFileAuditResult(file);
+  return !auditResult || ACCEPTED_FILE_AUDIT_RESULTS.has(auditResult);
+}
+
+function isUploadedFileAuditRejected(file: DeepSeekUploadedFile): boolean {
+  const auditResult = normalizeFileAuditResult(file);
+  return auditResult ? REJECTED_FILE_AUDIT_RESULTS.has(auditResult) : false;
 }
 
 async function solvePowChallenge(challenge: PowChallenge, wasmUrl?: string): Promise<PowAnswer> {
