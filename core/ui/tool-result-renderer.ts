@@ -521,7 +521,7 @@ function ensureResultStyles(): void {
   background: var(--dpp-ui-surface);
   box-shadow: var(--dpp-ui-panel-shadow);
   color: var(--dpp-ui-text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
 .dpp-artifact-preview-panel-header {
   display: flex;

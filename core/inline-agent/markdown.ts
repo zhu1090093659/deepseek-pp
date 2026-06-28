@@ -5,32 +5,123 @@ export function renderInlineMarkdown(text: string): string {
     const codeBlocks: string[] = [];
     let html = escapeHtml(text);
 
+    // Extract fenced code blocks first
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
       const token = `@@DPP_CODE_BLOCK_${codeBlocks.length}@@`;
       codeBlocks.push(`<pre><code>${code}</code></pre>`);
       return token;
     });
+
+    // Tables
     html = renderMarkdownTables(html);
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
-      const decodedHref = decodeBasicEntities(href.trim());
-      if (!isSafeHref(decodedHref)) return `${label} (${href})`;
-      return `<a href="${escapeAttribute(decodedHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-    });
-    html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
-    html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-    html = html.replace(/^\* (.+)$/gm, '<li>$1</li>');
-    html = html.replace(/\n/g, '<br>');
+
+    // Block-level processing: split into lines, build paragraphs and lists
+    const lines = html.split('\n');
+    const blocks: string[] = [];
+    let inList: string[] | null = null;
+
+    function flushList() {
+      if (inList && inList.length > 0) {
+        blocks.push(`<ul>${inList.map(l => `<li>${l}</li>`).join('')}</ul>`);
+      }
+      inList = null;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Code block token - emit as-is
+      if (/^@@DPP_CODE_BLOCK_\d+@@$/.test(trimmed)) {
+        flushList();
+        blocks.push(trimmed);
+        continue;
+      }
+
+      // Table row (starts with |)
+      if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+        flushList();
+        // Table rows are already rendered by renderMarkdownTables
+        blocks.push(trimmed);
+        continue;
+      }
+
+      // Themed horizontal rule
+      if (/^-{3,}$/.test(trimmed)) {
+        flushList();
+        blocks.push('<hr>');
+        continue;
+      }
+
+      // Headings
+      const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+      if (hMatch) {
+        flushList();
+        const level = hMatch[1].length;
+        const content = renderInlineFormatting(hMatch[2]);
+        blocks.push(`<h${level}>${content}</h${level}>`);
+        continue;
+      }
+
+      // List items
+      if (/^[-*]\s+/.test(trimmed)) {
+        const content = renderInlineFormatting(trimmed.replace(/^[-*]\s+/, ''));
+        inList = inList ?? [];
+        inList.push(content);
+        continue;
+      }
+
+      // Empty line -> paragraph break
+      if (trimmed === '') {
+        flushList();
+        continue;
+      }
+
+      // Regular paragraph line
+      flushList();
+      const content = renderInlineFormatting(line);
+      // Check if it's already wrapped (e.g. table)
+      if (content.startsWith('<') && content.endsWith('>') && !content.startsWith('<strong') && !content.startsWith('<em') && !content.startsWith('<code')) {
+        blocks.push(content);
+      } else {
+        blocks.push(`<p>${content}</p>`);
+      }
+    }
+
+    flushList();
+    html = blocks.join('\n');
+
+    // Restore code blocks
     html = html.replace(/@@DPP_CODE_BLOCK_(\d+)@@/g, (_match, index) => codeBlocks[Number(index)] ?? '');
 
     return html;
   } catch {
-    return escapeHtml(text).replace(/\n/g, '<br>');
+    // Fallback: basic safe rendering
+    return escapeHtml(text).split('\n').map(l => l.trim() ? `<p>${l}</p>` : '').join('\n');
   }
+}
+
+/** Apply inline formatting (bold, italic, code, links) to a single line of text. */
+function renderInlineFormatting(text: string): string {
+  let result = text;
+
+  // Inline code (must be done before bold/italic to avoid conflicts)
+  result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold
+  result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Italic
+  result = result.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+  // Links
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+    const decodedHref = decodeBasicEntities(href.trim());
+    if (!isSafeHref(decodedHref)) return `${label} (${href})`;
+    return `<a href="${escapeAttribute(decodedHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+
+  return result;
 }
 
 function renderMarkdownTables(html: string): string {

@@ -51,8 +51,8 @@ describe('inline-agent model prompts', () => {
   it('builds English continuation prompts while preserving control tags', () => {
     const prompt = buildContinuationPrompt('Find current docs', [SUCCESS_EXECUTION, FAILED_EXECUTION], 'en');
 
-    expect(prompt).toContain('Continue like a real agent');
-    expect(prompt).toContain('At least one tool failed');
+    expect(prompt).toContain('Continue the task using these results');
+    expect(prompt).toContain('Some tools failed');
     expect(prompt).toContain('<original_task>');
     expect(prompt).toContain('</original_task>');
     expect(prompt).toContain('<tool_results>');
@@ -63,7 +63,7 @@ describe('inline-agent model prompts', () => {
   it('keeps Chinese continuation prompts available', () => {
     const prompt = buildContinuationPrompt('查文档', [SUCCESS_EXECUTION], 'zh-CN');
 
-    expect(prompt).toContain('以下是工具续跑任务');
+    expect(prompt).toContain('以下是工具执行结果');
     expect(prompt).toContain('<tool_results>');
     expect(prompt).not.toContain('Continue like a real agent');
   });
@@ -71,7 +71,7 @@ describe('inline-agent model prompts', () => {
   it('localizes nudge prompts without changing task_complete', () => {
     const nudge = buildNudgePrompt('Ship it', 'I will continue.', [SUCCESS_EXECUTION], 1, 'en');
 
-    expect(nudge).toContain('did not include executable tool XML');
+    expect(nudge).toContain('no executable tool XML');
     expect(nudge).toContain('<task_complete>{"summary":"..."}</task_complete>');
     expect(nudge).toContain('<tool_results_so_far>');
   });
@@ -159,10 +159,10 @@ describe('automation model prompts', () => {
     const english = buildAutomationToolContinuationPrompt([SUCCESS_EXECUTION], 'en');
     const chinese = buildAutomationToolContinuationPrompt([SUCCESS_EXECUTION], 'zh-CN');
 
-    expect(english).toContain('MCP tool results just executed for the automation');
+    expect(english).toContain('Tool results follow');
     expect(english).toContain('<tool_results>');
     expect(english).toContain('</tool_results>');
-    expect(chinese).toContain('以下是自动化任务刚刚执行的 MCP 工具结果');
+    expect(chinese).toContain('以下是工具结果');
     expect(chinese).toContain('<tool_results>');
   });
 });

@@ -107,8 +107,8 @@ export interface InlineAgentLoopErrorMsg {
   error: string;
 }
 
-export const INLINE_AGENT_MAX_STEPS = 25;
-export const INLINE_AGENT_MAX_NUDGES = 8;
-export const INLINE_AGENT_STEP_TIMEOUT_MS = 120_000;
-export const INLINE_AGENT_REQUEST_DELAY_MIN_MS = 2_500;
-export const INLINE_AGENT_REQUEST_DELAY_MAX_MS = 6_500;
+export const INLINE_AGENT_MAX_STEPS = 12;
+export const INLINE_AGENT_MAX_NUDGES = 3;
+export const INLINE_AGENT_STEP_TIMEOUT_MS = 90_000;
+export const INLINE_AGENT_REQUEST_DELAY_MIN_MS = 1_000;
+export const INLINE_AGENT_REQUEST_DELAY_MAX_MS = 3_000;

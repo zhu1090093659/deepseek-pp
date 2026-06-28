@@ -6,7 +6,6 @@ import {
   createDefaultToolDescriptors,
   createToolInvocationCatalog,
   getPreferredToolInvocationName,
-  getToolInvocationNames,
   type ToolInvocationCatalog,
 } from '../tool';
 import { estimateTokens, formatMemoriesBlock, getMemoryBudget, selectMemories } from '../memory/selector';
@@ -153,18 +152,12 @@ function renderPythonMcpHint(
 function renderToolSchema(descriptor: ToolDescriptor, catalog: ToolInvocationCatalog): string {
   const examplePayload = createExamplePayload(descriptor);
   const preferredName = getPreferredToolInvocationName(descriptor, catalog);
-  const acceptedNames = getToolInvocationNames(descriptor, catalog);
   const lines = [
-    `### Tool ${preferredName}`,
-    `Title: ${descriptor.title}`,
-    `Description: ${descriptor.description}`,
-    acceptedNames.length > 1 ? `Accepted tag names: ${acceptedNames.join(', ')}` : '',
-    `Valid call format for ${preferredName}:`,
+    `### ${preferredName}`,
+    `${descriptor.title}: ${descriptor.description}`,
     `<${preferredName}>`,
     JSON.stringify(examplePayload, null, 2),
     `</${preferredName}>`,
-    `Invalid formats: <invoke name="${preferredName}">...</invoke>, <tool_call>...</tool_call>`,
-    `Parameters JSON Schema: ${JSON.stringify(descriptor.inputSchema)}`,
   ];
   return lines.filter(Boolean).join('\n');
 }

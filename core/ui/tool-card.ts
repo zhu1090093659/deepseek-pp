@@ -171,7 +171,6 @@ const TOOL_CARD_CSS = `
   background: var(--dpp-ui-surface);
   border: 1px solid var(--dpp-ui-border);
   border-radius: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
   font-size: 13px;
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;

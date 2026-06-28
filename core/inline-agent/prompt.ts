@@ -2,8 +2,8 @@ import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import type { ToolExecutionRecord } from '../types';
 
 const PENDING_ACTION_RE = /(?:我(?:将|会|先|直接|现在|继续|尝试|开始|需要|还需要|仍需).{0,48}(?:调用|创建|编辑|检查|验证|生成|保存|尝试|搜索|获取|打开|执行|查看|访问|读取|抓取)|(?:接下来|下一步|然后).{0,48}(?:调用|创建|编辑|检查|验证|生成|保存|尝试|搜索|获取|打开|执行|查看|访问|读取|抓取)|(?:i(?:'ll| will| (?:still\s+)?need to)|let me|next,? i).{0,64}(?:call|create|edit|inspect|validate|generate|save|try|search|fetch|open|run|browse|read))/gi;
-const NUDGE_DECISION_TAIL_MAX_CHARS = 600;
-const PENDING_ACTION_AFTER_MAX_CHARS = 80;
+const NUDGE_DECISION_TAIL_MAX_CHARS = 400;
+const PENDING_ACTION_AFTER_MAX_CHARS = 60;
 const TASK_COMPLETE_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/;
 const TASK_COMPLETE_BLOCK_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/g;
 
@@ -52,10 +52,11 @@ export function isInlineAgentContinuationRequest(originalPrompt: string, agentTa
 export function isInlineAgentContinuationPrompt(content: string): boolean {
   if (!hasInlineAgentContinuationTags(content)) return false;
 
-  return content.includes('工具续跑任务') ||
-    content.includes('工具结果') ||
-    content.includes('Continue like a real agent') ||
+  return content.includes('工具执行结果') ||
+    content.includes('Tool results follow') ||
     content.includes('tool results') ||
+    content.includes('no executable tool XML') ||
+    content.includes('可执行工具 XML') ||
     content.includes('do not call any tools') ||
     content.includes('不要调用任何工具');
 }

@@ -21,7 +21,7 @@ describe('inline agent renderer', () => {
     const body = step.querySelector<HTMLElement>('.dpp-agent-step-body');
 
     expect(body?.getAttribute('data-dpp-raw-text')).toContain('| Metric | Value |');
-    expect(body?.innerHTML).toContain('<h4>Market summary</h4>');
+    expect(body?.innerHTML).toContain('<h3>Market summary</h3>');
     expect(body?.innerHTML).toContain('<table>');
     expect(body?.innerHTML).toContain('<td><strong>Average price</strong></td>');
   });

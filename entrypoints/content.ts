@@ -3140,6 +3140,7 @@ function appendInlineAgentFinalAnswer(container: HTMLElement, text: string, loop
 
   const textDiv = document.createElement('div');
   textDiv.innerHTML = renderInlineMarkdown(renderText);
+  textDiv.className = 'ds-markdown';
   textDiv.setAttribute('data-dpp-body-text', 'true');
   textDiv.setAttribute('data-dpp-agent-loop-id', loopId);
   parent.appendChild(textDiv);

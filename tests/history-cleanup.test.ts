@@ -25,7 +25,7 @@ describe('history cleanup', () => {
               message_id: 3,
               message_role: 'user',
               content: [
-                '以下是工具续跑任务刚刚执行的工具结果。请像真正的 Agent 一样继续推进。',
+                '以下是工具执行结果，请基于原始任务继续推进。',
                 '',
                 '<original_task>',
                 '看一下深圳的房价',
@@ -122,7 +122,7 @@ describe('history cleanup', () => {
               message_role: 'user',
               parent_message_id: 22,
               content: [
-                '以下是工具续跑任务刚刚执行的工具结果。请像真正的 Agent 一样继续推进。',
+                '以下是工具执行结果，请基于原始任务继续推进。',
                 '',
                 '<original_task>',
                 '查一下港股行情',
@@ -168,7 +168,7 @@ describe('history cleanup', () => {
               message_id: 39,
               message_role: 'user',
               content: [
-                '以下是工具续跑任务刚刚执行的工具结果。请像真正的 Agent 一样继续推进。',
+                '以下是工具执行结果，请基于原始任务继续推进。',
                 '',
                 '<original_task>',
                 '整理回答',

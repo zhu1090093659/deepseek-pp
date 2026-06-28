@@ -84,9 +84,6 @@ export function injectInlineAgentStyles(): void {
     }
     .dpp-agent-step-body {
       padding: 8px 10px;
-      font-size: 13px;
-      line-height: 1.5;
-      color: var(--dpp-ui-text);
       word-break: break-word;
       max-height: 300px;
       overflow-y: auto;
@@ -94,38 +91,6 @@ export function injectInlineAgentStyles(): void {
     }
     .dpp-agent-step-body:empty {
       display: none;
-    }
-    .dpp-agent-step-body * { color: inherit; }
-    .dpp-agent-step-body h2,
-    .dpp-agent-step-body h3,
-    .dpp-agent-step-body h4 {
-      margin: 8px 0 5px;
-      font-weight: 600;
-      line-height: 1.35;
-    }
-    .dpp-agent-step-body h2 { font-size: 1.1em; }
-    .dpp-agent-step-body h3,
-    .dpp-agent-step-body h4 { font-size: 1.02em; }
-    .dpp-agent-step-body p { margin: 4px 0; }
-    .dpp-agent-step-body ul,
-    .dpp-agent-step-body ol {
-      margin: 4px 0 4px 18px;
-    }
-    .dpp-agent-step-body li {
-      margin: 2px 0;
-    }
-    .dpp-agent-step-body strong {
-      font-weight: 600;
-    }
-    .dpp-agent-step-body em {
-      font-style: italic;
-    }
-    .dpp-agent-step-body code {
-      padding: 1px 4px;
-      border-radius: 4px;
-      background: var(--dpp-ui-code-bg);
-      font-family: 'SF Mono', Monaco, Menlo, Consolas, monospace;
-      font-size: 0.92em;
     }
     .dpp-agent-step-body pre {
       margin: 6px 0;
@@ -138,23 +103,6 @@ export function injectInlineAgentStyles(): void {
       padding: 0;
       background: transparent;
       white-space: pre;
-    }
-    .dpp-agent-step-body table {
-      width: 100%;
-      margin: 8px 0;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    .dpp-agent-step-body th,
-    .dpp-agent-step-body td {
-      padding: 5px 6px;
-      border-bottom: 1px solid var(--dpp-ui-border);
-      text-align: left;
-      vertical-align: top;
-    }
-    .dpp-agent-step-body th {
-      font-weight: 600;
-      color: var(--dpp-ui-text-muted);
     }
     .dpp-agent-step[data-collapsed="true"] .dpp-agent-step-body {
       max-height: 0;
@@ -203,33 +151,11 @@ export function injectInlineAgentStyles(): void {
     body.dpp-theme-dark .dpp-agent-stop-btn:hover {
       background: var(--dpp-ui-danger-panel);
     }
-    [data-dpp-body-text] {
-      font-size: inherit;
-      line-height: 1.7;
+    /* Agent final answer uses .ds-markdown from DeepSeek's own CSS for
+       fonts, headings, margins, lists, code, etc. We only set spacing. */
+    [data-dpp-body-text].ds-markdown {
       margin-top: 12px;
-      color: var(--dpp-ui-text);
-      word-break: break-word;
     }
-    [data-dpp-body-text] * { color: inherit; }
-    [data-dpp-body-text] h3 { font-size: 1.1em; font-weight: 600; margin: 10px 0 4px; }
-    [data-dpp-body-text] p { margin: 3px 0; }
-    [data-dpp-body-text] ul, [data-dpp-body-text] ol { margin: 3px 0 3px 16px; }
-    [data-dpp-body-text] strong { font-weight: 600; }
-    [data-dpp-body-text] a { color: var(--dpp-ui-accent); text-decoration: underline; }
-    [data-dpp-body-text] table {
-      width: 100%;
-      margin: 10px 0;
-      border-collapse: collapse;
-      font-size: 0.95em;
-    }
-    [data-dpp-body-text] th,
-    [data-dpp-body-text] td {
-      padding: 7px 8px;
-      border-bottom: 1px solid var(--dpp-ui-border);
-      text-align: left;
-      vertical-align: top;
-    }
-    [data-dpp-body-text] th { font-weight: 600; }
   `;
   document.head.appendChild(style);
 }
@@ -281,7 +207,7 @@ export function createAgentStepElement(
   }
 
   const body = document.createElement('div');
-  body.className = 'dpp-agent-step-body';
+  body.className = 'dpp-agent-step-body ds-markdown';
 
   const tools = document.createElement('div');
   tools.className = 'dpp-agent-step-tools';
