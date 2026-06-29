@@ -116,7 +116,8 @@ const TOOL_BLOCK_ID = 'dpp-tool-block';
 const TOOL_BLOCK_STYLE_ID = 'dpp-tool-block-css';
 const ASSISTANT_RESPONSE_CONTENT_SELECTOR = '._74c0879, .ds-assistant-message-main-content';
 const REASONING_HOST_META_RE = /\b(?:reason|reasoning|think|thinking|thought)\b/i;
-const REASONING_HOST_TEXT_RE = /^(?:已思考|思考中|正在思考|thinking|reasoning|thought)(?:[（(:：]|$)/i;
+const REASONING_HOST_TEXT_RE = /^(?:已(?:深度)?思考|深度思考|思考过程|思考中|正在思考|thinking|reasoning|thought)(?:[\s（(:：]|$)/i;
+const REASONING_HOST_ANCESTOR_SCAN_DEPTH = 4;
 const TOKEN_SPEED_BADGE_ID = 'dpp-token-speed-badge';
 const TOKEN_SPEED_STYLE_ID = 'dpp-token-speed-css';
 const MULTIMODAL_MEDIA_BUTTON_ID = 'dpp-multimodal-media-button';
@@ -5245,17 +5246,12 @@ function getAssistantContentHosts(message: Element): HTMLElement[] {
 }
 
 function looksLikeReasoningContentHost(host: HTMLElement): boolean {
-  const metadata = [
-    host.className,
-    host.parentElement?.className ?? '',
-    host.getAttribute('aria-label') ?? '',
-    host.getAttribute('data-testid') ?? '',
-    host.getAttribute('data-role') ?? '',
-  ].join(' ');
-  if (REASONING_HOST_META_RE.test(metadata)) return true;
+  if (hasReasoningMetadata(host)) return true;
 
   const firstText = getFirstMeaningfulChildText(host);
-  return REASONING_HOST_TEXT_RE.test(firstText);
+  if (looksLikeReasoningLabelText(firstText)) return true;
+
+  return hasReasoningAncestorLabel(host);
 }
 
 function getFirstMeaningfulChildText(host: Element): string {
@@ -5265,6 +5261,40 @@ function getFirstMeaningfulChildText(host: Element): string {
   }
 
   return normalizeText(host.textContent ?? '').slice(0, 80);
+}
+
+function hasReasoningAncestorLabel(host: HTMLElement): boolean {
+  const boundary = host.closest('.ds-message');
+  let ancestor = host.parentElement;
+  let depth = 0;
+  while (ancestor && ancestor !== boundary && depth < REASONING_HOST_ANCESTOR_SCAN_DEPTH) {
+    if (hasReasoningMetadata(ancestor)) return true;
+    if (looksLikeReasoningLabelText(getFirstMeaningfulChildText(ancestor)) && countContentHosts(ancestor) === 1) {
+      return true;
+    }
+    ancestor = ancestor.parentElement;
+    depth += 1;
+  }
+
+  return false;
+}
+
+function hasReasoningMetadata(host: Element): boolean {
+  const metadata = [
+    host.className,
+    host.getAttribute('aria-label') ?? '',
+    host.getAttribute('data-testid') ?? '',
+    host.getAttribute('data-role') ?? '',
+  ].join(' ');
+  return REASONING_HOST_META_RE.test(metadata);
+}
+
+function looksLikeReasoningLabelText(text: string): boolean {
+  return REASONING_HOST_TEXT_RE.test(text);
+}
+
+function countContentHosts(root: Element): number {
+  return root.querySelectorAll(ASSISTANT_RESPONSE_CONTENT_SELECTOR).length;
 }
 
 function getLastElement<T>(items: T[]): T | undefined {

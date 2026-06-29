@@ -51,6 +51,10 @@ describe('content tool block styles', () => {
     const source = readFileSync(path, 'utf8');
 
     expect(source).toContain("const ASSISTANT_RESPONSE_CONTENT_SELECTOR = '._74c0879, .ds-assistant-message-main-content';");
+    expect(source).toContain('已(?:深度)?思考');
+    expect(source).toContain('思考过程');
+    expect(source).toContain('REASONING_HOST_ANCESTOR_SCAN_DEPTH');
+    expect(source).toContain('countContentHosts(ancestor) === 1');
     expect(source).toContain('function mountInlineAgentContainer(message: Element, container: HTMLElement): void');
     expect(source).toContain('inlineAgentContainerObserver.observe(message, { childList: true, subtree: true });');
     expect(source).not.toContain('inlineAgentContainerObserver.observe(responseHost, { childList: true });');
