@@ -19,6 +19,67 @@ export async function executeToolCallsSequentially(
   return results;
 }
 
+/**
+ * Execute independent tool calls in parallel.
+ * Only safe for READONLY tools with no side effects.
+ * Write tools must still be executed sequentially.
+ */
+export async function executeToolCallsParallel(
+  calls: readonly ToolCall[],
+  executeTool: ToolLoopExecuteTool,
+  options?: ExecuteToolCallsOptions,
+): Promise<ToolExecutionRecord[]> {
+  if (calls.length === 0) return [];
+  if (calls.length === 1) {
+    if (options?.signal?.aborted) return [];
+    return [await executeTool(calls[0])];
+  }
+
+  const promises = calls.map(async (call) => {
+    if (options?.signal?.aborted) return null;
+    return executeTool(call);
+  });
+
+  const results = await Promise.all(promises);
+  return results.filter((r): r is ToolExecutionRecord => r !== null);
+}
+
+/**
+ * Classify tool names for parallel vs sequential execution planning.
+ * Returns true if the tool is semantically readonly (safe to parallelize).
+ */
+const READONLY_TOOL_NAMES = new Set([
+  'file_read', 'file_list', 'file_search',
+  'code_search', 'code_symbol', 'code_structure', 'code_glob', 'code_batch_read',
+  'git_status', 'git_diff', 'git_log', 'git_branch',
+  'shell_status', 'python_status', 'local_skill_preview',
+  'web_search', 'web_fetch',
+  'browser_snapshot', 'browser_list_tabs',
+]);
+
+export function isReadonlyTool(toolName: string): boolean {
+  return READONLY_TOOL_NAMES.has(toolName);
+}
+
+/**
+ * Partition tool calls into readonly (parallel-safe) and write (sequential) groups.
+ * Each group maintains call order within its category.
+ */
+export function partitionToolCalls(
+  calls: readonly ToolCall[],
+): { readonlyCalls: ToolCall[]; writeCalls: ToolCall[] } {
+  const readonlyCalls: ToolCall[] = [];
+  const writeCalls: ToolCall[] = [];
+  for (const call of calls) {
+    if (isReadonlyTool(call.name)) {
+      readonlyCalls.push(call);
+    } else {
+      writeCalls.push(call);
+    }
+  }
+  return { readonlyCalls, writeCalls };
+}
+
 export interface ToolContinuationLoopInput<TTurn> {
   initialTurn: TTurn;
   maxDepth: number;

@@ -25,12 +25,12 @@ export function createShellMcpPresetInput(
       discoveryMs: 10_000,
     },
     limits: {
-      maxResultBytes: 128_000,
-      maxToolCount: 8,
+      maxResultBytes: 256_000,
+      maxToolCount: 20,
     },
     allowlist: {
       mode: 'allow',
-      toolNames: ['shell_status', 'python_status', 'local_skill_preview', 'local_folder_pick'],
+      toolNames: ['shell_status', 'python_status', 'local_skill_preview', 'local_folder_pick', 'file_read', 'file_list', 'file_search', 'git_status', 'git_diff', 'git_log', 'git_branch'],
     },
     execution: {
       enabled: options.executionEnabled ?? false,

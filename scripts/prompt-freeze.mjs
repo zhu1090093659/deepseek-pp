@@ -7,21 +7,25 @@ import { fileURLToPath } from 'node:url';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const EXPECTED_HASHES = {
-  systemTemplateChat: '5bca8e90d23381c9605cbfebf7ecb91f28f4010ddbc2a6ccc291fa046fcd6eec',
-  systemTemplateThinking: 'fa31e863e5f54f7a4e48cffdbae0e543028de4a565f77504e66edd707c73b5f3',
+  systemTemplateChat: '09de5bae008daf2ced47db22afe2e3f763286bb98eda5d771c2657aadd467a7a',
+  systemTemplateThinking: 'bf9eae66a53517c0882eec871d5e1e6cfb304e01d7ab4ec3f45d4e615162b746',
   memoryToolSchemas: 'a64e0a8874552177eba10089d5acfdc2996d0b703f83b1a57e9d76c733da9a7b',
-  promptAugmentationBuild: '2f7ee320df74f397beae7537c16083de0322abecf800e1d56275c2639887ffca',
-  promptToolSchemaRenderer: '86df1accccfa1f43a95483625970d54f399d57b0b7c1ea1294b5662e09202d3f',
-  promptLocaleResourcesEn: 'bcbdf3a412056174efe876284cadc87b9eab7bbd58960eeec3028394b793c0e5',
-  promptLocaleResourcesZhCN: '8bbbf8a458578a56b4f42b787e9770fea2708c7e635d2c6fba7e049096ccf1b3',
-  inlineAgentContinuationPrompt: 'c7c6d857cd4c14015329bccd7ce2e551b0f3490593e89c163db713e842cbfc22',
-  inlineAgentNudgePrompt: '4717a41143efacf66a2554c8d7d72c08f7192c0b0b93105a869f0638bd7ba4ea',
-  inlineAgentPromptHelpers: '709593b0c176e0055018670d017d473bb75fd80696303340b9f902834aa705bf',
+  promptAugmentationBuild: '4c3ff57dc5380076fdf9977fef1fb693ee76096c7ea2c228def98cb0d6365972',
+  promptToolSchemaRenderer: '931fe785044dd97514d89c8aaa9596e8ec3b81c5f9b7ff61f11af1599bc53fd6',
+  promptStablePrefix: '6060d3daee1df23d5c38bdbb36dfa331aa89f5c68db0260fd6372b0611797986',
+  promptScenarioConfig: '7f0d0ec4d39f2ff3b257047d4f9edf8e304b462a34c6cf9823fc0c4c9dfbc818',
+  promptLocaleResourcesEn: '232c1eb57854f413b589e7c785e9c927f56f35711ee3e0ccf6eb42770d4f310d',
+  promptLocaleResourcesZhCN: 'e5c223dc2a1d06b51d08e5a78b00dea21161aec1314ea1347f6e4e068b87c794',
+  inlineAgentContinuationPrompt: '614e0f3526250a84724edfb6f878da1266105ba94bcdac93a185b55080c61972',
+  inlineAgentNudgePrompt: 'acdf7ae230399f186eb6072e82d28544c25443ac794675a07d67a8df1154bc28',
+  inlineAgentPromptHelpers: 'dd31ff0128c341f42703affaf8add96fb8425b839a1ae8342b393e7827d5538a',
 };
 
 const sources = {
   constants: readSource('core/constants.ts'),
   augmentation: readSource('core/prompt/augmentation.ts'),
+  stablePrefix: readSource('core/prompt/cache-boundary.ts'),
+  scenario: readSource('core/prompt/scenario.ts'),
   inlinePrompt: readSource('core/inline-agent/prompt.ts'),
   enResource: readSource('core/i18n/resources/en.ts'),
   zhCNResource: readSource('core/i18n/resources/zh-CN.ts'),
@@ -46,13 +50,16 @@ const cases = {
   promptAugmentationBuild: extractFunction('buildPromptAugmentation', sources.augmentation),
   promptToolSchemaRenderer: [
     extractFunction('renderToolSchemas', sources.augmentation),
-    extractFunction('renderWebSearchGuidance', sources.augmentation),
+    extractFunction('renderFullToolSchemas', sources.augmentation),
     extractFunction('renderToolSchema', sources.augmentation),
-    extractFunction('renderShellMcpHint', sources.augmentation),
-    extractFunction('renderPythonMcpHint', sources.augmentation),
-    extractFunction('renderToolFormatReminder', sources.augmentation),
     extractFunction('createExamplePayload', sources.augmentation),
     extractFunction('exampleValue', sources.augmentation),
+  ].join('\n\n'),
+  promptStablePrefix: extractFunction('buildStablePrefix', sources.stablePrefix),
+  promptScenarioConfig: [
+    extractConstArray('TOOL_GROUPS', sources.scenario),
+    extractConstObject('SCENARIO_GUIDANCE', sources.scenario),
+    extractConstObject('TOOL_PRIORITY_RULES', sources.scenario),
   ].join('\n\n'),
   promptLocaleResourcesEn: extractRegex(
     'prompt locale resources en',
@@ -106,21 +113,68 @@ function extractRegex(name, text, regex) {
 }
 
 function extractFunction(name, text) {
-  const start = text.indexOf(`function ${name}`);
-  if (start < 0) throw new Error(`Prompt freeze function not found: ${name}`);
+  let start = text.indexOf(`export function ${name}`);
+  if (start < 0) start = text.indexOf(`function ${name}`);
+  if (start < 0) start = text.indexOf(`export const ${name} = (`);
+  if (start < 0) start = text.indexOf(`const ${name} = (`);
+  if (start < 0) throw new Error(`Function not found: ${name}`);
 
-  const openingBrace = text.indexOf('{', start);
-  if (openingBrace < 0) throw new Error(`Prompt freeze function has no body: ${name}`);
+  const bodyStart = text.indexOf('{', start);
+  if (bodyStart < 0) throw new Error(`Function has no body: ${name}`);
 
   let depth = 0;
-  for (let i = openingBrace; i < text.length; i++) {
-    const char = text[i];
-    if (char === '{') depth++;
-    if (char === '}') {
+  for (let i = bodyStart; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    if (text[i] === '}') {
       depth--;
       if (depth === 0) return text.slice(start, i + 1);
     }
   }
+  throw new Error(`Function is not closed: ${name}`);
+}
 
-  throw new Error(`Prompt freeze function is not closed: ${name}`);
+function extractConstArray(name, text) {
+  const start = text.indexOf(`export const ${name}`);
+  if (start < 0) throw new Error(`Array not found: ${name}`);
+
+  const valueStart = text.indexOf('[', start);
+  if (valueStart < 0) throw new Error(`Array has no opening bracket: ${name}`);
+
+  let depth = 0;
+  for (let i = valueStart; i < text.length; i++) {
+    if (text[i] === '[') depth++;
+    if (text[i] === ']') {
+      depth--;
+      if (depth === 0) {
+        const remainder = text.slice(i + 1, i + 20);
+        const asConst = remainder.match(/^\s*as\s+const\s*;/);
+        if (asConst) return text.slice(start, i + 1 + asConst[0].length);
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  throw new Error(`Array is not closed: ${name}`);
+}
+
+function extractConstObject(name, text) {
+  const start = text.indexOf(`export const ${name}`);
+  if (start < 0) throw new Error(`Object not found: ${name}`);
+
+  const valueStart = text.indexOf('{', start);
+  if (valueStart < 0) throw new Error(`Object has no opening brace: ${name}`);
+
+  let depth = 0;
+  for (let i = valueStart; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    if (text[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        const remainder = text.slice(i + 1, i + 20);
+        const asConst = remainder.match(/^\s*as\s+const\s*;/);
+        if (asConst) return text.slice(start, i + 1 + asConst[0].length);
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  throw new Error(`Object is not closed: ${name}`);
 }

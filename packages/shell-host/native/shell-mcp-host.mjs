@@ -13,7 +13,7 @@ import {
   type as osType,
   version as osVersion,
 } from 'node:os';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 
 // Resolve package root from this script's location (native/ -> package root).
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -82,7 +82,35 @@ const WINDOWS_POWERSHELL_UTF8_PREAMBLE = [
 const HOST_FEATURES = {
   windowsFolderPickerEncodedCommand: true,
   localSkillNestedResourceBoundary: true,
+  fileSystemTools: true,
 };
+
+// Constants for file system tools
+const MAX_FILE_READ_BYTES = 256_000;
+const MAX_FILE_LIST_RESULTS = 10_000;
+const MAX_FILE_SEARCH_RESULTS = 500;
+const MAX_FILE_SEARCH_BYTES = 50_000_000; // 50MB max total file size to search
+const FILE_SEARCH_TIMEOUT_MS = 30_000;
+const TEXT_FILE_EXTENSIONS = new Set([
+  '.txt', '.md', '.json', '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift', '.c', '.cpp', '.h', '.hpp',
+  '.css', '.scss', '.less', '.html', '.xml', '.yaml', '.yml', '.toml',
+  '.sh', '.bash', '.zsh', '.ps1', '.sql', '.r', '.lua', '.php', '.pl',
+  '.cfg', '.conf', '.ini', '.env.example', '.gitignore', '.dockerfile',
+  '.svelte', '.vue', '.astro',
+]);
+const BINARY_FILE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg',
+  '.woff', '.woff2', '.ttf', '.eot',
+  '.zip', '.gz', '.tar', '.bz2', '.7z', '.rar',
+  '.exe', '.dll', '.so', '.dylib', '.wasm',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.mp3', '.mp4', '.avi', '.mov', '.webm',
+  '.o', '.a', '.lib', '.obj',
+  '.map', '.pyc', '.pyo', '.pyd',
+  '.DS_Store', '.gitkeep',
+]);
+const GITIGNORE_PATTERNS = ['.git/', 'node_modules/', '.svn/', '.hg/'];
 
 // --- Persistent shell session ---
 //
@@ -224,6 +252,200 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
     annotations: { operation: 'write', risk: 'medium' },
+  },
+  {
+    name: 'file_read',
+    title: 'Read File',
+    description: 'Read a file from the local filesystem. Supports optional offset and limit to read specific line ranges. Automatically detects binary files and reports them without reading content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the file to read.' },
+        offset: { type: 'integer', minimum: 0, description: 'Starting line number (0-based). Default 0.' },
+        limit: { type: 'integer', minimum: 1, maximum: 10000, description: 'Maximum number of lines to return. Default returns full file.' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'file_write',
+    title: 'Write File',
+    description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Automatically creates parent directories. Before overwriting, saves a backup to {project}/.deepseek-pp/backups/.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path where to write the file.' },
+        content: { type: 'string', description: 'File content to write.' },
+      },
+      required: ['path', 'content'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'write', risk: 'high' },
+  },
+  {
+    name: 'file_edit',
+    title: 'Edit File',
+    description: 'Apply search-and-replace edits to a file. Each hunk specifies oldText to find and newText to replace it with. All hunks must match exactly once in the file. Designed for surgical edits, not wholesale rewrites.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the file to edit.' },
+        hunks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              oldText: { type: 'string', description: 'The exact text to find. Must match exactly once in the file.' },
+              newText: { type: 'string', description: 'The replacement text.' },
+            },
+            required: ['oldText', 'newText'],
+            additionalProperties: false,
+          },
+          minItems: 1,
+          maxItems: 20,
+          description: 'Array of edits to apply. Applied sequentially; each sees the result of the previous edit.',
+        },
+        dryRun: { type: 'boolean', description: 'When true, only validates the edits without applying them. Reports match counts.' },
+      },
+      required: ['path', 'hunks'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'write', risk: 'high' },
+  },
+  {
+    name: 'file_list',
+    title: 'List Directory',
+    description: 'List files and directories recursively. Supports glob filtering. By default skips .git, node_modules, and binary directories.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the directory to list.' },
+        pattern: { type: 'string', description: 'Optional glob pattern to filter results (e.g. "**/*.ts", "src/**").' },
+        depth: { type: 'integer', minimum: 1, maximum: 20, description: 'Maximum recursion depth. Default 5.' },
+        includeHidden: { type: 'boolean', description: 'Include hidden files/directories (starting with .). Default false.' },
+        includeBinary: { type: 'boolean', description: 'Include binary file entries. Default false.' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'file_search',
+    title: 'Search Files',
+    description: 'Full-text regex search across files. Uses ripgrep if available, otherwise falls back to Node.js recursive search. Skips .git, node_modules, and binary files automatically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Search pattern (regular expression).' },
+        path: { type: 'string', description: 'Absolute path to the directory to search. Defaults to cwd.' },
+        glob: { type: 'string', description: 'Optional glob filter (e.g. "*.ts", "src/**/*.py").' },
+        maxResults: { type: 'integer', minimum: 1, maximum: 1000, description: 'Maximum results. Default 50.' },
+        contextLines: { type: 'integer', minimum: 0, maximum: 10, description: 'Lines of context before/after each match. Default 2.' },
+        fixedString: { type: 'boolean', description: 'When true, treat pattern as a literal string, not regex. Default false.' },
+      },
+      required: ['pattern'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'git_status',
+    title: 'Git Status',
+    description: 'Show working tree status with structured output: staged, modified, untracked, and conflicted files.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path. Defaults to cwd or nearest parent with .git.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'git_diff',
+    title: 'Git Diff',
+    description: 'Show unstaged and/or staged diff output. If no path is specified, shows the full diff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path.' },
+        staged: { type: 'boolean', description: 'Show staged (cached) diff instead of unstaged. Default false.' },
+        target: { type: 'string', description: 'Optional file path within the repo to show diff for.' },
+        unified: { type: 'integer', minimum: 1, maximum: 20, description: 'Number of context lines. Default 5.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'git_log',
+    title: 'Git Log',
+    description: 'Show commit history with graph. Returns structured commit data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path.' },
+        maxCount: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum commits. Default 20.' },
+        branch: { type: 'string', description: 'Branch to show log for. Defaults to current HEAD.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'low' },
+  },
+  {
+    name: 'git_commit',
+    title: 'Git Commit',
+    description: 'Stage all changes and create a commit. Uses `git add -A` then `git commit`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path.' },
+        message: { type: 'string', description: 'Commit message.' },
+        files: {
+          type: 'array', items: { type: 'string' },
+          description: 'Optional specific files to commit. When omitted, stages all changes.',
+        },
+      },
+      required: ['message'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'write', risk: 'high' },
+  },
+  {
+    name: 'git_branch',
+    title: 'Git Branch',
+    description: 'List, create, or switch branches.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path.' },
+        name: { type: 'string', description: 'Branch name. When provided with list=false, creates a new branch.' },
+        list: { type: 'boolean', description: 'List all branches. Default true when name is not provided.' },
+        switch: { type: 'boolean', description: 'Switch to the named branch after creating it. Default false.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { operation: 'write', risk: 'medium' },
+  },
+  {
+    name: 'git_push',
+    title: 'Git Push',
+    description: 'Push commits to remote repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repository path.' },
+        remote: { type: 'string', description: 'Remote name. Default "origin".' },
+        branch: { type: 'string', description: 'Branch to push. Defaults to current branch.' },
+        setUpstream: { type: 'boolean', description: 'Set upstream (-u) on first push. Default false.' },
+        force: { type: 'boolean', description: 'Force push (--force). Use with extreme caution. Default false.' },
+      },
+      additionalProperties: false,
+    },
+    annotations: { operation: 'write', risk: 'high' },
   },
 ];
 
@@ -414,6 +636,50 @@ async function handleCallTool(id, params) {
 
   if (name === 'shell_session_end') {
     return jsonRpcResult(id, await endShellSession(args));
+  }
+
+  if (name === 'file_read') {
+    return jsonRpcResult(id, handleFileRead(args));
+  }
+
+  if (name === 'file_write') {
+    return jsonRpcResult(id, handleFileWrite(args));
+  }
+
+  if (name === 'file_edit') {
+    return jsonRpcResult(id, handleFileEdit(args));
+  }
+
+  if (name === 'file_list') {
+    return jsonRpcResult(id, handleFileList(args));
+  }
+
+  if (name === 'file_search') {
+    return jsonRpcResult(id, await handleFileSearch(args));
+  }
+
+  if (name === 'git_status') {
+    return jsonRpcResult(id, await handleGitStatus(args));
+  }
+
+  if (name === 'git_diff') {
+    return jsonRpcResult(id, await handleGitDiff(args));
+  }
+
+  if (name === 'git_log') {
+    return jsonRpcResult(id, await handleGitLog(args));
+  }
+
+  if (name === 'git_commit') {
+    return jsonRpcResult(id, await handleGitCommit(args));
+  }
+
+  if (name === 'git_branch') {
+    return jsonRpcResult(id, await handleGitBranch(args));
+  }
+
+  if (name === 'git_push') {
+    return jsonRpcResult(id, await handleGitPush(args));
   }
 
   return jsonRpcError(id, -32602, `Unknown tool: ${name}`);
@@ -1796,6 +2062,1006 @@ function formatPythonExecSummary(result) {
   if (result.stdout) parts.push(result.stdout.slice(0, 4000));
   if (result.stderr) parts.push(`STDERR: ${result.stderr.slice(0, 2000)}`);
   return parts.join('\n') || '(no output)';
+}
+
+// --- File system tool handlers ---
+
+/**
+ * Resolve a path input, validating it doesn't escape safe root.
+ * When no root is specified, only resolves and validates existence.
+ */
+function resolveFilePath(input) {
+  if (typeof input !== 'string' || input.trim().length === 0) {
+    throw new Error('Path is required and must be a non-empty string.');
+  }
+  return resolve(input.trim());
+}
+
+function checkPathReadable(filePath) {
+  const s = safeStat(filePath);
+  if (!s) throw new Error(`Path does not exist: ${filePath}`);
+  return s;
+}
+
+function detectBinaryByExtension(filePath) {
+  const ext = pathExtension(filePath);
+  if (!ext) return false;
+  return BINARY_FILE_EXTENSIONS.has(ext);
+}
+
+function isTextLikely(content) {
+  // Check if content is likely text: first 8KB should be valid UTF-8
+  const sample = content.slice(0, 8192);
+  // Check for null bytes (binary indicator)
+  return !sample.includes('\0');
+}
+
+function createBackup(filePath) {
+  try {
+    const backupDir = resolve(dirname(filePath), '.deepseek-pp', 'backups');
+    mkdirSync(backupDir, { recursive: true });
+    const timestamp = Date.now();
+    const fileName = basename(filePath) + '.' + timestamp + '.bak';
+    const backupPath = resolve(backupDir, fileName);
+    copyFileSync(filePath, backupPath);
+    return backupPath;
+  } catch {
+    return null; // Backup is best-effort
+  }
+}
+
+function copyFileSync(src, dest) {
+  writeFileSync(dest, readFileSync(src));
+}
+
+function handleFileRead(args) {
+  try {
+    const filePath = resolveFilePath(args?.path);
+    checkPathReadable(filePath);
+    const stat = statSync(filePath);
+
+    if (!stat.isFile()) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Not a file: ${filePath}` }],
+      };
+    }
+
+    const isBinary = detectBinaryByExtension(filePath);
+    if (isBinary) {
+      return {
+        content: [{ type: 'text', text: `Binary file (${Math.ceil(stat.size / 1024)} KB). Content not displayed.` }],
+        structuredContent: {
+          ok: true,
+          data: {
+            path: filePath,
+            size: stat.size,
+            binary: true,
+            lineCount: null,
+            content: null,
+          },
+        },
+      };
+    }
+
+    const content = readFileSync(filePath, 'utf8');
+    const lines = content.split('\n');
+    const totalLines = lines.length;
+
+    // Trim trailing empty line from split
+    const lastLine = lines[lines.length - 1];
+    const lineCount = lastLine === '' && lines.length > 1 ? lines.length - 1 : lines.length;
+
+    const offset = typeof args?.offset === 'number' ? Math.max(0, Math.floor(args.offset)) : 0;
+    const limit = typeof args?.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : 0;
+
+    let displayedContent;
+    let truncated = false;
+    let displayLineCount = lineCount;
+
+    if (limit > 0) {
+      const endIdx = offset + limit;
+      displayedContent = lines.slice(offset, endIdx).join('\n');
+      truncated = endIdx < lineCount;
+      displayLineCount = Math.min(limit, lineCount - offset);
+    } else if (offset > 0) {
+      displayedContent = lines.slice(offset).join('\n');
+      displayLineCount = lineCount - offset;
+    } else {
+      displayedContent = content;
+    }
+
+    // Enforce max read bytes
+    const contentBytes = Buffer.byteLength(displayedContent, 'utf8');
+    if (contentBytes > MAX_FILE_READ_BYTES) {
+      const ratio = MAX_FILE_READ_BYTES / contentBytes;
+      const maxChars = Math.floor(displayedContent.length * ratio);
+      displayedContent = displayedContent.slice(0, maxChars) + '\n... [content truncated: ' + Math.ceil(contentBytes / 1024) + ' KB > ' + Math.ceil(MAX_FILE_READ_BYTES / 1024) + ' KB limit]';
+      truncated = true;
+    }
+
+    return {
+      content: [{ type: 'text', text: displayedContent }],
+      structuredContent: {
+        ok: true,
+        data: {
+          path: filePath,
+          size: stat.size,
+          binary: false,
+          lineCount,
+          offset,
+          limit: limit || lineCount,
+          linesReturned: displayLineCount,
+          truncated,
+        },
+      },
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    };
+  }
+}
+
+function handleFileWrite(args) {
+  try {
+    const filePath = resolveFilePath(args?.path);
+    const content = args?.content;
+
+    if (typeof content !== 'string') {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'content is required and must be a string.' }],
+      };
+    }
+
+    const exists = existsSync(filePath);
+
+    // Backup existing file before overwrite
+    let backupPath = null;
+    if (exists) {
+      backupPath = createBackup(filePath);
+    }
+
+    // Create parent directories
+    const parentDir = dirname(filePath);
+    mkdirSync(parentDir, { recursive: true });
+
+    writeFileSync(filePath, content, 'utf8');
+    const writtenBytes = Buffer.byteLength(content, 'utf8');
+    const stat = statSync(filePath);
+
+    return {
+      content: [{ type: 'text', text: exists ? `File updated (${writtenBytes} bytes).` : `File created (${writtenBytes} bytes).` }],
+      structuredContent: {
+        ok: true,
+        data: {
+          path: filePath,
+          size: stat.size,
+          bytesWritten: writtenBytes,
+          created: !exists,
+          backupPath,
+        },
+      },
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    };
+  }
+}
+
+function handleFileEdit(args) {
+  try {
+    const filePath = resolveFilePath(args?.path);
+    const rawHunks = args?.hunks;
+    const dryRun = args?.dryRun === true;
+
+    if (!Array.isArray(rawHunks) || rawHunks.length === 0) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'hunks is required and must be a non-empty array.' }],
+      };
+    }
+
+    checkPathReadable(filePath);
+    const existingContent = readFileSync(filePath, 'utf8');
+
+    // Process each hunk sequentially
+    let currentContent = existingContent;
+    const results = [];
+
+    for (let i = 0; i < rawHunks.length; i++) {
+      const hunk = rawHunks[i];
+      const oldText = typeof hunk.oldText === 'string' ? hunk.oldText : '';
+      const newText = typeof hunk.newText === 'string' ? hunk.newText : '';
+
+      if (oldText === '') {
+        results.push({ hunk: i, error: 'oldText is empty.' });
+        continue;
+      }
+
+      // Count occurrences
+      let count = 0;
+      let pos = 0;
+      while ((pos = currentContent.indexOf(oldText, pos)) !== -1) {
+        count++;
+        pos += oldText.length;
+      }
+
+      if (count === 0) {
+        results.push({ hunk: i, error: `oldText not found in file.` });
+        continue;
+      }
+
+      if (count > 1) {
+        results.push({ hunk: i, error: `oldText found ${count} times (expected exactly 1). Use more specific context.` });
+        continue;
+      }
+
+      // Apply the replacement
+      currentContent = currentContent.replace(oldText, newText);
+      results.push({ hunk: i, applied: true, oldLen: oldText.length, newLen: newText.length });
+    }
+
+    // Check for failures
+    const failures = results.filter(r => r.error);
+    if (failures.length > 0) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `${failures.length} hunk(s) failed.` }],
+        structuredContent: {
+          ok: false,
+          data: {
+            path: filePath,
+            dryRun,
+            hunks: results,
+            failures: failures.map(f => f.error),
+          },
+        },
+      };
+    }
+
+    if (dryRun) {
+      return {
+        content: [{ type: 'text', text: `All ${results.length} hunk(s) would apply cleanly.` }],
+        structuredContent: {
+          ok: true,
+          data: {
+            path: filePath,
+            dryRun: true,
+            hunks: results,
+            wouldModify: currentContent !== existingContent,
+          },
+        },
+      };
+    }
+
+    // Backup and write
+    const backupPath = createBackup(filePath);
+    writeFileSync(filePath, currentContent, 'utf8');
+    const stat = statSync(filePath);
+
+    return {
+      content: [{ type: 'text', text: `${results.length} hunk(s) applied successfully.` }],
+      structuredContent: {
+        ok: true,
+        data: {
+          path: filePath,
+          size: stat.size,
+          hunks: results,
+          backupPath,
+        },
+      },
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    };
+  }
+}
+
+function handleFileList(args) {
+  try {
+    const dirPath = resolveFilePath(args?.path);
+    const dirStat = checkPathReadable(dirPath);
+
+    if (!dirStat.isDirectory()) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Not a directory: ${dirPath}` }],
+      };
+    }
+
+    const pattern = typeof args?.pattern === 'string' && args.pattern.trim() ? args.pattern.trim() : null;
+    const maxDepth = typeof args?.depth === 'number' ? Math.max(1, Math.min(20, Math.floor(args.depth))) : 5;
+    const includeHidden = args?.includeHidden === true;
+    const includeBinary = args?.includeBinary === true;
+
+    const results = [];
+    const stack = [{ absolutePath: dirPath, relativePath: '', depth: 0 }];
+
+    while (stack.length > 0 && results.length <= MAX_FILE_LIST_RESULTS) {
+      const current = stack.pop();
+      if (current.depth > maxDepth) continue;
+
+      let entries;
+      try {
+        entries = readdirSync(current.absolutePath, { withFileTypes: true });
+      } catch {
+        continue; // Permission denied, skip
+      }
+
+      for (const entry of entries) {
+        if (!includeHidden && entry.name.startsWith('.')) continue;
+
+        // Skip common gitignored directories
+        const entryRelativePath = current.relativePath ? `${current.relativePath}/${entry.name}` : entry.name;
+        const isDir = entry.isDirectory();
+
+        // Skip .git and node_modules
+        if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.svn' || entry.name === '.hg') continue;
+
+        if (isDir) {
+          results.push({
+            name: entry.name,
+            path: entryRelativePath,
+            type: 'directory',
+          });
+          stack.push({
+            absolutePath: join(current.absolutePath, entry.name),
+            relativePath: entryRelativePath,
+            depth: current.depth + 1,
+          });
+        } else if (entry.isFile()) {
+          const stat = statSync(join(current.absolutePath, entry.name));
+          const ext = pathExtension(entry.name);
+          const isBinaryFile = BINARY_FILE_EXTENSIONS.has(ext);
+
+          if (!includeBinary && isBinaryFile) continue;
+
+          results.push({
+            name: entry.name,
+            path: entryRelativePath,
+            type: 'file',
+            size: stat.size,
+            binary: isBinaryFile,
+          });
+        }
+      }
+    }
+
+    // Apply glob filtering if pattern provided
+    let filtered = results;
+    if (pattern) {
+      const minimatch = createMinimatch(pattern);
+      const parts = pattern.split('/');
+      const isDeep = pattern.startsWith('**/');
+      filtered = results.filter(r => {
+        if (r.type === 'directory') return false; // Only match files for glob
+        return minimatch(r.path);
+      });
+    }
+
+    const truncated = results.length > MAX_FILE_LIST_RESULTS;
+
+    return {
+      content: [{ type: 'text', text: `Found ${Math.min(filtered.length, MAX_FILE_LIST_RESULTS)} entries in ${dirPath}${truncated ? ' (truncated)' : ''}.` }],
+      structuredContent: {
+        ok: true,
+        data: {
+          path: dirPath,
+          entries: filtered.slice(0, MAX_FILE_LIST_RESULTS),
+          total: filtered.length,
+          dirCount: filtered.filter(e => e.type === 'directory').length,
+          fileCount: filtered.filter(e => e.type === 'file').length,
+          truncated,
+        },
+      },
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    };
+  }
+}
+
+function createMinimatch(pattern) {
+  // Simple glob matching using RegExp conversion
+  // Handles: *, **, ?, {a,b}, [abc]
+  const escaped = pattern
+    .replace(/[.+^${}()|\[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '<<DEEP>>')
+    .replace(/\*/g, '[^/]*')
+    .replace(/<<DEEP>>/g, '.*')
+    .replace(/\?/g, '[^/]');
+  return (path) => new RegExp('^' + escaped + '$').test(path);
+}
+
+async function handleFileSearch(args) {
+  try {
+    const pattern = typeof args?.pattern === 'string' && args.pattern.trim() ? args.pattern.trim() : null;
+    const searchPath = typeof args?.path === 'string' && args.path.trim()
+      ? resolveFilePath(args.path)
+      : homedir();
+    const glob = typeof args?.glob === 'string' && args.glob.trim() ? args.glob.trim() : null;
+    const maxResults = typeof args?.maxResults === 'number'
+      ? Math.max(1, Math.min(1000, Math.floor(args.maxResults)))
+      : 50;
+    const contextLines = typeof args?.contextLines === 'number'
+      ? Math.max(0, Math.min(10, Math.floor(args.contextLines)))
+      : 2;
+    const fixedString = args?.fixedString === true;
+
+    if (!pattern) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'pattern is required.' }],
+      };
+    }
+
+    const searchDir = resolve(searchPath);
+    checkPathReadable(searchDir);
+
+    if (!statSync(searchDir).isDirectory()) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Not a directory: ${searchDir}` }],
+      };
+    }
+
+    // Try ripgrep first
+    let result;
+    try {
+      result = searchWithRipgrep(pattern, searchDir, { glob, maxResults, contextLines, fixedString });
+    } catch (rgErr) {
+      // rg not found, fall back to Node.js search
+      result = searchWithNode(pattern, searchDir, { glob, maxResults, contextLines, fixedString });
+    }
+
+    return {
+      content: [{ type: 'text', text: result.text }],
+      structuredContent: {
+        ok: true,
+        data: result.data,
+      },
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+    };
+  }
+}
+
+function searchWithRipgrep(pattern, searchDir, { glob, maxResults, contextLines, fixedString }) {
+  const rgArgs = [
+    '--json',
+    '--max-count', '50',
+    '--max-depth', '15',
+    '--ignore-case',
+    '-g', '!.git',
+    '-g', '!node_modules',
+  ];
+
+  if (contextLines > 0) {
+    rgArgs.push('-C', String(contextLines));
+  }
+  if (maxResults) {
+    rgArgs.push('--max-count', String(maxResults));
+  }
+  if (glob) {
+    rgArgs.push('-g', glob);
+  }
+  if (fixedString) {
+    rgArgs.push('-F');
+  }
+
+  rgArgs.push('--', pattern, searchDir);
+
+  const spawned = spawn('rg', rgArgs, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: FILE_SEARCH_TIMEOUT_MS,
+    windowsHide: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    const matches = [];
+    let stats = { totalMatches: 0, files: new Set() };
+
+    let stdout = '';
+    let stderr = '';
+
+    spawned.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    spawned.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+
+    spawned.on('error', (err) => reject(err));
+    spawned.on('close', (exitCode) => {
+      if (exitCode === 2 && stderr) {
+        // rg exited with error (e.g., invalid pattern)
+        reject(new Error(`ripgrep search failed: ${stderr.trim()}`));
+        return;
+      }
+
+      // Parse JSON output
+      const lines = stdout.trim().split('\n');
+      const results = [];
+      const fileSet = new Set();
+
+      for (const line of lines) {
+        if (!line) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'match') {
+            const data = parsed.data;
+            const filePath = data.path?.text || '';
+            const lineNum = data.line_number;
+            const lineText = data.lines?.text || '';
+            fileSet.add(filePath);
+            results.push({
+              file: filePath,
+              line: lineNum,
+              column: data.submatches?.[0]?.start ?? 0,
+              match: data.submatches?.[0]?.match?.text || lineText.trim(),
+              context: lineText.trim(),
+            });
+          }
+        } catch {
+          // Skip unparseable lines
+        }
+      }
+
+      const truncated = results.length > maxResults;
+      const limited = results.slice(0, maxResults);
+
+      const grouped = groupBy(limited, r => r.file);
+      const textParts = [];
+      for (const [filePath, fileMatches] of Object.entries(grouped)) {
+        textParts.push(`\n${filePath}:`);
+        for (const m of fileMatches) {
+          textParts.push(`  ${m.line}:${m.column}  ${m.context}`);
+        }
+      }
+
+      resolve({
+        text: textParts.join('\n') || 'No matches found.',
+        data: {
+          pattern,
+          searchDir,
+          matches: limited,
+          matchCount: limited.length,
+          totalMatches: results.length,
+          filesWithMatches: [...fileSet],
+          truncated,
+          engine: 'ripgrep',
+        },
+      });
+    });
+  });
+}
+
+function groupBy(arr, keyFn) {
+  const result = {};
+  for (const item of arr) {
+    const key = keyFn(item);
+    if (!result[key]) result[key] = [];
+    result[key].push(item);
+  }
+  return result;
+}
+
+function searchWithNode(pattern, searchDir, { glob, maxResults, contextLines, fixedString }) {
+  const regex = fixedString
+    ? new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    : new RegExp(pattern, 'gi');
+
+  const results = [];
+  const fileSet = new Set();
+  let totalBytes = 0;
+  let timedOut = false;
+  const startTime = Date.now();
+  const stack = [{ absolutePath: searchDir, relativePath: '', depth: 0 }];
+
+  while (stack.length > 0 && results.length < maxResults && !timedOut) {
+    const current = stack.pop();
+    if (current.depth > 15) continue;
+
+    let entries;
+    try {
+      entries = readdirSync(current.absolutePath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '.git') continue;
+      if (timedOut || results.length >= maxResults) break;
+
+      const absolutePath = join(current.absolutePath, entry.name);
+      const relativePath = current.relativePath ? `${current.relativePath}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        stack.push({ absolutePath, relativePath, depth: current.depth + 1 });
+      } else if (entry.isFile()) {
+        // Apply glob filter
+        if (glob && !createMinimatch(glob)(relativePath)) continue;
+
+        // Skip binary files by extension
+        if (detectBinaryByExtension(absolutePath)) continue;
+
+        // Track total bytes scanned
+        try {
+          const fStat = statSync(absolutePath);
+          totalBytes += fStat.size;
+          if (totalBytes > MAX_FILE_SEARCH_BYTES) {
+            timedOut = true;
+            break;
+          }
+          if (fStat.size > 1024 * 1024) continue; // Skip files > 1MB
+        } catch {
+          continue;
+        }
+
+        try {
+          const content = readFileSync(absolutePath, 'utf8');
+          let match;
+          while ((match = regex.exec(content)) !== null && results.length < maxResults) {
+            const lineStart = content.lastIndexOf('\n', match.index) + 1;
+            const lineEnd = content.indexOf('\n', match.index);
+            const lineNum = content.slice(0, match.index).split('\n').length;
+            const lineText = content.slice(lineStart, lineEnd !== -1 ? lineEnd : content.length);
+
+            fileSet.add(relativePath);
+            results.push({
+              file: relativePath,
+              line: lineNum,
+              column: match.index - lineStart,
+              match: match[0],
+              context: lineText.trim(),
+            });
+          }
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    }
+
+    if (Date.now() - startTime > FILE_SEARCH_TIMEOUT_MS) timedOut = true;
+  }
+
+  const limited = results.slice(0, maxResults);
+  const grouped = groupBy(limited, r => r.file);
+  const textParts = [];
+  for (const [filePath, fileMatches] of Object.entries(grouped)) {
+    textParts.push(`\n${filePath}:`);
+    for (const m of fileMatches) {
+      textParts.push(`  ${m.line}:${m.column}  ${m.context}`);
+    }
+  }
+
+  return {
+    text: textParts.join('\n') || 'No matches found.',
+    data: {
+      pattern,
+      searchDir,
+      matches: limited,
+      matchCount: limited.length,
+      totalMatches: results.length,
+      filesWithMatches: [...fileSet],
+      truncated: results.length >= maxResults || timedOut,
+      engine: 'node',
+    },
+  };
+}
+
+// --- Git tool handlers ---
+
+function findGitRoot(inputPath) {
+  const startPath = typeof inputPath === 'string' && inputPath.trim()
+    ? resolve(inputPath.trim())
+    : process.cwd();
+  let dir = startPath;
+  while (true) {
+    if (existsSync(join(dir, '.git'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error(`No git repository found from: ${startPath}`);
+    dir = parent;
+  }
+}
+
+async function execGit(argsList, repoPath) {
+  const cwd = findGitRoot(repoPath);
+  const env = createChildEnv();
+  const result = await execCommand(`git ${argsList.map(a => escapeShellArg(a)).join(' ')}`, { cwd, env, timeoutMs: 30_000 });
+  return { ...result, repoPath: cwd };
+}
+
+function escapeShellArg(arg) {
+  const str = String(arg);
+  if (platform() === 'win32') {
+    // PowerShell escaping: double quotes with inner double quotes doubled
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
+
+function parseGitStatusPorcelain(output) {
+  const lines = output.split('\n').filter(Boolean);
+  const staged = [];
+  const modified = [];
+  const untracked = [];
+  const conflicted = [];
+
+  for (const line of lines) {
+    const x = line[0];
+    const y = line[1];
+    const filePath = line.slice(3).trim();
+    if (x === '?' && y === '?') { untracked.push({ path: filePath }); continue; }
+    if (x === 'U' || y === 'U' || (x === 'D' && y === 'D')) { conflicted.push({ path: filePath }); continue; }
+    if (x !== ' ' && x !== '?') staged.push({ path: filePath, statusX: x });
+    if (y !== ' ') modified.push({ path: filePath, statusY: y });
+  }
+
+  return { staged, modified, untracked, conflicted };
+}
+
+async function handleGitStatus(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const result = await execGit(['status', '--porcelain'], repoPath);
+    const gitRoot = result.repoPath;
+
+    if (result.exitCode !== 0) {
+      return { isError: true, content: [{ type: 'text', text: result.stderr || 'Git status failed.' }] };
+    }
+
+    const parsed = parseGitStatusPorcelain(result.stdout);
+
+    // Get current branch name
+    const branchResult = await execGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
+    const currentBranch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : 'unknown';
+
+    const textParts = [`Repository: ${gitRoot}`, `Branch: ${currentBranch}`, ''];
+    textParts.push(`Staged: ${parsed.staged.length} file(s)`);
+    for (const f of parsed.staged) textParts.push(`  ${f.path}`);
+    textParts.push(`\nModified (unstaged): ${parsed.modified.length} file(s)`);
+    for (const f of parsed.modified) textParts.push(`  ${f.path}`);
+    textParts.push(`\nUntracked: ${parsed.untracked.length} file(s)`);
+    for (const f of parsed.untracked) textParts.push(`  ${f.path}`);
+    if (parsed.conflicted.length > 0) {
+      textParts.push(`\nCONFLICTED: ${parsed.conflicted.length} file(s)`);
+      for (const f of parsed.conflicted) textParts.push(`  ${f.path}`);
+    }
+
+    return {
+      content: [{ type: 'text', text: textParts.join('\n') }],
+      structuredContent: {
+        ok: true,
+        data: {
+          repoPath: gitRoot,
+          currentBranch,
+          ...parsed,
+          clean: parsed.staged.length === 0 && parsed.modified.length === 0 && parsed.untracked.length === 0 && parsed.conflicted.length === 0,
+        },
+      },
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
+
+async function handleGitDiff(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const staged = args?.staged === true;
+    const target = typeof args?.target === 'string' && args.target.trim() ? args.target.trim() : null;
+    const unified = typeof args?.unified === 'number' ? Math.max(1, Math.min(20, Math.floor(args.unified))) : 5;
+
+    const gitArgs = ['diff'];
+    if (staged) gitArgs.push('--cached');
+    gitArgs.push(`-U${unified}`);
+    if (target) gitArgs.push('--', target);
+
+    const result = await execGit(gitArgs, repoPath);
+    const diffOutput = result.stdout;
+
+    // Count changed files and lines from the diff
+    const filesChanged = (diffOutput.match(/^diff --git /gm) || []).length;
+    const insertions = (diffOutput.match(/^\+/gm) || []).length;
+    const deletions = (diffOutput.match(/^-/gm) || []).length;
+
+    if (!diffOutput.trim()) {
+      return {
+        content: [{ type: 'text', text: 'No changes to show.' }],
+        structuredContent: { ok: true, data: { repoPath: result.repoPath, diff: '', filesChanged: 0, insertions: 0, deletions: 0 } },
+      };
+    }
+
+    return {
+      content: [{ type: 'text', text: diffOutput }],
+      structuredContent: {
+        ok: true,
+        data: {
+          repoPath: result.repoPath,
+          diff: diffOutput,
+          filesChanged,
+          insertions,
+          deletions,
+          staged,
+        },
+      },
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
+
+async function handleGitLog(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const maxCount = typeof args?.maxCount === 'number' ? Math.max(1, Math.min(100, Math.floor(args.maxCount))) : 20;
+    const branchRef = typeof args?.branch === 'string' && args.branch.trim() ? args.branch.trim() : 'HEAD';
+
+    const result = await execGit(
+      ['log', branchRef, `--max-count=${maxCount}`, `--format=%H|||%h|||%an|||%ae|||%ai|||%s`, '--no-color'],
+      repoPath,
+    );
+
+    if (result.exitCode !== 0) {
+      return { isError: true, content: [{ type: 'text', text: result.stderr || 'Git log failed.' }] };
+    }
+
+    const commits = result.stdout.split('\n').filter(Boolean).map(line => {
+      const [hash, shortHash, author, email, date, ...msgParts] = line.split('|||');
+      return { hash, shortHash, author, email, date, message: msgParts.join('|||') };
+    });
+
+    const textParts = commits.map(c =>
+      `${c.shortHash}  ${c.date?.slice(0, 10) || ''}  ${c.author}  ${c.message}`
+    );
+
+    return {
+      content: [{ type: 'text', text: textParts.join('\n') || '(no commits)' }],
+      structuredContent: { ok: true, data: { repoPath: result.repoPath, commits, total: commits.length } },
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
+
+async function handleGitCommit(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const message = typeof args?.message === 'string' && args.message.trim() ? args.message.trim() : null;
+    const files = Array.isArray(args?.files) ? args.files.filter(f => typeof f === 'string' && f.trim()).map(f => f.trim()) : null;
+
+    if (!message) {
+      return { isError: true, content: [{ type: 'text', text: 'message is required.' }] };
+    }
+
+    // First check status
+    const statusResult = await execGit(['status', '--porcelain'], repoPath);
+    if (!statusResult.stdout.trim()) {
+      return { isError: true, content: [{ type: 'text', text: 'Nothing to commit — working tree is clean.' }] };
+    }
+
+    if (files && files.length > 0) {
+      // Stage specific files
+      for (const file of files) {
+        await execGit(['add', '--', file], repoPath);
+      }
+    } else {
+      // Stage all
+      await execGit(['add', '-A'], repoPath);
+    }
+
+    const result = await execGit(['commit', '-m', message], repoPath);
+
+    return {
+      content: [{ type: 'text', text: result.stdout || 'Committed successfully.' }],
+      structuredContent: {
+        ok: result.exitCode === 0,
+        data: {
+          repoPath: result.repoPath,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+        },
+      },
+      isError: result.exitCode !== 0,
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
+
+async function handleGitBranch(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const branchName = typeof args?.name === 'string' && args.name.trim() ? args.name.trim() : null;
+    const shouldList = args?.list !== false;
+    const shouldSwitch = args?.switch === true;
+
+    if (branchName && !shouldList) {
+      // Create branch
+      const createArgs = ['branch', branchName];
+      const createResult = await execGit(createArgs, repoPath);
+      if (createResult.exitCode !== 0) {
+        return { isError: true, content: [{ type: 'text', text: createResult.stderr || 'Branch creation failed.' }] };
+      }
+
+      if (shouldSwitch) {
+        const switchResult = await execGit(['switch', branchName], repoPath);
+        if (switchResult.exitCode !== 0) {
+          return { isError: true, content: [{ type: 'text', text: `Branch created but switch failed: ${switchResult.stderr}` }] };
+        }
+      }
+
+      return {
+        content: [{ type: 'text', text: `Branch '${branchName}' created${shouldSwitch ? ' and switched' : ''}.` }],
+        structuredContent: { ok: true, data: { repoPath: createResult.repoPath, name: branchName, action: 'created', switched: shouldSwitch } },
+      };
+    }
+
+    // List branches
+    const result = await execGit(['branch', '--list'], repoPath);
+    if (result.exitCode !== 0) {
+      return { isError: true, content: [{ type: 'text', text: result.stderr || 'Git branch failed.' }] };
+    }
+
+    const branches = result.stdout.split('\n').filter(Boolean).map(line => ({
+      name: line.replace(/^\* /, '').trim(),
+      current: line.startsWith('*'),
+    }));
+
+    return {
+      content: [{ type: 'text', text: result.stdout }],
+      structuredContent: { ok: true, data: { repoPath: result.repoPath, branches, current: branches.find(b => b.current)?.name } },
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
+
+async function handleGitPush(args) {
+  try {
+    const repoPath = args?.path || process.cwd();
+    const remote = typeof args?.remote === 'string' && args.remote.trim() ? args.remote.trim() : 'origin';
+    const branch = typeof args?.branch === 'string' && args.branch.trim() ? args.branch.trim() : null;
+    const setUpstream = args?.setUpstream === true;
+    const force = args?.force === true;
+
+    const pushArgs = ['push', remote];
+    if (force) pushArgs.push('--force');
+    if (setUpstream) pushArgs.push('-u');
+    if (branch) pushArgs.push(branch);
+
+    const result = await execGit(pushArgs, repoPath);
+
+    return {
+      content: [{ type: 'text', text: result.stdout || (result.exitCode === 0 ? 'Push completed.' : result.stderr) }],
+      structuredContent: {
+        ok: result.exitCode === 0,
+        data: {
+          repoPath: result.repoPath,
+          remote,
+          branch,
+          setUpstream,
+          force,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+        },
+      },
+      isError: result.exitCode !== 0,
+    };
+  } catch (err) {
+    return { isError: true, content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
+  }
 }
 
 // --- Message dispatch ---

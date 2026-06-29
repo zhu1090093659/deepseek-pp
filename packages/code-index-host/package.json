@@ -1,0 +1,23 @@
+{
+  "name": "deepseek-pp-code-index",
+  "version": "1.0.0",
+  "description": "Native Messaging Code Index MCP host for DeepSeek++ — code search, symbol lookup, code structure analysis, and glob-based file discovery",
+  "type": "module",
+  "private": false,
+  "license": "Apache-2.0",
+  "bin": {
+    "deepseek-pp-code-index": "bin/deepseek-pp-code-index-host.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "native/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

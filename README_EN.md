@@ -61,6 +61,10 @@ Language can follow the browser or be set to English or Simplified Chinese. Deep
 | DeepSeek multimodal media | Attach images in Vision mode from side-panel web chat; after installing the Multimodal Native Host, also attach images or videos in the DeepSeek input box so DeepSeek++ can analyze the media first and continue the conversation with the results. |
 | DeepSeek browser control | Lets DeepSeek++ operate a user-selected browser tab after the user enables the feature and chooses the target. |
 | DeepSeek memory | Automatically saves, filters, and injects long-term memory so different conversations can reuse user preferences, project context, and common facts. |
+| DeepSeek coding agent | File read/write/edit, code search with ripgrep, symbol lookup across 6+ languages, and full git workflow (status, diff, commit, branch, push). Requires Shell and Code Index native hosts. |
+| DeepSeek file tools | `file_read` (line offset), `file_write` (auto-backup), `file_edit` (multi-hunk), `file_list` (recursive), `file_search` (ripgrep-first) via Shell native host. |
+| DeepSeek code search | `code_search`, `code_symbol`, `code_structure`, `code_glob`, `code_batch_read` via Code Index native host with 30s index cache. |
+| DeepSeek git tools | `git_status`, `git_diff`, `git_log`, `git_commit`, `git_branch`, `git_push` with structured output and auto repo root detection. |
 | DeepSeek Skills / `/skill` workflows | Switches quickly between built-in, custom, and GitHub-imported Skills for expert modes and task templates. |
 | DeepSeek project context | Groups project instructions, project memories, and related DeepSeek conversations so matching chats get the right context automatically. |
 | DeepSeek artifact downloads | Creates downloadable single files or project bundles for scripts, Markdown, JSON, HTML, and small project structures. |
@@ -143,6 +147,93 @@ Language can follow the browser or be set to English or Simplified Chinese. Deep
 - **What's new panel** - Settings can show a local version summary that users can dismiss.
 
 ### Built-In Web Tools
+
+---
+
+### Coding Capabilities
+
+DeepSeek++ 1.0.5+ adds complete file, code, and git tooling with a coding-optimized agent loop, enabling coding workflows similar to Claude Code.
+
+#### File System Tools
+
+5 file operations integrated into the Shell native host:
+
+- **`file_read`** — Read file content with line offset/limit and binary detection
+- **`file_write`** — Write file with auto-directory-creation and pre-overwrite backup to `.deepseek-pp/backups/`
+- **`file_edit`** — Search-and-replace editing with multi-hunk support and dry-run mode
+- **`file_list`** — Recursive directory listing with glob filtering, skips `.git` and `node_modules`
+- **`file_search`** — Full-text regex search with ripgrep priority and Node.js fallback
+
+Install the Shell native host:
+
+```bash
+npx deepseek-pp-shell-host install --browser chrome --extension-id <extension-id>
+```
+
+#### Code Understanding Tools
+
+An independent Code Index native host provides code search and structure analysis:
+
+- **`code_search`** — Full-text regex search (ripgrep-first) with context lines and glob filters
+- **`code_symbol`** — Find symbol definitions (function, class, interface) across **6+ languages**
+- **`code_structure`** — File outline: imports, exports, classes, functions, variables with line numbers
+- **`code_glob`** — Glob file matching with `.gitignore` awareness and 30s index cache
+- **`code_batch_read`** — Read multiple files in a single call (up to 20 files, 512KB total)
+
+Install the Code Index native host:
+
+```bash
+npx deepseek-pp-code-index install --browser chrome --extension-id <extension-id>
+```
+
+#### Git Workflow Tools
+
+6 git tools integrated into the Shell native host:
+
+- **`git_status`** — Structured status output (staged/modified/untracked/conflicted) with auto repo root detection
+- **`git_diff`** — Diff display with staged/unstaged control and context line count
+- **`git_log`** — Structured commit history with branch filtering
+- **`git_commit`** — Stage all changes and create a commit
+- **`git_branch`** — List, create, and switch branches
+- **`git_push`** — Push to remote repository
+
+Recommended workflow:
+
+```
+git_status → file_read → file_edit × N → python_exec(verify) → git_diff → git_commit
+```
+
+#### Coding Agent Optimization
+
+When coding tasks are detected, DeepSeek++ activates a coding-optimized agent loop:
+
+- **Read before modify** — Auto-read file state before every edit
+- **Plan-Execute-Verify** — Output `<edit_plan>` structured plan before execution
+- **Readonly parallel** — `code_search` + `file_list` + `git_status` execute concurrently
+- **Post-edit verification** — Auto-trigger compile/syntax check after `file_edit`
+- **Context budget management** — Auto-prune old successful results by priority to avoid 128K context limit
+- **Scenario-aware filtering** — File/code/git tools are only injected in coding mode
+
+#### Tool Inventory
+
+| Group | Tools | Typical Use |
+|-------|-------|-------------|
+| File System | 5 | Read, write, edit, list, search files |
+| Code Understanding | 5 | Full-text search, symbols, structure, glob, batch read |
+| Git | 6 | Status, diff, log, commit, branch, push |
+| Memory | 3 | Save, update, delete long-term memories |
+| Web | 2 | Search and fetch page content |
+| Shell | 9 | Command execution, Python, persistent sessions |
+| Browser Control | 18 | Navigate, click, fill, snapshot |
+| Artifact | 2 | Single-file and bundle artifacts |
+| Sandbox | 1 | In-browser code execution |
+| MCP | Dynamic | Third-party tools |
+
+#### Resources
+
+- [Usage Manual](USAGE.md) — Complete coding capability guide
+- Shell native host at `packages/shell-host/native/shell-mcp-host.mjs`
+- Code Index native host at `packages/code-index-host/native/code-index-host.mjs`
 
 - **Web search** - The model can call `web_search` when it needs current information, fact checking, or source links.
 - **Web fetch** - The model can call `web_fetch` to read visible text from a user-provided page for further summary or analysis.

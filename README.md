@@ -55,12 +55,16 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的开源浏
 | 需求 | DeepSeek++ 提供 |
 |------|----------------|
 | AI agent browser extension / AI Agent 工作台 | 把 DeepSeek Web 扩展成可以持续执行任务、调用工具、复用记忆和调度自动化的浏览器内工作台。 |
-| DeepSeek browser extension / DeepSeek Chrome extension | 在 DeepSeek 网页版中加入侧边栏对话、右键发送文本、工具执行结果展示和 Chrome / Edge / Firefox 支持。 |
+| Multilingual DeepSeek extension / 中英文体验 | 可在简体中文和 English 之间切换，界面、内置工具说明和模型续跑行为保持同一语言。 |
 | Multilingual DeepSeek extension / 中英文体验 | 可在简体中文和 English 之间切换，界面、内置工具说明和模型续跑行为保持同一语言。 |
 | DeepSeek MCP tools | 在侧边栏管理 MCP 服务、工具权限和执行状态，并把工具结果带回同一会话继续生成。 |
 | DeepSeek multimodal media / 图片视频分析 | 可在侧边栏网页登录对话的识图模式附加图片；安装多模态 Native Host 后，也可在 DeepSeek 输入框附加图片或视频，让 DeepSeek++ 先完成媒体分析再带着结果继续对话。 |
 | DeepSeek browser control / 浏览器控制 | 在侧边栏选择受控标签页，让 DeepSeek++ 按用户开启的边界读取页面结构并执行可见网页操作。 |
 | DeepSeek memory / 长期记忆 | 自动保存、筛选和注入长期记忆，让不同对话可以复用用户偏好、项目背景和常用信息。 |
+| DeepSeek coding agent / 编码助手 | 提供文件读写、搜索-替换编辑、代码搜索与符号查找、git 状态检查与提交等完整编码能力，支持编辑后自动验证。（需安装 Shell 和 Code Index 原生宿主） |
+| DeepSeek file tools / 文件系统 | 通过 Shell 原生宿主提供`file_read`（行偏移支持）、`file_write`（自动备份）、`file_edit`（多 hunk 搜索替换）、`file_list`（目录递归）和`file_search`（优先 ripgrep）。 |
+| DeepSeek code search / 代码搜索 | 通过 Code Index 原生宿主提供`code_search`（全文搜索）、`code_symbol`（符号查找 6+语言）、`code_structure`（文件大纲）、`code_glob`（glob 匹配）和`code_batch_read`（批量文件读取）。 |
+| DeepSeek git tools / Git 工作流 | 通过 Shell 原生宿主提供`git_status`、`git_diff`、`git_log`、`git_commit`、`git_branch`、`git_push`等完整的 git 工作流，支持结构化输出和自动仓库根检测。 |
 | DeepSeek Skills / `/skill` 工作流 | 通过内置、自定义或 GitHub 导入的 Skill 快速切换专家模式和任务模板。 |
 | DeepSeek project context / 项目上下文 | 将项目指令、项目记忆和相关 DeepSeek 对话组织在一起，并在对应对话中自动加入上下文。 |
 | DeepSeek artifact downloads / 可下载产物 | 生成单文件或项目包下载产物，适合保存脚本、Markdown、JSON、HTML 或小型项目结构。 |
@@ -143,6 +147,93 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的开源浏
 - **新功能提示** — 设置页会显示本地版本的新功能摘要，用户可自行关闭
 
 ### 内置网络工具
+
+---
+
+### 编码能力
+
+DeepSeek++ 在 1.0.5+ 版本中新增完整编码工具和编码优化智能体，让 DeepSeek 可以像 Claude Code 一样执行代码任务。
+
+#### 文件系统工具
+
+在 Shell 原生宿主中集成了 5 个文件操作工具，支持读、写、搜索-替换编辑和目录浏览：
+
+- **`file_read`** — 读取文件内容，支持行偏移（offset）和行数限制（limit），自动检测二进制文件
+- **`file_write`** — 写入文件，自动创建父目录，覆盖前自动备份到 `.deepseek-pp/backups/`
+- **`file_edit`** — 搜索-替换式编辑，支持多 hunk 顺序应用和干运行（dry-run）验证
+- **`file_list`** — 递归目录列表，支持 glob 过滤，自动跳过 `.git` 和 `node_modules`
+- **`file_search`** — 全文正则搜索，优先使用 ripgrep，回退 Node.js 递归
+
+安装 Shell 原生宿主：
+
+```bash
+npx deepseek-pp-shell-host install --browser chrome --extension-id <扩展ID>
+```
+
+#### 代码理解工具
+
+独立的 Code Index 原生宿主提供代码搜索和结构分析能力：
+
+- **`code_search`** — 全文本正则搜索（优先 ripgrep），支持上下文行和 glob 过滤
+- **`code_symbol`** — 查找符号定义（函数、类、接口），支持 TS/JS/Python/Go/Rust/Java 等 **6+ 语言**
+- **`code_structure`** — 文件大纲（导入、导出、类、函数、变量及行号）
+- **`code_glob`** — Glob 文件匹配搜索，`.gitignore` 感知，30 秒缓存
+- **`code_batch_read`** — 单次调用批量读取多个文件（最多 20 个，512KB 上限）
+
+安装 Code Index 原生宿主：
+
+```bash
+npx deepseek-pp-code-index install --browser chrome --extension-id <扩展ID>
+```
+
+#### Git 工作流工具
+
+在 Shell 原生宿主中集成了 6 个 git 操作工具：
+
+- **`git_status`** — 结构化输出（已暂存/已修改/未跟踪/冲突），自动检测仓库根目录
+- **`git_diff`** — 显示差异，支持已暂存/未暂存、上下文行数控制
+- **`git_log`** — 结构化提交历史，支持分支过滤和最大数量控制
+- **`git_commit`** — 暂存所有更改并创建提交
+- **`git_branch`** — 列出、创建和切换分支
+- **`git_push`** — 推送到远程仓库
+
+推荐编码工作流：
+
+```
+git_status → file_read → file_edit × N → python_exec(验证) → git_diff → git_commit
+```
+
+#### 编码智能体优化
+
+当检测到编码任务时，DeepSeek++ 自动激活编码优化智能体循环：
+
+- **先读后写** — 每次修改前自动读取文件当前状态
+- **规划-执行-验证** — 输出 `<edit_plan>` 结构化计划后开始执行
+- **只读工具并行** — `code_search` + `file_list` + `git_status` 等只读工具可同时执行
+- **编辑后验证** — 每次 `file_edit` 后自动触发编译/语法检查
+- **上下文预算管理** — 按优先级自动修剪旧的成功结果，避免超过 128K 上下文限制
+- **情景感知过滤** — 编码模式下才注入 file/code/git 工具，聊天模式不误导
+
+#### 工具总览
+
+| 组 | 工具数 | 典型用途 |
+|---|--------|---------|
+| 文件系统 | 5 | 读取、写入、编辑、列表、搜索文件 |
+| 代码理解 | 5 | 全文搜索、符号查找、文件结构、glob、批量读 |
+| Git | 6 | 状态、差异、日志、提交、分支、推送 |
+| 记忆 | 3 | 保存、更新、删除长期记忆 |
+| 网络 | 2 | 搜索和获取网页内容 |
+| Shell | 9 | 命令执行、Python 执行、持久会话 |
+| 浏览器控制 | 18 | 导航、点击、输入、快照 |
+| Artifact | 2 | 单文件和项目产物 |
+| 沙箱 | 1 | 浏览器内代码执行 |
+| MCP | 动态 | 第三方工具 |
+
+#### 相关资源
+
+- [使用手册](USAGE.md) — 完整的编码能力使用指南
+- Shell 原生宿主位于 `packages/shell-host/native/shell-mcp-host.mjs`
+- Code Index 原生宿主位于 `packages/code-index-host/native/code-index-host.mjs`
 
 - **联网搜索** — 模型可在需要实时信息、事实核验或引用来源时调用 `web_search` 搜索互联网
 - **网页获取** — 模型可通过 `web_fetch` 获取用户指定网页的可视文本内容，用于进一步总结和分析
