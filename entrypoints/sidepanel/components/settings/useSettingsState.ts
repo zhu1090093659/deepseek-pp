@@ -106,10 +106,14 @@ export type SyncStatus = 'idle' | 'testing' | 'uploading' | 'downloading' | 'suc
 const DEFAULT_MULTIMODAL: MultimodalSettingsStatus = {
   openaiConfigured: false,
   geminiConfigured: false,
+  siliconflowConfigured: false,
   openaiImageModel: 'gpt-4.1-mini',
   geminiVideoModel: 'gemini-2.5-flash',
+  siliconflowImageModel: 'Qwen/Qwen3-VL-30B-A3B-Instruct',
+  siliconflowVideoModel: 'Qwen/Qwen3-Omni-30B-A3B-Instruct',
   openaiBaseUrl: 'https://api.openai.com/v1',
   geminiBaseUrl: 'https://generativelanguage.googleapis.com',
+  siliconflowBaseUrl: 'https://api.siliconflow.cn/v1',
 };
 
 export function useSettingsState() {
@@ -130,10 +134,14 @@ export function useSettingsState() {
   const [multimodalConfigured, setMultimodalConfigured] = useState<MultimodalSettingsStatus>(DEFAULT_MULTIMODAL);
   const [openaiApiKeyInput, setOpenaiApiKeyInput] = useState('');
   const [geminiApiKeyInput, setGeminiApiKeyInput] = useState('');
+  const [siliconflowApiKeyInput, setSiliconflowApiKeyInput] = useState('');
   const [openaiImageModel, setOpenaiImageModel] = useState('gpt-4.1-mini');
   const [geminiVideoModel, setGeminiVideoModel] = useState('gemini-2.5-flash');
+  const [siliconflowImageModel, setSiliconflowImageModel] = useState('Qwen/Qwen3-VL-30B-A3B-Instruct');
+  const [siliconflowVideoModel, setSiliconflowVideoModel] = useState('Qwen/Qwen3-Omni-30B-A3B-Instruct');
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState('https://api.openai.com/v1');
   const [geminiBaseUrl, setGeminiBaseUrl] = useState('https://generativelanguage.googleapis.com');
+  const [siliconflowBaseUrl, setSiliconflowBaseUrl] = useState('https://api.siliconflow.cn/v1');
   const [multimodalStatus, setMultimodalStatus] = useState<MultimodalStatus>('idle');
   const [multimodalMessage, setMultimodalMessage] = useState('');
 
@@ -185,8 +193,11 @@ export function useSettingsState() {
     setMultimodalConfigured(status);
     setOpenaiImageModel(status.openaiImageModel);
     setGeminiVideoModel(status.geminiVideoModel);
+    setSiliconflowImageModel(status.siliconflowImageModel);
+    setSiliconflowVideoModel(status.siliconflowVideoModel);
     setOpenaiBaseUrl(status.openaiBaseUrl);
     setGeminiBaseUrl(status.geminiBaseUrl);
+    setSiliconflowBaseUrl(status.siliconflowBaseUrl);
   }, []);
 
   // --- initial load ---
@@ -320,17 +331,21 @@ export function useSettingsState() {
       setMultimodalStatus('saving');
       setMultimodalMessage('');
       try {
-        if (!isHttpBaseUrl(openaiBaseUrl) || !isHttpBaseUrl(geminiBaseUrl)) {
+        if (!isHttpBaseUrl(openaiBaseUrl) || !isHttpBaseUrl(geminiBaseUrl) || !isHttpBaseUrl(siliconflowBaseUrl)) {
           throw new Error(labels.baseUrlInvalid);
         }
         const payload: Record<string, string> = {
           openaiImageModel,
           geminiVideoModel,
+          siliconflowImageModel,
+          siliconflowVideoModel,
           openaiBaseUrl,
           geminiBaseUrl,
+          siliconflowBaseUrl,
         };
         if (openaiApiKeyInput.trim()) payload.openaiApiKey = openaiApiKeyInput.trim();
         if (geminiApiKeyInput.trim()) payload.geminiApiKey = geminiApiKeyInput.trim();
+        if (siliconflowApiKeyInput.trim()) payload.siliconflowApiKey = siliconflowApiKeyInput.trim();
         const result = await chrome.runtime.sendMessage({
           type: 'SAVE_MULTIMODAL_SETTINGS',
           payload,
@@ -339,6 +354,7 @@ export function useSettingsState() {
         syncMultimodalStatus(result as MultimodalSettingsStatus);
         setOpenaiApiKeyInput('');
         setGeminiApiKeyInput('');
+        setSiliconflowApiKeyInput('');
         setMultimodalStatus('success');
         setMultimodalMessage(labels.saved);
       } catch (error) {
@@ -346,7 +362,7 @@ export function useSettingsState() {
         setMultimodalMessage(error instanceof Error ? error.message : labels.saveFailed);
       }
     },
-    [openaiBaseUrl, geminiBaseUrl, openaiImageModel, geminiVideoModel, openaiApiKeyInput, geminiApiKeyInput, isHttpBaseUrl, syncMultimodalStatus],
+    [openaiBaseUrl, geminiBaseUrl, siliconflowBaseUrl, openaiImageModel, geminiVideoModel, siliconflowImageModel, siliconflowVideoModel, openaiApiKeyInput, geminiApiKeyInput, siliconflowApiKeyInput, isHttpBaseUrl, syncMultimodalStatus],
   );
 
   const handleClearMultimodal = useCallback(
@@ -359,6 +375,7 @@ export function useSettingsState() {
         syncMultimodalStatus(result as MultimodalSettingsStatus);
         setOpenaiApiKeyInput('');
         setGeminiApiKeyInput('');
+        setSiliconflowApiKeyInput('');
         setMultimodalStatus('success');
         setMultimodalMessage(labels.cleared);
       } catch (error) {
@@ -750,14 +767,22 @@ export function useSettingsState() {
     setOpenaiApiKeyInput,
     geminiApiKeyInput,
     setGeminiApiKeyInput,
+    siliconflowApiKeyInput,
+    setSiliconflowApiKeyInput,
     openaiImageModel,
     setOpenaiImageModel,
     geminiVideoModel,
     setGeminiVideoModel,
+    siliconflowImageModel,
+    setSiliconflowImageModel,
+    siliconflowVideoModel,
+    setSiliconflowVideoModel,
     openaiBaseUrl,
     setOpenaiBaseUrl,
     geminiBaseUrl,
     setGeminiBaseUrl,
+    siliconflowBaseUrl,
+    setSiliconflowBaseUrl,
     multimodalStatus,
     multimodalMessage,
     handleSaveMultimodal,
