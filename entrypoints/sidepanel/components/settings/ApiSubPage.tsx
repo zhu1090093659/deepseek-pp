@@ -91,6 +91,11 @@ export default function ApiSubPage({ state }: { state: SettingsState }) {
               configuredLabel={`Gemini ${t('sidepanel.settings.configured')}`}
               notConfiguredLabel={`Gemini ${t('sidepanel.settings.notConfigured')}`}
             />
+            <StatusBadge
+              configured={state.multimodalConfigured.siliconflowConfigured}
+              configuredLabel={`SiliconFlow ${t('sidepanel.settings.configured')}`}
+              notConfiguredLabel={`SiliconFlow ${t('sidepanel.settings.notConfigured')}`}
+            />
           </div>
         </div>
 
@@ -112,6 +117,13 @@ export default function ApiSubPage({ state }: { state: SettingsState }) {
             placeholder={state.multimodalConfigured.geminiConfigured ? t('sidepanel.settings.geminiKeyReplacePlaceholder') : 'AIza...'}
             onChange={state.setGeminiApiKeyInput}
           />
+          <TextField
+            label="SiliconFlow API Key"
+            type="password"
+            value={state.siliconflowApiKeyInput}
+            placeholder={state.multimodalConfigured.siliconflowConfigured ? t('sidepanel.settings.siliconflowKeyReplacePlaceholder') : 'sk-...'}
+            onChange={state.setSiliconflowApiKeyInput}
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -126,6 +138,18 @@ export default function ApiSubPage({ state }: { state: SettingsState }) {
             value={state.geminiVideoModel}
             placeholder="gemini-2.5-flash"
             onChange={state.setGeminiVideoModel}
+          />
+          <TextField
+            label={t('sidepanel.settings.siliconflowImageModel')}
+            value={state.siliconflowImageModel}
+            placeholder="Qwen/Qwen3-VL-30B-A3B-Instruct"
+            onChange={state.setSiliconflowImageModel}
+          />
+          <TextField
+            label={t('sidepanel.settings.siliconflowVideoModel')}
+            value={state.siliconflowVideoModel}
+            placeholder="Qwen/Qwen3-Omni-30B-A3B-Instruct"
+            onChange={state.setSiliconflowVideoModel}
           />
         </div>
 
@@ -144,6 +168,13 @@ export default function ApiSubPage({ state }: { state: SettingsState }) {
             placeholder="https://generativelanguage.googleapis.com"
             onChange={state.setGeminiBaseUrl}
           />
+          <TextField
+            label={t('sidepanel.settings.siliconflowBaseUrl')}
+            type="url"
+            value={state.siliconflowBaseUrl}
+            placeholder="https://api.siliconflow.cn/v1"
+            onChange={state.setSiliconflowBaseUrl}
+          />
         </div>
 
         <div className="flex gap-2">
@@ -158,7 +189,7 @@ export default function ApiSubPage({ state }: { state: SettingsState }) {
           >
             {state.multimodalStatus === 'saving' ? t('sidepanel.settings.saving') : t('common.save')}
           </button>
-          {(state.multimodalConfigured.openaiConfigured || state.multimodalConfigured.geminiConfigured) && (
+          {(state.multimodalConfigured.openaiConfigured || state.multimodalConfigured.geminiConfigured || state.multimodalConfigured.siliconflowConfigured) && (
             <button
               onClick={() => state.handleClearMultimodal({
                 clearFailed: t('sidepanel.settings.clearFailed'),
