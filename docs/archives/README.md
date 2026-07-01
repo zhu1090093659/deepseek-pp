@@ -77,3 +77,13 @@
 - GitHub repository: `zhu1090093659/deepseek-pp`
 - GitHub milestones: #31-#36
 - GitHub issues: #152-#181
+
+### browser-control-parity
+
+- Description: Gemini-Nexus parity browser control in DeepSeek++ with Chromium CDP, Accessibility Tree UID snapshots, controlled tabs/groups, browser action tools, sidepanel controls, and validation.
+- Date range: 2026-06-14 - 2026-07-01
+- Tracking mode: GITHUB_STANDARD
+- Archived progress: [MASTER.md](browser-control-parity/progress/MASTER.md)
+- GitHub repository: `zhu1090093659/deepseek-pp`
+- GitHub milestones: #37-#42
+- GitHub issues: #189-#207

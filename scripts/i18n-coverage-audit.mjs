@@ -29,6 +29,8 @@ const pathAllowlist = new Map([
   ['core/skill/github-importer.ts', 'GitHub Skill import combines source-authored prompt content and diagnostics; surrounding import UI is locale-backed'],
   ['core/skill/officecli-library.ts', 'OfficeCLI bundled instructions and DeepSeek++ execution guardrails intentionally preserve their authored language'],
   ['core/skill/officecli-official', 'bundled official OfficeCLI Skill content is source-authored and not locale-projected'],
+  ['core/skill/spec-driven-develop-library.ts', 'Spec-Driven Develop bundled instructions and DeepSeek++ execution guardrails intentionally preserve their authored language'],
+  ['core/skill/spec-driven-develop-official', 'bundled Spec-Driven Develop Skill content is source-authored and not locale-projected'],
   ['core/scenario/store.ts', 'built-in scenario templates are persisted user-editable prompt data and are guarded from locale mutation'],
   ['core/shell/contracts.ts', 'Shell MCP tool metadata mirrors the native-host contract; sidepanel Shell UI is locale-backed'],
   ['core/sync/schema.ts', 'WebDAV sync schema errors protect persisted user data and are not translated during sync validation'],

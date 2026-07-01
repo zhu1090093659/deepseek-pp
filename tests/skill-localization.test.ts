@@ -183,4 +183,53 @@ describe('builtin skill localization', () => {
     expect(remote.instructions).toBe('Remote original instructions');
     expect(remote.enabled).toBe(false);
   });
+
+  describe('Spec-Driven Develop bundled skills', () => {
+    const SDD_SKILL_NAMES = ['spec-driven-develop', 'deep-discuss', 'review-spd'];
+
+    it('registers all three skills as third-party with spec-driven-develop provider and homepage', () => {
+      for (const name of SDD_SKILL_NAMES) {
+        const skill = findSkill(BUILTIN_SKILLS, name);
+        expect(skill.source).toBe('third-party');
+        expect(skill.metadata?.provider).toBe('spec-driven-develop');
+        expect(skill.metadata?.homepage).toBe('https://github.com/zhu1090093659/spec_driven_develop');
+      }
+    });
+
+    it('enables deep-discuss by default but disables spec-driven-develop and review-spd', () => {
+      expect(findSkill(BUILTIN_SKILLS, 'deep-discuss').enabled).toBe(true);
+      expect(findSkill(BUILTIN_SKILLS, 'spec-driven-develop').enabled).toBe(false);
+      expect(findSkill(BUILTIN_SKILLS, 'review-spd').enabled).toBe(false);
+    });
+
+    it('inlines references and scripts into spec-driven-develop instructions', () => {
+      const skill = findSkill(BUILTIN_SKILLS, 'spec-driven-develop');
+      expect(skill.instructions).toContain('Bundled Reference: references/behavioral-rules.md');
+      expect(skill.instructions).toContain('Bundled Reference: references/super-philosophy.md');
+      expect(skill.instructions).toContain('Bundled Reference: references/templates/plan.md');
+      expect(skill.instructions).toContain('S.U.P.E.R');
+      expect(skill.instructions).toContain('DeepSeek++ 执行边界');
+    });
+
+    it('inlines review-context.py script into review-spd instructions', () => {
+      const skill = findSkill(BUILTIN_SKILLS, 'review-spd');
+      expect(skill.instructions).toContain('Bundled Script: scripts/review-context.py');
+      expect(skill.instructions).toContain('def run_git');
+      expect(skill.instructions).toContain('Bundled Reference: references/output-format.md');
+    });
+
+    it('deep-discuss has no references and only contains the skill body', () => {
+      const skill = findSkill(BUILTIN_SKILLS, 'deep-discuss');
+      expect(skill.instructions).toContain('Deep Discuss');
+      expect(skill.instructions).not.toContain('Bundled Reference:');
+      expect(skill.instructions).not.toContain('Bundled Script:');
+    });
+
+    it('respects bundled toggle off via setSkillEnabled', async () => {
+      await setSkillEnabled('deep-discuss', false);
+      const skills = await getAllSkills({ includeDisabled: true });
+      const skill = findSkill(skills, 'deep-discuss');
+      expect(skill.enabled).toBe(false);
+    });
+  });
 });

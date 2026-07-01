@@ -31,6 +31,7 @@ interface ThirdPartySkillGroup {
   title: string;
   subtitle: string;
   badgeKey: LocaleMessageKey;
+  url?: string;
   skills: Skill[];
 }
 
@@ -379,14 +380,21 @@ function ThirdPartySkillSection({ groups, expandedGroups, onToggleGroup, onToggl
         return (
           <div key={group.id} className="ds-surface-panel rounded-xl overflow-hidden">
             <div className="flex items-center gap-2 p-3">
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 aria-expanded={expanded}
                 aria-label={expanded
                   ? t('sidepanel.skillPage.collapseSource', { source: group.title })
                   : t('sidepanel.skillPage.expandSource', { source: group.title })}
                 onClick={() => onToggleGroup(group.id)}
-                className="min-w-0 flex-1 flex items-center gap-2 text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--ds-blue)]"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onToggleGroup(group.id);
+                  }
+                }}
+                className="min-w-0 flex-1 flex items-center gap-2 text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--ds-blue)] cursor-pointer"
               >
                 <svg
                   className={`w-3.5 h-3.5 shrink-0 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
@@ -400,9 +408,22 @@ function ThirdPartySkillSection({ groups, expandedGroups, onToggleGroup, onToggl
                 </svg>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs font-semibold truncate" style={{ color: 'var(--ds-text)' }}>
-                      {group.title}
-                    </span>
+                    {group.url ? (
+                      <a
+                        href={group.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs font-semibold truncate hover:underline"
+                        style={{ color: 'var(--ds-blue)' }}
+                      >
+                        {group.title}
+                      </a>
+                    ) : (
+                      <span className="text-xs font-semibold truncate" style={{ color: 'var(--ds-text)' }}>
+                        {group.title}
+                      </span>
+                    )}
                     <span className="ds-badge-warning inline-flex text-[10px] px-1.5 py-0.5 rounded-full font-medium">
                       {t(group.badgeKey)}
                     </span>
@@ -414,7 +435,7 @@ function ThirdPartySkillSection({ groups, expandedGroups, onToggleGroup, onToggl
                     })}
                   </span>
                 </span>
-              </button>
+              </div>
               <button
                 type="button"
                 onClick={() => onToggleGroupEnabled(group)}
@@ -609,6 +630,7 @@ function getThirdPartyGroupDescriptor(
     title: provider,
     subtitle: t('sidepanel.skillPage.bundledThirdPartySource'),
     badgeKey: 'sidepanel.skill.sources.thirdParty',
+    ...(skill.metadata?.homepage ? { url: skill.metadata.homepage } : {}),
   };
 }
 
