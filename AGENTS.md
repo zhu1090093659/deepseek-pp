@@ -63,6 +63,7 @@ Run applicable validation in this order:
 1. Targeted tests for changed behavior.
 2. `npm run compile` and applicable static checks.
 3. `npm run prompt:freeze` when prompt, tool, Skill, memory, project, or inline-agent behavior may be affected.
+   Update prompt goldens only through `npm run prompt:freeze:update`, after the active Issue explicitly authorizes the byte change and the generated diff has been reviewed.
 4. Affected browser builds; use `npm run build:all` for cross-browser or closure tasks.
 5. `npm run verify:manifest-policy` and `npm run verify:extension-utf8` when manifests, assets, permissions, or build output change.
 6. The narrow smoke test for the changed runtime, followed by `npm run ci:quality` at compatibility/release closure.

@@ -129,6 +129,8 @@ describe('runInlineAgentLoop', () => {
     await run;
 
     expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[1]?.[0].prompt)
+      .toContain('This is no-tool-call correction attempt 2.');
     expect(executeTool).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
       finalText: expect.stringContaining('paused after 25 automated tool-continuation rounds'),

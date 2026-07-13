@@ -1,0 +1,56 @@
+{
+  "invocationNames": [
+    "memory_save",
+    "mcp_browser_tools_capture_page",
+    "capture_page",
+    "mcp_shell_local_shell_exec",
+    "shell_exec"
+  ],
+  "tags": [
+    [
+      "<memory_save>",
+      "</memory_save>"
+    ],
+    [
+      "<mcp_browser_tools_capture_page>",
+      "</mcp_browser_tools_capture_page>"
+    ],
+    [
+      "<capture_page>",
+      "</capture_page>"
+    ],
+    [
+      "<mcp_shell_local_shell_exec>",
+      "</mcp_shell_local_shell_exec>"
+    ],
+    [
+      "<shell_exec>",
+      "</shell_exec>"
+    ]
+  ],
+  "opening": {
+    "index": 7,
+    "endIndex": 41,
+    "name": "mcp_browser_tools_capture_page",
+    "raw": "< mcp_browser_tools_capture_page >",
+    "closing": false
+  },
+  "closing": {
+    "index": 73,
+    "endIndex": 109,
+    "name": "mcp_browser_tools_capture_page",
+    "raw": "< / mcp_browser_tools_capture_page >",
+    "closing": true
+  },
+  "partialOpeningTail": 23,
+  "partialClosingTail": 25,
+  "partialOpeningEightSpaces": 30,
+  "partialOpeningNineSpaces": 0,
+  "completeOpeningNineSpaces": {
+    "index": 0,
+    "endIndex": 21,
+    "name": "shell_exec",
+    "raw": "<         shell_exec>",
+    "closing": false
+  }
+}

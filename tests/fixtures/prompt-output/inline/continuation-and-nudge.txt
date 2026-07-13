@@ -1,0 +1,65 @@
+continuation:
+These are the tool results just executed for the tool-continuation task. Continue like a real agent, using the original task and these tool results to move the work forward.
+If the results are enough, output the final answer. Only call more tools when more information, verification, or file changes are truly needed.
+Do not ask the user to click continue, and do not output pseudo tool-call JSON. When more action is needed, output only executable XML tool tags.
+
+<original_task>
+Verify the compatibility contract and report exact evidence.
+</original_task>
+At least one tool failed. Do not stop because of a recoverable error; read summary/detail/error, fix the parameters or choose a suitable next step, and continue completing the task.
+
+<tool_results>
+[
+  {
+    "tool": "capture_page",
+    "provider": "Browser Tools",
+    "ok": true,
+    "summary": "Captured the compatibility page",
+    "detail": "Title: Compatibility Contract",
+    "output": "{\"title\":\"Compatibility Contract\",\"url\":\"https://example.test/contracts\"}",
+    "truncated": false
+  },
+  {
+    "tool": "shell_exec",
+    "provider": "Shell Local",
+    "ok": false,
+    "summary": "Command failed",
+    "detail": "exit code 2",
+    "error": {
+      "code": "shell_exit_nonzero",
+      "message": "Command exited with code 2",
+      "retryable": true
+    },
+    "truncated": false
+  }
+]
+</tool_results>
+
+nudge:
+上一轮回复没有包含任何可执行工具 XML，因此自动化续跑无法继续执行。
+请根据原始任务和工具结果二选一：
+1. 如果任务仍未完成，本轮必须直接输出下一步可执行工具 XML。
+2. 如果任务已经完成，输出 <task_complete>{"summary":"..."}</task_complete>。
+这是第 2 次无工具调用纠偏。
+
+<original_task>
+验证兼容性契约并报告证据。
+</original_task>
+
+<previous_assistant_text>
+我会继续调用工具完成验证。
+</previous_assistant_text>
+
+<tool_results_so_far>
+[
+  {
+    "tool": "capture_page",
+    "provider": "Browser Tools",
+    "ok": true,
+    "summary": "Captured the compatibility page",
+    "detail": "Title: Compatibility Contract",
+    "output": "{\"title\":\"Compatibility Contract\",\"url\":\"https://example.test/contracts\"}",
+    "truncated": false
+  }
+]
+</tool_results_so_far>

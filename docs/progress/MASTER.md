@@ -30,7 +30,7 @@
 
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
-| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 5 | 0 | 5 |
+| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 4 | 1 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 6 | 0 | 6 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
@@ -41,7 +41,7 @@
 
 | Task ID | Issue | Title | Status |
 |:--|:--|:--|:--|
-| T1.1 | [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) | Establish compatibility contract registry | open |
+| T1.1 | [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) | Establish compatibility contract registry | closed |
 | T1.2 | [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312) | Freeze prompt, tool XML, and inline-agent output | open |
 | T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | open |
 | T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | open |
@@ -91,7 +91,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Phase Checklist
 
-- [ ] Phase 1: Compatibility Firewall (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
+- [ ] Phase 1: Compatibility Firewall (1/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [ ] Phase 2: Critical Boundaries and Failure Safety (0/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
@@ -102,9 +102,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 1 — Compatibility Firewall (in progress)
 
-**Active Task**: T1.1 / [Issue #311](https://github.com/zhu1090093659/deepseek-pp/issues/311) — Establish compatibility contract registry.
+**Active Task**: T1.2 / [Issue #312](https://github.com/zhu1090093659/deepseek-pp/issues/312) — Freeze prompt, tool XML, and inline-agent output.
 
-**Execution Branch**: `codex/311-compatibility-registry`
+**Execution Branch**: `codex/312-prompt-output-freeze`
 
 **Blockers**: None for Phase 1. The current working tree contains user-owned floating-chat compatibility changes; they are an overlap guard for T4.3, not a blocker for earlier phases.
 
@@ -117,6 +117,14 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Relative registry links, unique stable IDs, runtime `119/89/32/2` set differences, repository script names, and root `CLAUDE.md` absence were checked from the isolated worktree.
 - Final checks passed: TypeScript compile, prompt source freeze (10 cases), Chrome/Edge/Firefox builds, manifest policy, and extension UTF-8/ASCII policy. Read-only contract reviews also passed targeted prompt/runtime (7 files / 34 tests), persistence (14 / 88), and platform/integration (15 / 106) suites with hard 60-second timeouts and no orphan test/smoke processes.
 - No production or test source file changed in T1.1; unresolved unsafe behavior is marked `Gap` or `Preserve + Gap`, not frozen as successful compatibility.
+
+**T1.2 Evidence**:
+
+- Replaced ten source-snippet hashes with four raw UTF-8 golden files generated from production prompt, request-augmentation, MCP normalization, XML-tag, and inline-agent functions.
+- Covered composed memory/Skill/preset/project context, MCP and Shell descriptors, English thinking and Chinese chat prompts, XML aliases and 8/9-space boundaries, inline continuation/nudge output, prompt truncation, the hidden placeholder, and one-shot externalized-payload mismatch deletion.
+- `npm run prompt:freeze` is read-only, has a 60-second hard timeout, and reports readable line diffs; updates require the explicit `npm run prompt:freeze:update` command.
+- A deliberate golden drift was rejected with the expected focused line diff, then the reviewed fixture was regenerated explicitly; no production output changed.
+- Targeted validation passed 9 files / 46 tests; the full clean-worktree suite passed 63 files / 363 tests, TypeScript compile passed, and no Vitest/Vite child process remained.
 
 ## Governance Status
 
@@ -139,9 +147,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Open and verify the Issue #311 PR for the completed T1.1 implementation.
+1. Open and verify the Issue #312 PR with the completed byte-level compatibility evidence.
 2. Record execution telemetry and update Milestone #43 after required PR checks pass.
-3. Merge T1.1, then advance to the independent T1.2-T1.5 compatibility-fixture lanes.
+3. Merge T1.2, then advance to the next independent Phase 1 compatibility-fixture lane.
 
 ## Session Log
 
@@ -150,3 +158,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | Analysis and planning | Completed repository analysis and baseline validation; confirmed scope and governance; generated 6 phases / 26 tasks; created Milestones #43-#48 and Issues #311-#336; converted `AGENTS.md` to the canonical Codex-first instruction surface. |
 | 2026-07-13 | Phase 1 execution start | Verified local/remote main at `165ec46`, opened isolated branch `codex/311-compatibility-registry`, and started T1.1 / Issue #311. |
 | 2026-07-13 | T1.1 implementation | Built the compatibility registry and runtime-command annex, completed three independent source reviews, corrected mixed Preserve/Gap semantics, and passed the documentation/static/build acceptance checks. |
+| 2026-07-13 | T1.1 closure | Merged PR #337 at `48c6a00`, closed Issue #311, recorded task telemetry, and advanced Milestone #43 to 1/5 completed with zero cumulative drift. |
+| 2026-07-13 | T1.2 execution start | Opened isolated branch `codex/312-prompt-output-freeze` from `48c6a00` and started byte-level output characterization for Issue #312. |
+| 2026-07-13 | T1.2 implementation | Replaced source hashes with explicit raw UTF-8 goldens, froze XML/inline gaps without changing production output, and passed targeted, full-suite, compile, drift-diff, and orphan-process checks. |

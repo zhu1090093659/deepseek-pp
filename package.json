@@ -41,6 +41,7 @@
     "smoke:pow": "node scripts/pow-smoke.mjs",
     "smoke:web": "node scripts/web-search-smoke.mjs",
     "prompt:freeze": "node scripts/prompt-freeze.mjs",
+    "prompt:freeze:update": "node scripts/prompt-freeze.mjs --update",
     "smoke:shell": "node scripts/shell-smoke.mjs",
     "smoke:mcp": "node scripts/mcp-smoke.mjs",
     "verify:automation": "node scripts/automation-contract-smoke.mjs",
