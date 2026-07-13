@@ -106,7 +106,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Execution Branch**: `codex/318-android-native-bridge`
 
-**Blockers**: Android JVM, Gradle, APK, and WebView runtime checks are unavailable because this machine has no usable JDK, Gradle/wrapper, or Android SDK. JavaScript/static validation remains available; the isolated worktree keeps the original repository's user-owned changes untouched.
+**Blockers**: None. This machine still lacks a usable JDK/Android SDK, but the hosted JDK 17 + Gradle 8.9 contract compiles the Android app and runs its JVM suite; the isolated worktree keeps the original repository's user-owned changes untouched.
 
 **Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and Android asset staging passing. Android runtime validation was unavailable because this machine lacked a usable JDK/Gradle.
 
@@ -172,7 +172,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Added strict protocol v1 decoding with one correlated async dispatcher, four native commands, three low-sensitivity UI preference keys, bounded atomic batches, stable errors, and an audited runtime subset. Removed arbitrary preferences, prompt/tool trace history, captured-header access, stale project context, raw error leakage, and the empty-file download mock.
 - Added Android compatibility for T2.2's authorization lifecycle through bounded empty-descriptor grants while keeping tool execution, payload chunks, sandbox, MCP mutation, and browser parity unsupported.
 - Strict JSON decoding rejects Android `org.json` extensions, trailing input, duplicate keys, and Unicode-escape-equivalent keys before platform parsing. Fake-store JVM tests cover storage atomicity/corruption and the bounded authorization lifecycle; three independent contract reviews report no remaining P0/P1/P2.
-- Full `npm run ci:quality` passed with 84 files / 592 tests, seven prompt goldens, TypeScript compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. The separate 60-second full suite passed, Android staging produced 35 files with a byte-identical shim, and no orphan Vitest/Gradle process remained. Local `testDebugUnitTest` fails explicitly because no JDK is installed; the hosted Android JVM contract is the pending compile/runtime gate.
+- Full local and hosted `npm run ci:quality` passed with 84 files / 592 tests, seven prompt goldens, TypeScript compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. The separate 60-second full suite passed, Android staging produced 35 files with a byte-identical shim, and no orphan Vitest/Gradle process remained.
+- Local `testDebugUnitTest` fails explicitly because no JDK is installed. Hosted run `29254635243` compiled the Android app with aligned Java/Kotlin 17 targets and passed all 15 JVM tests; its repository quality job also passed. Two earlier Android runs exposed and drove removal of the JVM-target mismatch and platform-`org.json` assumptions rather than being bypassed.
 
 ## Governance Status
 
@@ -195,9 +196,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Commit and open the Issue #318 PR from the isolated branch.
-2. Require the hosted Android JVM contract and all repository checks to pass; fix any Kotlin/Gradle failure at the root cause.
-3. Record telemetry, merge the PR, advance Milestone #44 to 3/6, and continue with T2.4.
+1. Record T2.3 telemetry on Issue #318.
+2. Merge PR #344 after its green Android JVM, contribution, and repository quality checks.
+3. Verify Issue #318 closure, advance Milestone #44 to 3/6, and continue with T2.4.
 
 ## Session Log
 
