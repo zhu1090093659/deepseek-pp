@@ -1,9 +1,12 @@
 import { runWorkerSandbox } from '../../core/sandbox/worker-runner';
 import {
+  isTrustedSandboxMessageEvent,
   normalizeSandboxBoundaryRequest,
   parseSandboxEnvelope,
+  readSandboxRequestId,
   SANDBOX_FRAME_TARGET_ORIGIN,
   SANDBOX_MESSAGE_TYPES,
+  SANDBOX_OPAQUE_EVENT_ORIGIN,
   type SandboxExecutionResult,
   type SandboxRunRequest,
 } from '../../core/sandbox';
@@ -14,12 +17,18 @@ type SandboxRunnerRequest = SandboxRunRequest & {
 
 const HTML_EXECUTION_DELAY_MS = 250;
 const HTML_OUTPUT_LIMIT = 12_000;
+const runnerUrl = new URL(window.location.href);
+const EXTENSION_ORIGIN = `${runnerUrl.protocol}//${runnerUrl.host}`;
 
 window.addEventListener('message', (event) => {
-  if (event.source !== parent) return;
+  if (!isTrustedSandboxMessageEvent(event.source, parent, event.origin, EXTENSION_ORIGIN)) return;
 
   const envelope = parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.frameRun);
-  if (!envelope) return;
+  if (!envelope) {
+    const requestId = readSandboxRequestId(event.data, SANDBOX_MESSAGE_TYPES.frameRun);
+    if (requestId) postFrameFailure(requestId, 'Invalid sandbox frame request.');
+    return;
+  }
 
   void runApprovedCode(envelope.requestId, envelope.payload);
 });
@@ -57,11 +66,27 @@ async function runApprovedCode(requestId: string, payload: unknown): Promise<voi
   }
 }
 
+function postFrameFailure(requestId: string, message: string): void {
+  parent.postMessage({
+    type: SANDBOX_MESSAGE_TYPES.frameResult,
+    requestId,
+    result: {
+      ok: false,
+      stdout: '',
+      stderr: message,
+      durationMs: 0,
+      truncated: false,
+      error: 'sandbox_request_invalid',
+    },
+  }, SANDBOX_FRAME_TARGET_ORIGIN);
+}
+
 function validateRequest(payload: unknown): SandboxRunnerRequest {
   return normalizeSandboxBoundaryRequest(payload, {
     invalidLanguage: 'Sandbox runner only supports JavaScript, TypeScript, Python, and HTML.',
     invalidCode: 'Sandbox code must be a non-empty string.',
     includePyodideBaseUrl: true,
+    pyodideOrigin: EXTENSION_ORIGIN,
   });
 }
 
@@ -103,11 +128,20 @@ function runHtmlSandbox(request: SandboxRunnerRequest): Promise<SandboxExecution
     }, request.timeoutMs);
 
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== frame.contentWindow) return;
-      const value = event.data && typeof event.data === 'object'
-        ? event.data as { type?: unknown; requestId?: unknown; level?: unknown; values?: unknown; html?: unknown; text?: unknown; title?: unknown; message?: unknown }
-        : {};
-      if (value.requestId !== htmlRequestId) return;
+      if (!isTrustedSandboxMessageEvent(
+        event.source,
+        frame.contentWindow,
+        event.origin,
+        SANDBOX_OPAQUE_EVENT_ORIGIN,
+      )) return;
+      const requestId = readSandboxRequestId(event.data, SANDBOX_MESSAGE_TYPES.htmlLog)
+        ?? readSandboxRequestId(event.data, SANDBOX_MESSAGE_TYPES.htmlError)
+        ?? readSandboxRequestId(event.data, SANDBOX_MESSAGE_TYPES.htmlDone);
+      if (requestId !== htmlRequestId) return;
+      const value = parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.htmlLog, htmlRequestId)
+        ?? parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.htmlError, htmlRequestId)
+        ?? parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.htmlDone, htmlRequestId);
+      if (!value) return;
       if (value.type === SANDBOX_MESSAGE_TYPES.htmlLog) {
         const level = typeof value.level === 'string' ? value.level : 'log';
         const values = Array.isArray(value.values) ? value.values : [];

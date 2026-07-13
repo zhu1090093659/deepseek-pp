@@ -135,35 +135,35 @@ export const SANDBOX_ERROR_CODES = [
   'sandbox_html_error',
 ] as const;
 
-export const SANDBOX_CURRENT_GAPS = [
+export const SANDBOX_BOUNDARY_REGRESSION_CASES = [
   {
     name: 'core normalizer ignores unknown request fields',
     input: { language: 'javascript', code: 'return 42;', privilege: 'unexpected' },
-    target: 'reject-or-strip-explicitly-after-T2.1',
+    target: 'explicit-strip-at-T2.1-boundary',
   },
   {
-    name: 'RUN_ARTIFACT_CODE bypasses the core 30000-byte limit',
+    name: 'RUN_ARTIFACT_CODE shares the core 30000-byte limit',
     input: { type: 'RUN_ARTIFACT_CODE', payload: { language: 'javascript', code: 'x'.repeat(30_001), timeoutMs: 5_000 } },
-    target: 'shared-sandbox-boundary-after-T2.1',
+    target: 'shared-sandbox-boundary-at-T2.1',
   },
   {
-    name: 'malformed result objects normalize to an empty failure without a code',
+    name: 'malformed result objects become explicit invalid results',
     input: {},
-    target: 'explicit-invalid-result-after-T2.1',
+    target: 'explicit-invalid-result-at-T2.1-boundary',
   },
   {
     name: 'frame bridge uses wildcard target origin with source identity checks',
     input: { targetOrigin: '*', sourceCheck: true },
-    target: 'explicit-sandbox-origin-policy-after-T2.1',
+    target: 'opaque-sandbox-origin-policy-at-T2.1',
   },
   {
-    name: 'array-like envelopes with custom type and requestId fields pass the shallow parser',
+    name: 'array-like envelopes with custom type and requestId fields are rejected',
     input: Object.assign([], { type: 'DPP_SANDBOX_RUN', requestId: 'array-contract-1' }),
-    target: 'reject-malformed-envelope-after-T2.1',
+    target: 'reject-malformed-envelope-at-T2.1-boundary',
   },
   {
-    name: 'result envelope can omit its nested result field',
+    name: 'result envelope cannot omit its nested result field',
     input: { type: 'OFFSCREEN_SANDBOX_RESULT', requestId: 'missing-result-1' },
-    target: 'reject-malformed-envelope-after-T2.1',
+    target: 'reject-malformed-envelope-at-T2.1-boundary',
   },
 ] as const;

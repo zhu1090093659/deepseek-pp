@@ -44,6 +44,7 @@ When prose and executable behavior disagree, verify the code and tests, then upd
 - Define contracts before implementations. Contract modules must not import concrete browser, DOM, provider, or entrypoint implementations.
 - Introduce only narrow environment ports. A new port must gain a production consumer in the same task; otherwise remove it. Do not expand the existing broad platform abstraction without a real consumer.
 - Cross-runtime and external-I/O contracts must be serializable and validated at the receiving trust boundary.
+- Before privileged runtime, Port, MessagePort, or frame dispatch, derive authority only from browser-provided sender, tab, frame, document, WindowProxy, and receiver-owned correlation state, then run the direction-specific codec. Message-declared source, tab, frame, session, or request IDs are routing claims, not identity; MAIN-world payloads remain untrusted. Opaque sandbox `postMessage('*')` is allowed only with exact source/origin checks and strict request correlation.
 - Content capabilities own explicit, idempotent `start/stop` lifecycles and all listeners, observers, timers, DOM roots, and mutable state they create.
 - Background entrypoints are composition/lifecycle roots; domain behavior belongs in typed handlers and services.
 - Do not add broad catches, silent defaults, mock-success paths, or unlogged fallbacks to make failures disappear. Best-effort behavior must be explicit, bounded, and tested.

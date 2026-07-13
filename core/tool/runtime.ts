@@ -54,6 +54,7 @@ import {
   parseExternalizedToolPayload,
   takeExternalizedToolPayloadText,
 } from './externalized-payload';
+import { isToolCallRecord } from '../messaging/tool-record-codec';
 
 export type RuntimeToolCallOptions = McpToolExecutionOptions;
 
@@ -112,6 +113,19 @@ export async function executeRuntimeToolCall(
   locale: SupportedLocale = DEFAULT_LOCALE,
   options: RuntimeToolCallOptions = {},
 ): Promise<ToolResult> {
+  if (!isToolCallRecord(call)) {
+    return {
+      ok: false,
+      summary: translate(locale, 'tool.runtime.invalidFormat'),
+      detail: 'Runtime tool call does not match the released contract.',
+      name: typeof (call as { name?: unknown })?.name === 'string' ? call.name : undefined,
+      error: {
+        code: 'tool_call_payload_invalid',
+        message: 'Runtime tool call does not match the released contract.',
+        retryable: false,
+      },
+    };
+  }
   const resolvedCall = await resolveToolCallPayload(call);
   const result = await executeToolCallWithoutHistory(resolvedCall, locale, options);
   try {

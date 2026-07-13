@@ -2,17 +2,19 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   executeSandboxToolCall,
+  isTrustedSandboxMessageEvent,
   normalizeSandboxBoundaryRequest,
   normalizeSandboxExecutionResult,
   normalizeSandboxRunRequest,
   parseSandboxEnvelope,
+  readSandboxRequestId,
   SANDBOX_FRAME_TARGET_ORIGIN,
   SANDBOX_MESSAGE_TYPES,
   SANDBOX_OFFSCREEN_PORT,
 } from '../core/sandbox';
 import type { ToolCall } from '../core/tool/types';
 import {
-  SANDBOX_CURRENT_GAPS,
+  SANDBOX_BOUNDARY_REGRESSION_CASES,
   SANDBOX_ENVELOPE_TYPES,
   SANDBOX_ERROR_CODES,
   SANDBOX_EXECUTION_RESULT,
@@ -137,45 +139,120 @@ describe('sandbox compatibility contract', () => {
     expect(sourceErrorCodes).toEqual(new Set(SANDBOX_ERROR_CODES));
   });
 
-  it('characterizes divergent validators and permissive result normalization as current gaps', () => {
-    expect(SANDBOX_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
-      'reject-or-strip-explicitly-after-T2.1',
-      'shared-sandbox-boundary-after-T2.1',
-      'explicit-invalid-result-after-T2.1',
-      'explicit-sandbox-origin-policy-after-T2.1',
-      'reject-malformed-envelope-after-T2.1',
-      'reject-malformed-envelope-after-T2.1',
+  it('closes divergent validators and permissive result normalization gaps', () => {
+    expect(SANDBOX_BOUNDARY_REGRESSION_CASES.map((gap) => gap.target)).toEqual([
+      'explicit-strip-at-T2.1-boundary',
+      'shared-sandbox-boundary-at-T2.1',
+      'explicit-invalid-result-at-T2.1-boundary',
+      'opaque-sandbox-origin-policy-at-T2.1',
+      'reject-malformed-envelope-at-T2.1-boundary',
+      'reject-malformed-envelope-at-T2.1-boundary',
     ]);
-    expect(normalizeSandboxRunRequest(SANDBOX_CURRENT_GAPS[0].input)).toEqual({
+    expect(normalizeSandboxRunRequest(SANDBOX_BOUNDARY_REGRESSION_CASES[0].input)).toEqual({
       language: 'javascript',
       code: 'return 42;',
       input: undefined,
       timeoutMs: 5_000,
     });
-    expect(normalizeSandboxBoundaryRequest(SANDBOX_CURRENT_GAPS[1].input.payload, {
+    expect(() => normalizeSandboxBoundaryRequest(SANDBOX_BOUNDARY_REGRESSION_CASES[1].input.payload, {
       invalidLanguage: 'invalid language',
       invalidCode: 'invalid code',
-    }).code).toHaveLength(30_001);
-    expect(normalizeSandboxExecutionResult(SANDBOX_CURRENT_GAPS[2].input)).toEqual({
-      ok: false,
-      stdout: '',
-      stderr: '',
-      result: undefined,
-      html: undefined,
-      previewText: undefined,
-      durationMs: 0,
-      truncated: false,
-      error: undefined,
-    });
-    expect(SANDBOX_FRAME_TARGET_ORIGIN).toBe(SANDBOX_CURRENT_GAPS[3].input.targetOrigin);
+    })).toThrow('code is too large; max 30000 bytes');
+    expect(() => normalizeSandboxExecutionResult(SANDBOX_BOUNDARY_REGRESSION_CASES[2].input))
+      .toThrow('Invalid sandbox execution result.');
+    expect(SANDBOX_FRAME_TARGET_ORIGIN).toBe(SANDBOX_BOUNDARY_REGRESSION_CASES[3].input.targetOrigin);
     expect(parseSandboxEnvelope(
-      SANDBOX_CURRENT_GAPS[4].input,
+      SANDBOX_BOUNDARY_REGRESSION_CASES[4].input,
       SANDBOX_MESSAGE_TYPES.frameRun,
-    )).not.toBeNull();
+    )).toBeNull();
     expect(parseSandboxEnvelope(
-      SANDBOX_CURRENT_GAPS[5].input,
+      SANDBOX_BOUNDARY_REGRESSION_CASES[5].input,
       SANDBOX_MESSAGE_TYPES.offscreenResult,
-    )).not.toBeNull();
+    )).toBeNull();
+  });
+
+  it('keeps opaque-origin sending bounded by exact source and origin checks', () => {
+    const source = {};
+    expect(SANDBOX_FRAME_TARGET_ORIGIN).toBe('*');
+    expect(isTrustedSandboxMessageEvent(source, source, 'null', 'null')).toBe(true);
+    expect(isTrustedSandboxMessageEvent({}, source, 'null', 'null')).toBe(false);
+    expect(isTrustedSandboxMessageEvent(source, source, 'https://example.test', 'null')).toBe(false);
+  });
+
+  it.each([
+    ['run without payload', { type: SANDBOX_MESSAGE_TYPES.offscreenRun, requestId: 'bad-1' }, SANDBOX_MESSAGE_TYPES.offscreenRun],
+    ['result with negative duration', {
+      type: SANDBOX_MESSAGE_TYPES.offscreenResult,
+      requestId: 'bad-2',
+      result: { ...SANDBOX_EXECUTION_RESULT, durationMs: -1 },
+    }, SANDBOX_MESSAGE_TYPES.offscreenResult],
+    ['HTML log with non-string value', {
+      type: SANDBOX_MESSAGE_TYPES.htmlLog,
+      requestId: 'bad-3',
+      level: 'log',
+      values: [{}],
+    }, SANDBOX_MESSAGE_TYPES.htmlLog],
+    ['HTML error without message', {
+      type: SANDBOX_MESSAGE_TYPES.htmlError,
+      requestId: 'bad-4',
+    }, SANDBOX_MESSAGE_TYPES.htmlError],
+    ['HTML done without serialized document', {
+      type: SANDBOX_MESSAGE_TYPES.htmlDone,
+      requestId: 'bad-5',
+      title: '',
+      text: '',
+    }, SANDBOX_MESSAGE_TYPES.htmlDone],
+  ] as const)('rejects malformed nested sandbox envelope: %s', (_name, message, type) => {
+    expect(readSandboxRequestId(message, type)).toBe(message.requestId);
+    expect(parseSandboxEnvelope(message, type)).toBeNull();
+  });
+
+  it('validates Pyodide asset URLs at the frame execution boundary', () => {
+    expect(normalizeSandboxBoundaryRequest({
+      language: 'python',
+      code: 'print(42)',
+      pyodideBaseUrl: 'chrome-extension://contract/pyodide/',
+    }, {
+      invalidLanguage: 'invalid language',
+      invalidCode: 'invalid code',
+      includePyodideBaseUrl: true,
+      pyodideOrigin: 'chrome-extension://contract',
+    })).toEqual({
+      language: 'python',
+      code: 'print(42)',
+      input: undefined,
+      timeoutMs: 15_000,
+      pyodideBaseUrl: 'chrome-extension://contract/pyodide/',
+    });
+
+    for (const pyodideBaseUrl of [
+      'https://example.test/pyodide/',
+      'chrome-extension://other/pyodide/',
+      'chrome-extension://contract/other/',
+      'chrome-extension://contract/pyodide/?override=1',
+    ]) {
+      expect(() => normalizeSandboxBoundaryRequest({
+        language: 'python',
+        code: 'print(42)',
+        pyodideBaseUrl,
+      }, {
+        invalidLanguage: 'invalid language',
+        invalidCode: 'invalid code',
+        includePyodideBaseUrl: true,
+        pyodideOrigin: 'chrome-extension://contract',
+      })).toThrow('Pyodide base URL is invalid.');
+    }
+  });
+
+  it('normalizes RUN_ARTIFACT_CODE before creating an offscreen document', () => {
+    const background = readFileSync('entrypoints/background.ts', 'utf8');
+    const start = background.indexOf('async function runBrowserSandboxToolResult');
+    const normalize = background.indexOf('normalizeSandboxRunRequest(request)', start);
+    const dispatch = background.indexOf('requestOffscreenSandboxRun(normalizedRequest)', start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(normalize).toBeGreaterThan(start);
+    expect(dispatch).toBeGreaterThan(normalize);
   });
 });
 

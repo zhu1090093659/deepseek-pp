@@ -121,7 +121,9 @@ import {
 } from '../core/voice/settings';
 import {
   normalizeSandboxExecutionResult,
+  normalizeSandboxRunRequest,
   parseSandboxEnvelope,
+  readSandboxRequestId,
   SANDBOX_MESSAGE_TYPES,
   SANDBOX_OFFSCREEN_PORT,
   type SandboxExecutionResult,
@@ -237,6 +239,14 @@ import { extractToolCalls } from '../core/interceptor/tool-parser';
 import { broadcastRuntimeUpdate } from '../core/messaging/broadcast';
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
 import {
+  authorizeRuntimeMessage,
+  createRuntimeBoundaryErrorResponse,
+  createRuntimeMessageContext,
+  decodeRuntimeMessageEnvelope,
+  type RuntimeMessageContext,
+  type RuntimeMessageEnvelope,
+} from '../core/messaging/runtime-boundary';
+import {
   createTranslator,
   DEFAULT_LOCALE,
   type LocaleMessageKey,
@@ -322,10 +332,25 @@ export default defineBackground(() => {
   scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error));
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    handleMessage(message, sender)
+    let envelope: RuntimeMessageEnvelope | undefined;
+    let context: RuntimeMessageContext;
+    try {
+      envelope = decodeRuntimeMessageEnvelope(message);
+      context = createRuntimeMessageContext(sender, {
+        runtimeId: chrome.runtime.id,
+        extensionOrigin: chrome.runtime.getURL('/'),
+        deepSeekOrigin: new URL(DEEPSEEK_HOME_URL).origin,
+      });
+      authorizeRuntimeMessage(envelope, context);
+    } catch (error) {
+      sendResponse(createRuntimeBoundaryErrorResponse(error, envelope));
+      return false;
+    }
+
+    handleMessage(envelope, context)
       .then(sendResponse)
       .catch((error) => sendResponse(createBackgroundErrorResponse(
-        message,
+        envelope,
         error,
         backgroundT('content.toolBlock.summaries.backgroundFailed'),
       )));
@@ -516,7 +541,7 @@ function reportBackgroundStartupError(code: string, error: unknown) {
 
 async function handleMessage(
   message: { type: string; payload?: unknown },
-  sender: chrome.runtime.MessageSender,
+  context: RuntimeMessageContext,
 ) {
   switch (message.type) {
     case 'GET_MEMORIES':
@@ -529,7 +554,7 @@ async function handleMessage(
 
     case 'SAVE_MEMORY': {
       const id = await saveMemory(message.payload as NewMemory);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { id };
     }
 
@@ -549,20 +574,20 @@ async function handleMessage(
       for (const memory of validatedMemories) {
         ids.push(await saveMemory(memory));
       }
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true, ids, count: ids.length };
     }
 
     case 'UPDATE_MEMORY': {
       await updateMemory(message.payload as Memory);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'DELETE_MEMORY': {
       const { id } = message.payload as { id: number };
       await deleteMemory(id);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -588,28 +613,28 @@ async function handleMessage(
       const payload = message.payload as Skill | { skill: Skill; previousName?: string };
       const { skill, previousName } = 'skill' in payload ? payload : { skill: payload, previousName: undefined };
       await saveSkill(skill, previousName);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'DELETE_SKILL': {
       const { name } = message.payload as { name: string };
       await deleteSkill(name);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'SET_SKILL_ENABLED': {
       const { name, enabled } = message.payload as { name: string; enabled: boolean };
       await setSkillEnabled(name, enabled);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'SET_SKILLS_ENABLED': {
       const { updates } = message.payload as { updates: Array<{ name: string; enabled: boolean }> };
       await setSkillsEnabled(updates);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -620,7 +645,7 @@ async function handleMessage(
 
     case 'IMPORT_GITHUB_SKILL_SOURCE': {
       const result = await importGitHubSkillSource(message.payload as GitHubSkillImportRequest);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return result;
     }
 
@@ -637,7 +662,7 @@ async function handleMessage(
     case 'IMPORT_LOCAL_SKILL_SOURCE': {
       const result = await importLocalSkillSource(message.payload as LocalSkillImportRequest);
       if (!result.ok) return result;
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return result;
     }
 
@@ -649,14 +674,14 @@ async function handleMessage(
     case 'UPDATE_GITHUB_SKILL_SOURCE': {
       const { sourceId } = message.payload as { sourceId: string };
       const result = await updateGitHubSkillSource(sourceId);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return result;
     }
 
     case 'DELETE_GITHUB_SKILL_SOURCE': {
       const { sourceId } = message.payload as { sourceId: string };
       await deleteGitHubSkillSource(sourceId);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -665,21 +690,21 @@ async function handleMessage(
 
     case 'SAVE_PRESET': {
       await savePreset(message.payload as SystemPromptPreset);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'DELETE_PRESET': {
       const { id: presetId } = message.payload as { id: string };
       await deletePreset(presetId);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'SET_ACTIVE_PRESET': {
       const { id: activeId } = message.payload as { id: string | null };
       await setActivePresetId(activeId);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -691,7 +716,7 @@ async function handleMessage(
 
     case 'SAVE_PROMPT_INJECTION_SETTINGS': {
       const settings = await savePromptInjectionSettings(message.payload as Parameters<typeof savePromptInjectionSettings>[0]);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return settings;
     }
 
@@ -700,14 +725,14 @@ async function handleMessage(
 
     case 'SAVE_SAVED_ITEM': {
       const item = await saveSavedItem(message.payload as SavedItemInput);
-      await broadcastSavedItemsUpdate(sender.tab?.id);
+      await broadcastSavedItemsUpdate(context.tabId);
       return item;
     }
 
     case 'DELETE_SAVED_ITEM': {
       const { id } = message.payload as { id: string };
       await deleteSavedItem(id);
-      await broadcastSavedItemsUpdate(sender.tab?.id);
+      await broadcastSavedItemsUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -721,7 +746,7 @@ async function handleMessage(
 
     case 'SAVE_VOICE_SETTINGS': {
       const settings = await saveVoiceSettings(message.payload as Parameters<typeof saveVoiceSettings>[0]);
-      await broadcastVoiceSettingsUpdate(sender.tab?.id);
+      await broadcastVoiceSettingsUpdate(context.tabId);
       return settings;
     }
 
@@ -738,24 +763,24 @@ async function handleMessage(
 
     case 'CREATE_MCP_SERVER': {
       const server = await createMcpServer(message.payload as McpServerCreateInput);
-      await broadcastMcpServersUpdate(sender.tab?.id);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastMcpServersUpdate(context.tabId);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return server;
     }
 
     case 'UPDATE_MCP_SERVER': {
       const { id, patch } = message.payload as { id: string; patch: McpServerUpdateInput };
       const server = await updateMcpServer(id, patch);
-      await broadcastMcpServersUpdate(sender.tab?.id);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastMcpServersUpdate(context.tabId);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return server;
     }
 
     case 'DELETE_MCP_SERVER': {
       const { id } = message.payload as { id: string };
       await deleteMcpServer(id);
-      await broadcastMcpServersUpdate(sender.tab?.id);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastMcpServersUpdate(context.tabId);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -767,8 +792,8 @@ async function handleMessage(
     case 'REFRESH_MCP_SERVER_TOOLS': {
       const { serverId } = message.payload as { serverId: string };
       const cache = await refreshMcpServerDiscovery(serverId);
-      await broadcastMcpServersUpdate(sender.tab?.id);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastMcpServersUpdate(context.tabId);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return cache;
     }
 
@@ -789,8 +814,8 @@ async function handleMessage(
     case 'TEST_MCP_SERVER_CONNECTION': {
       const { serverId } = message.payload as { serverId: string };
       const cache = await refreshMcpServerDiscovery(serverId);
-      await broadcastMcpServersUpdate(sender.tab?.id);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastMcpServersUpdate(context.tabId);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return {
         ok: cache.health.status === 'ready',
         cache,
@@ -804,7 +829,7 @@ async function handleMessage(
     case 'SET_WEB_TOOL_SETTING': {
       const { name, enabled } = message.payload as { name: WebSearchToolName; enabled: boolean };
       await setWebToolEnabled(name, enabled);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
+      await broadcastToolDescriptorsUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -813,8 +838,8 @@ async function handleMessage(
 
     case 'SAVE_BROWSER_CONTROL_SETTINGS': {
       const settings = await saveBrowserControlSettings(message.payload as Partial<BrowserControlSettings>);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
-      await broadcastBrowserControlUpdate(sender.tab?.id);
+      await broadcastToolDescriptorsUpdate(context.tabId);
+      await broadcastBrowserControlUpdate(context.tabId);
       return settings;
     }
 
@@ -822,8 +847,8 @@ async function handleMessage(
       const { enabled } = message.payload as { enabled: boolean };
       const settings = await setBrowserControlEnabled(enabled);
       if (!enabled) await browserControlService.detach();
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
-      await broadcastBrowserControlUpdate(sender.tab?.id);
+      await broadcastToolDescriptorsUpdate(context.tabId);
+      await broadcastBrowserControlUpdate(context.tabId);
       return settings;
     }
 
@@ -833,13 +858,13 @@ async function handleMessage(
     case 'SET_BROWSER_CONTROL_TARGET': {
       const { tabId } = message.payload as { tabId: number };
       const target = await browserControlService.setTarget(tabId);
-      await broadcastBrowserControlUpdate(sender.tab?.id);
+      await broadcastBrowserControlUpdate(context.tabId);
       return { ok: true, target };
     }
 
     case 'DETACH_BROWSER_CONTROL': {
       await browserControlService.detach();
-      await broadcastBrowserControlUpdate(sender.tab?.id);
+      await broadcastBrowserControlUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -890,8 +915,8 @@ async function handleMessage(
 
     case 'REFRESH_TOOL_DESCRIPTORS': {
       const tools = await refreshRuntimeToolDescriptors(currentBackgroundLocale);
-      await broadcastToolDescriptorsUpdate(sender.tab?.id);
-      await broadcastMcpServersUpdate(sender.tab?.id);
+      await broadcastToolDescriptorsUpdate(context.tabId);
+      await broadcastMcpServersUpdate(context.tabId);
       return tools;
     }
 
@@ -907,7 +932,7 @@ async function handleMessage(
     case 'EXECUTE_TOOL_CALL': {
       const call = message.payload as ToolCall;
       const result = await executeBackgroundRuntimeToolCall(call, call.source?.trigger ?? 'manual_chat');
-      await broadcastToolCallHistoryUpdate(sender.tab?.id);
+      await broadcastToolCallHistoryUpdate(context.tabId);
       return result;
     }
 
@@ -921,7 +946,7 @@ async function handleMessage(
 
     case 'CLEAR_TOOL_CALL_HISTORY': {
       await clearToolCallHistory();
-      await broadcastToolCallHistoryUpdate(sender.tab?.id);
+      await broadcastToolCallHistoryUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -933,14 +958,14 @@ async function handleMessage(
 
     case 'CREATE_PROJECT_CONTEXT': {
       const project = await createProjectContext(message.payload as Parameters<typeof createProjectContext>[0]);
-      await broadcastProjectContextUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
       return project;
     }
 
     case 'UPDATE_PROJECT_CONTEXT': {
       const { projectId, patch } = message.payload as { projectId: string; patch: Parameters<typeof updateProjectContext>[1] };
       const project = await updateProjectContext(projectId, patch);
-      await broadcastProjectContextUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
       return project;
     }
 
@@ -948,29 +973,29 @@ async function handleMessage(
       const { projectId } = message.payload as { projectId: string };
       await deleteProjectContext(projectId);
       const deletedMemories = await deleteMemoriesForProject(projectId);
-      await broadcastProjectContextUpdate(sender.tab?.id);
-      if (deletedMemories > 0) await broadcastStateUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
+      if (deletedMemories > 0) await broadcastStateUpdate(context.tabId);
       return { ok: true, deletedMemories };
     }
 
     case 'ADD_CONVERSATION_TO_PROJECT': {
       const { projectId, conversation } = message.payload as { projectId: string; conversation: Parameters<typeof addConversationToProject>[1] };
       const added = await addConversationToProject(projectId, conversation);
-      await broadcastProjectContextUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
       return { ok: true, conversation: added };
     }
 
     case 'REMOVE_CONVERSATION_FROM_PROJECT': {
       const { conversationId } = message.payload as { conversationId: string };
       await removeConversationFromProject(conversationId);
-      await broadcastProjectContextUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'SET_PENDING_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string | null };
       await setPendingProjectContext(projectId);
-      await broadcastProjectContextUpdate(sender.tab?.id);
+      await broadcastProjectContextUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -985,13 +1010,13 @@ async function handleMessage(
       const bound = bindPendingProject === true
         ? await bindPendingProjectConversation(conversation)
         : await refreshProjectConversation(conversation);
-      if (bound) await broadcastProjectContextUpdate(sender.tab?.id);
+      if (bound) await broadcastProjectContextUpdate(context.tabId);
       const project = await getProjectForConversation(conversation.conversationId);
       if (!project) return null;
-      const context = await getProjectPromptContextForConversation(conversation.conversationId);
+      const projectContext = await getProjectPromptContextForConversation(conversation.conversationId);
       return {
         projectId: project.id,
-        context: context ? formatProjectPromptContext(context) : null,
+        context: projectContext ? formatProjectPromptContext(projectContext) : null,
       };
     }
 
@@ -1018,7 +1043,7 @@ async function handleMessage(
       await saveDeepSeekApiKey(apiKey ?? '');
       officialApiChatMessages = [];
       await createContextMenus();
-      await broadcastChatAuthStatus(sender.tab?.id);
+      await broadcastChatAuthStatus(context.tabId);
       return { ok: true, configured: true };
     }
 
@@ -1026,7 +1051,7 @@ async function handleMessage(
       await clearDeepSeekApiKey();
       officialApiChatMessages = [];
       await createContextMenus();
-      await broadcastChatAuthStatus(sender.tab?.id);
+      await broadcastChatAuthStatus(context.tabId);
       return { ok: true, configured: false };
 
     case 'GET_MULTIMODAL_SETTINGS_STATUS':
@@ -1040,7 +1065,7 @@ async function handleMessage(
 
     case 'ANALYZE_MULTIMODAL_MEDIA': {
       const response = await analyzeMultimodalMedia(message.payload as MultimodalMediaAnalyzeRequest);
-      await broadcastToolCallHistoryUpdate(sender.tab?.id);
+      await broadcastToolCallHistoryUpdate(context.tabId);
       if (!response.ok) {
         return {
           ok: false,
@@ -1060,7 +1085,7 @@ async function handleMessage(
       const current = await getDeepSeekTheme();
       if (current === theme) return { ok: true };
       await saveDeepSeekTheme(theme);
-      await broadcastThemeUpdate(theme, sender.tab?.id);
+      await broadcastThemeUpdate(theme, context.tabId);
       return { ok: true };
     }
 
@@ -1072,7 +1097,7 @@ async function handleMessage(
       const current = await getModelType();
       if (newModelType === current) return { ok: true };
       await setModelType(newModelType);
-      await broadcastStateUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -1189,9 +1214,9 @@ async function handleMessage(
 
       const now = Date.now();
       await saveSyncConfig({ ...config, lastSyncAt: now });
-      await broadcastStateUpdate(sender.tab?.id);
-      if (snapshot.projectContext) await broadcastProjectContextUpdate(sender.tab?.id);
-      if (snapshot.savedItems) await broadcastSavedItemsUpdate(sender.tab?.id);
+      await broadcastStateUpdate(context.tabId);
+      if (snapshot.projectContext) await broadcastProjectContextUpdate(context.tabId);
+      if (snapshot.savedItems) await broadcastSavedItemsUpdate(context.tabId);
       return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
     }
 
@@ -1206,12 +1231,12 @@ async function handleMessage(
       }
       if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
       // Fire and forget — the streaming response is broadcast
-      handleChatSubmitPrompt(text, config, coerceRefFileIds(refFileIds), sender.tab?.id).catch(() => {});
+      handleChatSubmitPrompt(text, config, coerceRefFileIds(refFileIds), context.tabId).catch(() => {});
       return { ok: true };
     }
 
     case 'UPLOAD_DEEPSEEK_IMAGE':
-      return handleDeepSeekImageUpload(message.payload, sender.tab?.id);
+      return handleDeepSeekImageUpload(message.payload, context.tabId);
 
     case 'CHAT_NEW_SESSION':
       chatSessionId = null;
@@ -1220,7 +1245,7 @@ async function handleMessage(
       return { ok: true };
 
     case 'GET_AUTH_STATUS': {
-      return getChatAuthStatus(sender.tab?.id);
+      return getChatAuthStatus(context.tabId);
     }
 
     case 'GET_OFFICIAL_API_CHAT_CONFIG':
@@ -1230,7 +1255,7 @@ async function handleMessage(
       return saveOfficialApiChatConfig(message.payload);
 
     case 'EXPORT_DEEPSEEK_CONVERSATIONS':
-      return handleConversationExport(message.payload, sender.tab?.id);
+      return handleConversationExport(message.payload, context.tabId);
 
     case 'CANCEL_DEEPSEEK_EXPORT': {
       const { exportId } = message.payload as { exportId?: string };
@@ -1246,12 +1271,12 @@ async function handleMessage(
         current: 0,
         total: 0,
         message: backgroundT('background.export.cancelled'),
-      }, sender.tab?.id);
+      }, context.tabId);
       return { ok: true };
     }
 
     case 'AUTH_STATUS_CHANGED': {
-      await broadcastChatAuthStatus(sender.tab?.id);
+      await broadcastChatAuthStatus(context.tabId);
       return { ok: true };
     }
 
@@ -1268,7 +1293,7 @@ async function handleMessage(
       validateAutomationInput(input);
       const automation = await createAutomation(input);
       const refreshed = await refreshAutomationNextRunAt(automation.id);
-      await broadcastAutomationUpdate(sender.tab?.id);
+      await broadcastAutomationUpdate(context.tabId);
       return refreshed ?? automation;
     }
 
@@ -1278,7 +1303,7 @@ async function handleMessage(
       const automation = await updateAutomation(id, patch);
       if (!automation) return { ok: false, error: 'automation_not_found' };
       const refreshed = await refreshAutomationNextRunAt(id);
-      await broadcastAutomationUpdate(sender.tab?.id);
+      await broadcastAutomationUpdate(context.tabId);
       return refreshed ?? automation;
     }
 
@@ -1288,21 +1313,21 @@ async function handleMessage(
       const automation = await setAutomationStatus(id, status);
       if (!automation) return { ok: false, error: 'automation_not_found' };
       const refreshed = await refreshAutomationNextRunAt(id);
-      await broadcastAutomationUpdate(sender.tab?.id);
+      await broadcastAutomationUpdate(context.tabId);
       return refreshed ?? automation;
     }
 
     case 'DELETE_AUTOMATION': {
       const { id } = message.payload as { id: string };
       await deleteAutomation(id);
-      await broadcastAutomationUpdate(sender.tab?.id);
-      await broadcastAutomationRunsUpdate(sender.tab?.id);
+      await broadcastAutomationUpdate(context.tabId);
+      await broadcastAutomationRunsUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'RUN_AUTOMATION_NOW': {
       const { id } = message.payload as { id: string };
-      return runAutomationNow(id, sender.tab?.id);
+      return runAutomationNow(id, context.tabId);
     }
 
     case 'SCENARIOS_UPDATED':
@@ -1731,7 +1756,27 @@ function invalidMediaKind(index: number): never {
 
 async function runBrowserSandboxToolResult(request: SandboxRunRequest): Promise<ToolResult> {
   const startedAt = Date.now();
-  const result = await requestOffscreenSandboxRun(request);
+  let normalizedRequest: SandboxRunRequest;
+  try {
+    normalizedRequest = normalizeSandboxRunRequest(request);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      summary: backgroundT('tool.sandbox.invalidRequest'),
+      detail,
+      error: {
+        code: 'sandbox_invalid_request',
+        message: detail,
+        retryable: false,
+      },
+      startedAt,
+      completedAt: Date.now(),
+      durationMs: 0,
+      truncated: false,
+    };
+  }
+  const result = await requestOffscreenSandboxRun(normalizedRequest);
   const completedAt = Date.now();
   const detail = result.ok
     ? result.result || result.stdout || ''
@@ -1810,7 +1855,12 @@ function sendSandboxRunToOffscreen(request: SandboxRunRequest): Promise<SandboxE
 
     port.onMessage.addListener((message: unknown) => {
       const envelope = parseSandboxEnvelope(message, SANDBOX_MESSAGE_TYPES.offscreenResult, requestId);
-      if (!envelope) return;
+      if (!envelope) {
+        if (readSandboxRequestId(message, SANDBOX_MESSAGE_TYPES.offscreenResult) === requestId) {
+          settle(createSandboxFailure('Invalid sandbox offscreen result.', 'sandbox_invalid_result'));
+        }
+        return;
+      }
       settle(normalizeSandboxExecutionResult(envelope.result));
     });
 

@@ -4,7 +4,9 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export type ToolPayload = Record<string, unknown>;
 
-export type ToolProviderKind = 'local' | 'mcp';
+export const TOOL_PROVIDER_KINDS = ['local', 'mcp'] as const;
+
+export type ToolProviderKind = typeof TOOL_PROVIDER_KINDS[number];
 
 export type ToolProviderId = string;
 
@@ -12,19 +14,34 @@ export type ToolDescriptorId = string;
 
 export type ToolCallId = string;
 
-export type ToolExecutionTrigger = 'manual_chat' | 'agent_run' | 'automation' | 'test' | 'sidepanel_chat';
+export const TOOL_EXECUTION_TRIGGERS = [
+  'manual_chat',
+  'agent_run',
+  'automation',
+  'test',
+  'sidepanel_chat',
+] as const;
 
-export type ToolExecutionMode = 'auto' | 'manual' | 'disabled';
+export type ToolExecutionTrigger = typeof TOOL_EXECUTION_TRIGGERS[number];
 
-export type ToolRiskLevel = 'low' | 'medium' | 'high';
+export const TOOL_EXECUTION_MODES = ['auto', 'manual', 'disabled'] as const;
 
-export type ToolTransportKind =
-  | 'in_process'
-  | 'http'
-  | 'sse'
-  | 'streamable_http'
-  | 'stdio_bridge'
-  | 'native_messaging';
+export type ToolExecutionMode = typeof TOOL_EXECUTION_MODES[number];
+
+export const TOOL_RISK_LEVELS = ['low', 'medium', 'high'] as const;
+
+export type ToolRiskLevel = typeof TOOL_RISK_LEVELS[number];
+
+export const TOOL_TRANSPORT_KINDS = [
+  'in_process',
+  'http',
+  'sse',
+  'streamable_http',
+  'stdio_bridge',
+  'native_messaging',
+] as const;
+
+export type ToolTransportKind = typeof TOOL_TRANSPORT_KINDS[number];
 
 export interface ToolProviderIdentity {
   kind: ToolProviderKind;
@@ -37,7 +54,7 @@ export interface ToolDescriptorSchema {
   type: 'object';
   properties?: Record<string, JsonValue>;
   required?: string[];
-  additionalProperties?: boolean;
+  additionalProperties?: boolean | Record<string, JsonValue>;
   description?: string;
 }
 

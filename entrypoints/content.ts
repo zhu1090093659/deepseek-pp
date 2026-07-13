@@ -91,9 +91,18 @@ import {
   BRIDGE_HANDSHAKE_TYPES,
   BRIDGE_READY_TYPE,
   BRIDGE_SOURCES,
+  createBridgeSessionController,
   isBridgeHandshakeMessage,
   validateBridgeMessage,
+  type BridgeSessionController,
+  type BridgeSessionContext,
 } from '../core/messaging/schema';
+import {
+  BACKGROUND_RUNTIME_PATHNAMES,
+  createExtensionRuntimeMessageContext,
+  createRuntimeBoundaryErrorResponse,
+  decodeRuntimeMessageEnvelope,
+} from '../core/messaging/runtime-boundary';
 import { startDeepSeekHistoryOrganizer, type HistoryOrganizerController } from './content/adapters/history-organizer';
 import { startDeepSeekProjectSidebarOrganizer, type ProjectSidebarOrganizerController } from './content/adapters/project-sidebar-organizer';
 import { startContentUxPolish, type ContentUxPolishController } from './content/adapters/ux-polish';
@@ -568,7 +577,19 @@ export default defineContentScript({
       applyPetConfig(cfg ?? null);
     });
 
-    addRuntimeMessageListener((message, _sender, sendResponse) => {
+    addRuntimeMessageListener((message, sender, sendResponse) => {
+      let envelope;
+      try {
+        envelope = decodeRuntimeMessageEnvelope(message);
+        createExtensionRuntimeMessageContext(sender, {
+          runtimeId: chrome.runtime.id,
+          extensionOrigin: chrome.runtime.getURL('/'),
+          allowedPathnames: BACKGROUND_RUNTIME_PATHNAMES,
+        });
+      } catch (error) {
+        sendResponse(createRuntimeBoundaryErrorResponse(error, envelope));
+        return false;
+      }
       if (message.type === 'STATE_UPDATED') {
         syncToMainWorld(
           message.memories,
@@ -629,12 +650,15 @@ export default defineContentScript({
 
 let mainWorldMessageHandler: ((data: any) => void | Promise<void>) | null = null;
 const pendingMainWorldMessages: Record<string, unknown>[] = [];
+let mainWorldBridgeSessions: BridgeSessionController | null = null;
 
 function setMainWorldMessageHandler(handler: (data: any) => void | Promise<void>): void {
   mainWorldMessageHandler = handler;
 }
 
 function installMainWorldBridge(): void {
+  mainWorldBridgeSessions = createBridgeSessionController(window.location.origin);
+  window.addEventListener('pagehide', () => disconnectMainWorldPort());
   window.addEventListener('message', (event) => {
     if (!isBridgeHandshakeMessage({
       value: event.data,
@@ -643,6 +667,10 @@ function installMainWorldBridge(): void {
       expectedSource: MAIN_WORLD_SOURCE,
       expectedType: BRIDGE_REQUEST_TYPE,
       alreadyConnected: Boolean(mainWorldPort),
+      actualWindowSource: event.source,
+      expectedWindowSource: window,
+      actualTopLevel: window === window.top,
+      requireTopLevel: true,
     })) return;
     connectMainWorldPort();
   });
@@ -652,10 +680,17 @@ function connectMainWorldPort(): void {
   if (mainWorldPort) return;
 
   const channel = new MessageChannel();
+  const bridgeSession = mainWorldBridgeSessions?.open(
+    crypto.randomUUID(),
+    window.location.origin,
+    window === window.top,
+  );
+  if (!bridgeSession) return;
   mainWorldPort = channel.port1;
   mainWorldPort.onmessage = (event) => {
-    void handleMainWorldPortMessage(event.data);
+    void handleMainWorldPortMessage(event.data, bridgeSession);
   };
+  mainWorldPort.onmessageerror = () => disconnectMainWorldPort(bridgeSession);
   mainWorldPort.start();
 
   window.postMessage(
@@ -665,7 +700,16 @@ function connectMainWorldPort(): void {
   );
 }
 
-async function handleMainWorldPortMessage(data: any): Promise<void> {
+async function handleMainWorldPortMessage(
+  data: unknown,
+  bridgeSession: BridgeSessionContext,
+): Promise<void> {
+  if (!mainWorldBridgeSessions?.accepts(
+    bridgeSession,
+    window.location.origin,
+    window === window.top,
+  )) return;
+
   const message = validateBridgeMessage(data, MAIN_WORLD_SOURCE);
   if (!message) return;
 
@@ -681,6 +725,14 @@ async function handleMainWorldPortMessage(data: any): Promise<void> {
   }
 
   await mainWorldMessageHandler?.(message);
+}
+
+function disconnectMainWorldPort(bridgeSession?: BridgeSessionContext): void {
+  if (!mainWorldBridgeSessions?.close(bridgeSession)) return;
+  mainWorldPort?.close();
+  mainWorldPort = null;
+  mainWorldBridgeReady = false;
+  pendingMainWorldMessages.length = 0;
 }
 
 async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }): Promise<void> {

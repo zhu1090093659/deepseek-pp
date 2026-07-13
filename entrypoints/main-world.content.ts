@@ -21,8 +21,11 @@ import {
   BRIDGE_HANDSHAKE_TYPES,
   BRIDGE_READY_TYPE,
   BRIDGE_SOURCES,
+  createBridgeSessionController,
   isBridgeHandshakeMessage,
   validateBridgeMessage,
+  type BridgeSessionController,
+  type BridgeSessionContext,
 } from '../core/messaging/schema';
 
 const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld;
@@ -52,6 +55,7 @@ type AugmentResultMessage = {
 let contentPort: MessagePort | null = null;
 let bridgeRequestAttempts = 0;
 let bridgeRequestTimer: ReturnType<typeof setInterval> | null = null;
+let contentBridgeSessions: BridgeSessionController | null = null;
 const pendingAugmentRequests = new Map<string, PendingRequest<RequestBodyModification | null>>();
 
 export default defineContentScript({
@@ -93,6 +97,11 @@ export default defineContentScript({
 });
 
 function installContentBridge(): void {
+  contentBridgeSessions = createBridgeSessionController(window.location.origin);
+  window.addEventListener('pagehide', () => disconnectContentPort());
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted && !contentPort) startBridgeRequests();
+  });
   window.addEventListener('message', (event) => {
     if (!isBridgeHandshakeMessage({
       value: event.data,
@@ -101,19 +110,36 @@ function installContentBridge(): void {
       expectedSource: CONTENT_SOURCE,
       expectedType: BRIDGE_INIT_TYPE,
       alreadyConnected: Boolean(contentPort),
+      actualWindowSource: event.source,
+      expectedWindowSource: window,
+      actualTopLevel: window === window.top,
+      requireTopLevel: true,
       requireTransferredPort: true,
       transferredPortCount: event.ports.length,
     })) return;
 
     const [port] = event.ports;
+    const bridgeSession = contentBridgeSessions?.open(
+      crypto.randomUUID(),
+      window.location.origin,
+      window === window.top,
+    );
+    if (!bridgeSession) return;
 
     contentPort = port;
-    contentPort.onmessage = (message) => handlePortMessage(message.data);
+    contentPort.onmessage = (message) => handlePortMessage(message.data, bridgeSession);
+    contentPort.onmessageerror = () => disconnectContentPort(bridgeSession);
     contentPort.start();
     stopBridgeRequests();
     postToContent({ type: BRIDGE_READY_TYPE });
   });
 
+  startBridgeRequests();
+}
+
+function startBridgeRequests(): void {
+  if (bridgeRequestTimer || contentPort) return;
+  bridgeRequestAttempts = 0;
   bridgeRequestTimer = setInterval(() => {
     if (contentPort || bridgeRequestAttempts >= BRIDGE_REQUEST_MAX_ATTEMPTS) {
       stopBridgeRequests();
@@ -130,7 +156,13 @@ function stopBridgeRequests(): void {
   bridgeRequestTimer = null;
 }
 
-function handlePortMessage(data: unknown): void {
+function handlePortMessage(data: unknown, bridgeSession: BridgeSessionContext): void {
+  if (!contentBridgeSessions?.accepts(
+    bridgeSession,
+    window.location.origin,
+    window === window.top,
+  )) return;
+
   const validated = validateBridgeMessage(data, CONTENT_SOURCE);
   if (!validated) return;
   const message = validated as AugmentResultMessage;
@@ -154,6 +186,19 @@ function handlePortMessage(data: unknown): void {
       break;
     }
   }
+}
+
+function disconnectContentPort(bridgeSession?: BridgeSessionContext): void {
+  if (!contentBridgeSessions?.close(bridgeSession)) return;
+  contentPort?.close();
+  contentPort = null;
+  stopBridgeRequests();
+
+  for (const pending of pendingAugmentRequests.values()) {
+    clearTimeout(pending.timeout);
+    pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'));
+  }
+  pendingAugmentRequests.clear();
 }
 
 function requestAugmentedBody(body: string): Promise<RequestBodyModification | null> {

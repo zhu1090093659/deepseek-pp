@@ -185,6 +185,10 @@ export const LEGAL_BRIDGE_CASES = {
       type: 'HEADERS_CAPTURED',
       headers: { Authorization: 'Bearer contract-placeholder', 'X-App-Version': '2.0.0' },
     },
+  }, {
+    name: 'main reports that no DeepSeek headers were captured',
+    expectedSource: MAIN,
+    message: { source: MAIN, type: 'HEADERS_CAPTURED', headers: null },
   }],
   DPP_BRIDGE_READY: [{
     name: 'main acknowledges the transferred port',
@@ -211,93 +215,93 @@ export const REJECTED_BRIDGE_CASES: ReadonlyArray<{
   { name: 'non-finite timeout', message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT', id: 'augment-1', timeoutMs: Number.POSITIVE_INFINITY } },
 ];
 
-type CurrentGapBridgeCases = {
+type MalformedBridgePayloadCases = {
   [Type in BridgeMessageType]: ReadonlyArray<BridgeContractCase & {
     message: { source: string; type: Type; [key: string]: unknown };
-    target: 'reject-after-T2.1';
+    target: 'reject-at-T2.1-boundary';
   }>;
 };
 
-export const CURRENT_GAP_BRIDGE_CASES = {
+export const MALFORMED_BRIDGE_PAYLOAD_CASES = {
   SYNC_HOOK_STATE: [{
     name: 'hook state has invalid descriptor and Skill collections',
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'SYNC_HOOK_STATE', toolDescriptors: {}, skillSummaries: 'invalid' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   AUGMENT_REQUEST_BODY: [{
     name: 'augmentation request omits correlation id and body',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'AUGMENT_REQUEST_BODY' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT: [{
     name: 'timeout extension omits correlation id',
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT', timeoutMs: 190_000 },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   AUGMENT_REQUEST_BODY_RESULT: [{
     name: 'augmentation result omits ok and has an invalid result',
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_RESULT', id: 'augment-1', result: 'not-a-result' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   TOOL_CALL_STARTED: [{
     name: 'started tool event has a non-record call',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'TOOL_CALL_STARTED', data: 'not-a-tool-call' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   TOOL_CALL_CHUNK: [{
     name: 'tool chunk has invalid correlation and chunk fields',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'TOOL_CALL_CHUNK', data: { id: 7, invocationName: null, chunk: {} } },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   TOOL_CALL: [{
     name: 'tool event missing data',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'TOOL_CALL' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   RESTORE_TOOL_CALLS: [{
     name: 'restore event has a non-array records field',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'RESTORE_TOOL_CALLS', records: {} },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   RESPONSE_COMPLETE: [{
     name: 'response completion has an invalid nested payload',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'RESPONSE_COMPLETE', payload: { requestId: 7, text: null } },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   RESPONSE_TOKEN_SPEED: [{
     name: 'token speed event has an invalid nested payload',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'RESPONSE_TOKEN_SPEED', payload: { active: 'yes', tokensPerSecond: 'fast' } },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   MEMORIES_USED: [{
     name: 'memory event has non-numeric ids',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'MEMORIES_USED', ids: ['memory-7'] },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   HEADERS_CAPTURED: [{
     name: 'captured headers event has a non-record headers field',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'HEADERS_CAPTURED', headers: ['Authorization'] },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
   DPP_BRIDGE_READY: [{
     name: 'ready acknowledgement travels in the wrong direction',
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'DPP_BRIDGE_READY' },
-    target: 'reject-after-T2.1',
+    target: 'reject-at-T2.1-boundary',
   }],
-} satisfies CurrentGapBridgeCases;
+} satisfies MalformedBridgePayloadCases;
 
 export const BRIDGE_HANDSHAKE_CONTRACT = {
   legal: [
@@ -385,17 +389,17 @@ export const BRIDGE_HANDSHAKE_CONTRACT = {
       },
     },
   ],
-  currentGap: {
-    name: 'same-origin page code and array-like messages can forge the released source and type strings',
+  mainWorldTrustPolicy: {
+    name: 'same-origin page code still shares MAIN world identity after transport hardening',
     check: {
-      value: Object.assign([], { source: MAIN, type: 'DPP_BRIDGE_REQUEST' }),
+      value: { source: MAIN, type: 'DPP_BRIDGE_REQUEST' },
       actualOrigin: 'https://chat.deepseek.com',
       expectedOrigin: 'https://chat.deepseek.com',
       expectedSource: MAIN,
       expectedType: 'DPP_BRIDGE_REQUEST',
       alreadyConnected: false,
     },
-    target: 'authenticate-channel-after-T2.1',
+    target: 'treat-main-payload-as-untrusted-after-T2.1',
   },
   request: { source: MAIN, type: 'DPP_BRIDGE_REQUEST' },
   init: { source: CONTENT, type: 'DPP_BRIDGE_INIT' },

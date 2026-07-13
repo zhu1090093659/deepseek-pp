@@ -154,29 +154,33 @@ export const LEGAL_TOOL_RECORDS = {
   restoreRecord: CONTRACT_RESTORE_RECORD,
 } as const;
 
-export const CURRENT_GAP_TOOL_RECORDS = [
+export const MALFORMED_TOOL_RECORDS = [
   {
     name: 'call missing name and raw fields',
     record: { payload: {} },
     currentBehavior: 'no-authoritative-codec',
-    target: 'reject-after-T2.1',
+    family: 'call',
+    target: 'reject-at-T2.1-boundary',
   },
   {
     name: 'result missing summary',
     record: { ok: true, output: { value: 42 } },
     currentBehavior: 'accepted-by-restore-normalizer',
-    target: 'reject-after-T2.1',
+    family: 'result',
+    target: 'reject-at-T2.1-boundary',
   },
   {
     name: 'provider has an unsupported kind and transport',
     record: { kind: 'remote', id: 'unknown', displayName: 'Unknown', transport: 'websocket' },
     currentBehavior: 'accepted-by-restore-normalizer',
-    target: 'reject-after-T2.1',
+    family: 'provider',
+    target: 'reject-at-T2.1-boundary',
   },
   {
     name: 'restore record carries structurally invalid nested arrays',
     record: { id: 'restore-invalid', calls: [null], executions: [{}] },
     currentBehavior: 'consumer-dependent-failure',
-    target: 'reject-after-T2.1',
+    family: 'restoreRecord',
+    target: 'reject-at-T2.1-boundary',
   },
 ] as const;

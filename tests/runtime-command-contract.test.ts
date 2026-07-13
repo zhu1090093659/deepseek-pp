@@ -2,12 +2,14 @@ import { readFileSync } from 'node:fs';
 import * as ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
+import { decodeRuntimeMessageEnvelope } from '../core/messaging/runtime-boundary';
 import {
   RUNTIME_CURRENT_GAPS,
   RUNTIME_COMMAND_CONTRACTS,
   RUNTIME_ERROR_FIXTURES,
   RUNTIME_NOTIFICATION_TYPES,
   RUNTIME_REQUEST_FIXTURES,
+  RUNTIME_RESOLVED_BOUNDARY_CASES,
   RUNTIME_RESPONSE_FIXTURES,
   RUNTIME_TAB_RPC_TYPES,
   RUNTIME_TOPOLOGY,
@@ -98,7 +100,7 @@ describe('runtime command compatibility contract', () => {
     }
   });
 
-  it('freezes listener-level error responses independently of localized copy', () => {
+  it('freezes handler-level error responses independently of localized copy', () => {
     const nonObject = RUNTIME_ERROR_FIXTURES.nonObjectMessage;
     const tool = RUNTIME_ERROR_FIXTURES.toolHandlerRejection;
     const generic = RUNTIME_ERROR_FIXTURES.genericHandlerRejection;
@@ -114,11 +116,14 @@ describe('runtime command compatibility contract', () => {
   it('characterizes malformed routing gaps without treating them as target behavior', () => {
     expect(RUNTIME_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
       'explicit-rejection-after-T3.1',
-      'explicit-rejection-after-T3.1',
       'decoded-command-contract-after-T3.1',
       'single-exhaustive-command-map-after-T3.1',
     ]);
     expect(extractHandleMessageDefaultReturnsNull(backgroundSource)).toBe(true);
+    for (const resolved of RUNTIME_RESOLVED_BOUNDARY_CASES) {
+      expect(resolved.target).toBe('explicit-rejection-at-T2.1-boundary');
+      expect(() => decodeRuntimeMessageEnvelope(resolved.input)).toThrow();
+    }
   });
 
   it('freezes all runtime notifications and tab RPC names', () => {

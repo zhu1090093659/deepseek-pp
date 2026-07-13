@@ -1,13 +1,20 @@
 import {
+  isTrustedSandboxMessageEvent,
   normalizeSandboxBoundaryRequest,
   normalizeSandboxExecutionResult,
   parseSandboxEnvelope,
+  readSandboxRequestId,
   SANDBOX_FRAME_TARGET_ORIGIN,
   SANDBOX_MESSAGE_TYPES,
+  SANDBOX_OPAQUE_EVENT_ORIGIN,
   SANDBOX_OFFSCREEN_PORT,
   type SandboxExecutionResult,
   type SandboxRunRequest,
 } from '../../core/sandbox';
+import {
+  BACKGROUND_RUNTIME_PATHNAMES,
+  createExtensionRuntimeMessageContext,
+} from '../../core/messaging/runtime-boundary';
 
 const SANDBOX_FRAME_URL = chrome.runtime.getURL('sandbox-runner.html');
 const PYODIDE_BASE_URL = chrome.runtime.getURL('pyodide/');
@@ -21,10 +28,30 @@ const pendingRuns = new Map<string, {
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== SANDBOX_OFFSCREEN_PORT) return;
+  try {
+    createExtensionRuntimeMessageContext(port.sender ?? {}, {
+      runtimeId: chrome.runtime.id,
+      extensionOrigin: chrome.runtime.getURL('/'),
+      allowedPathnames: BACKGROUND_RUNTIME_PATHNAMES,
+    });
+  } catch {
+    port.disconnect();
+    return;
+  }
 
   port.onMessage.addListener((message: unknown) => {
     const envelope = parseSandboxEnvelope(message, SANDBOX_MESSAGE_TYPES.offscreenRun);
-    if (!envelope) return;
+    if (!envelope) {
+      const requestId = readSandboxRequestId(message, SANDBOX_MESSAGE_TYPES.offscreenRun);
+      if (requestId) {
+        port.postMessage({
+          type: SANDBOX_MESSAGE_TYPES.offscreenResult,
+          requestId,
+          result: createFailure('Invalid sandbox request.', 'sandbox_request_invalid'),
+        });
+      }
+      return;
+    }
 
     runSandboxInFrame(envelope.payload)
       .then((result) => port.postMessage({
@@ -44,10 +71,23 @@ chrome.runtime.onConnect.addListener((port) => {
 
 window.addEventListener('message', (event) => {
   const frame = document.querySelector<HTMLIFrameElement>('iframe[data-dpp-sandbox-frame="true"]');
-  if (!frame || event.source !== frame.contentWindow) return;
+  if (!frame || !isTrustedSandboxMessageEvent(
+    event.source,
+    frame.contentWindow,
+    event.origin,
+    SANDBOX_OPAQUE_EVENT_ORIGIN,
+  )) return;
 
   const envelope = parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.frameResult);
-  if (!envelope) return;
+  if (!envelope) {
+    const requestId = readSandboxRequestId(event.data, SANDBOX_MESSAGE_TYPES.frameResult);
+    const pending = requestId ? pendingRuns.get(requestId) : undefined;
+    if (!requestId || !pending) return;
+    pendingRuns.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.resolve(createFailure('Invalid sandbox frame result.', 'sandbox_invalid_result'));
+    return;
+  }
 
   const pending = pendingRuns.get(envelope.requestId);
   if (!pending) return;

@@ -5,10 +5,21 @@ import {
   sanitizeToolExecutionForRestoreStorage,
 } from '../core/tool/execution-restore';
 import { executeRuntimeToolCall } from '../core/tool/runtime';
+import {
+  isToolCallHistoryRecord,
+  isToolCallRecord,
+  isToolCallRestoreRecord,
+  isToolDescriptorRecord,
+  isToolExecutionContextRecord,
+  isToolExecutionRecord,
+  isToolProviderIdentity,
+  isToolRegistrySnapshotRecord,
+  isToolResultRecord,
+} from '../core/messaging/tool-record-codec';
 import type { ToolCardResult, ToolExecutionRecord } from '../core/types';
 import {
   CONTRACT_EXECUTION_RECORD,
-  CURRENT_GAP_TOOL_RECORDS,
+  MALFORMED_TOOL_RECORDS,
   LEGAL_TOOL_RECORDS,
 } from './fixtures/runtime-contract/tool-records';
 
@@ -42,6 +53,19 @@ describe('tool record compatibility contract', () => {
       'executionRecord',
       'restoreRecord',
     ]);
+  });
+
+  it('accepts every released record through one reusable codec authority', () => {
+    expect(isToolProviderIdentity(LEGAL_TOOL_RECORDS.provider)).toBe(true);
+    expect(isToolDescriptorRecord(LEGAL_TOOL_RECORDS.descriptor)).toBe(true);
+    expect(isToolCallRecord(LEGAL_TOOL_RECORDS.call)).toBe(true);
+    expect(isToolResultRecord(LEGAL_TOOL_RECORDS.successResult)).toBe(true);
+    expect(isToolResultRecord(LEGAL_TOOL_RECORDS.failureResult)).toBe(true);
+    expect(isToolExecutionContextRecord(LEGAL_TOOL_RECORDS.executionContext)).toBe(true);
+    expect(isToolRegistrySnapshotRecord(LEGAL_TOOL_RECORDS.registrySnapshot)).toBe(true);
+    expect(isToolCallHistoryRecord(LEGAL_TOOL_RECORDS.historyRecord)).toBe(true);
+    expect(isToolExecutionRecord(LEGAL_TOOL_RECORDS.executionRecord)).toBe(true);
+    expect(isToolCallRestoreRecord(LEGAL_TOOL_RECORDS.restoreRecord)).toBe(true);
   });
 
   it('preserves released restore normalization and storage sanitization fields', () => {
@@ -88,34 +112,54 @@ describe('tool record compatibility contract', () => {
     });
   });
 
-  it('characterizes unvalidated records without pretending every consumer accepts them', () => {
-    for (const fixture of CURRENT_GAP_TOOL_RECORDS) {
-      expect(fixture.target).toBe('reject-after-T2.1');
+  it('rejects a malformed runtime call before history or provider I/O', async () => {
+    const result = await executeRuntimeToolCall({ payload: {} } as unknown as Parameters<typeof executeRuntimeToolCall>[0], 'test', 'en');
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'tool_call_payload_invalid', retryable: false },
+    });
+    expect(chrome.storage.local.get).not.toHaveBeenCalled();
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed records before a bridge consumer sees them', () => {
+    const validators = {
+      call: isToolCallRecord,
+      result: isToolResultRecord,
+      provider: isToolProviderIdentity,
+      restoreRecord: isToolCallRestoreRecord,
+    } as const;
+    for (const fixture of MALFORMED_TOOL_RECORDS) {
+      expect(fixture.target).toBe('reject-at-T2.1-boundary');
       expect(JSON.parse(JSON.stringify(fixture.record))).toEqual(fixture.record);
+      expect(validators[fixture.family](fixture.record)).toBe(false);
     }
-    expect(CURRENT_GAP_TOOL_RECORDS.map((fixture) => fixture.currentBehavior)).toEqual([
+    expect(MALFORMED_TOOL_RECORDS.map((fixture) => fixture.currentBehavior)).toEqual([
       'no-authoritative-codec',
       'accepted-by-restore-normalizer',
       'accepted-by-restore-normalizer',
       'consumer-dependent-failure',
     ]);
 
-    const missingSummary = CURRENT_GAP_TOOL_RECORDS[1].record as unknown as ToolCardResult;
+    const missingSummary = MALFORMED_TOOL_RECORDS[1].record as unknown as ToolCardResult;
     expect(normalizeRestoredToolCardResult(missingSummary)).toEqual(missingSummary);
     const unsupportedProviderExecution = {
       name: 'capture_page',
-      provider: CURRENT_GAP_TOOL_RECORDS[2].record,
+      provider: MALFORMED_TOOL_RECORDS[2].record,
       result: CONTRACT_EXECUTION_RECORD.result,
     } as unknown as ToolExecutionRecord;
     expect(normalizeRestoredToolExecution(unsupportedProviderExecution).provider)
-      .toEqual(CURRENT_GAP_TOOL_RECORDS[2].record);
-    const malformedExecution = CURRENT_GAP_TOOL_RECORDS[3].record.executions[0] as ToolExecutionRecord;
+      .toEqual(MALFORMED_TOOL_RECORDS[2].record);
+    const malformedExecution = MALFORMED_TOOL_RECORDS[3].record.executions[0] as ToolExecutionRecord;
     expect(() => normalizeRestoredToolExecution(malformedExecution)).toThrow();
 
     const payloadWithFunction = { callback: () => 'not serializable', stable: 42 };
     expect(JSON.parse(JSON.stringify(payloadWithFunction))).toEqual({ stable: 42 });
+    expect(isToolCallRecord({ ...LEGAL_TOOL_RECORDS.call, payload: payloadWithFunction })).toBe(false);
     const cyclicPayload: Record<string, unknown> = {};
     cyclicPayload.self = cyclicPayload;
     expect(() => JSON.stringify(cyclicPayload)).toThrow();
+    expect(isToolCallRecord({ ...LEGAL_TOOL_RECORDS.call, payload: cyclicPayload })).toBe(false);
   });
 });

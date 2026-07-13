@@ -30,7 +30,7 @@
 
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
-| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 1 | 4 | 5 |
+| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 6 | 0 | 6 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
@@ -45,7 +45,7 @@
 | T1.2 | [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312) | Freeze prompt, tool XML, and inline-agent output | closed |
 | T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | closed |
 | T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | closed |
-| T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | open |
+| T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | closed |
 | T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | open |
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | open |
 | T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | open |
@@ -82,16 +82,16 @@ gh issue list -R zhu1090093659/deepseek-pp \
 gh api 'repos/zhu1090093659/deepseek-pp/milestones?state=all&per_page=100' \
   --jq '.[] | select(.title | startswith("[core-refactor-2026-07]")) | {number,title,open_issues,closed_issues,description}'
 
-# Open Phase 1 tasks
+# Open Phase 2 tasks
 gh issue list -R zhu1090093659/deepseek-pp \
-  --milestone '[core-refactor-2026-07] Phase 1: Compatibility Firewall' \
+  --milestone '[core-refactor-2026-07] Phase 2: Critical Boundaries and Failure Safety' \
   --state open \
   --json number,title
 ```
 
 ## Phase Checklist
 
-- [ ] Phase 1: Compatibility Firewall (4/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
+- [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [ ] Phase 2: Critical Boundaries and Failure Safety (0/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
@@ -100,15 +100,15 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Current Status
 
-**Active Phase**: Phase 1 — Compatibility Firewall (in progress)
+**Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
 
-**Active Task**: T1.5 / [Issue #315](https://github.com/zhu1090093659/deepseek-pp/issues/315) — Freeze external runtime capability contracts.
+**Active Task**: T2.1 / [Issue #316](https://github.com/zhu1090093659/deepseek-pp/issues/316) — Harden extension runtime message boundary.
 
-**Execution Branch**: `codex/315-external-runtime-freeze`
+**Execution Branch**: `codex/316-runtime-message-boundary`
 
-**Blockers**: None for Phase 1. The current working tree contains user-owned floating-chat compatibility changes; they are an overlap guard for T4.3, not a blocker for earlier phases.
+**Blockers**: None. T2.1 runs in an isolated worktree so the original repository's user-owned changes remain untouched.
 
-**Baseline Evidence**: 63 test files / 359 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, and production audit passed on the 2026-07-13 working tree. Android runtime validation was unavailable because this machine lacked JDK/Gradle.
+**Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and Android asset staging passing. Android runtime validation was unavailable because this machine lacked a usable JDK/Gradle.
 
 **T1.1 Evidence**:
 
@@ -147,6 +147,15 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Strengthened generated Chrome/Edge/Firefox manifest assertions and made Android asset staging verify required inputs before replacing output. Existing unavailable/context-invalidated browser API degradation is now executable.
 - Targeted validation passed 5 files / 34 tests; the full suite passed 74 files / 475 tests. Compile, prompt freeze, three browser builds, exact manifest and 84-file UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and 35-file Android asset staging passed. Android APK/runtime validation remains unavailable because no usable JDK, Gradle, or wrapper is installed.
 
+**T2.1 Evidence**:
+
+- Added one runtime boundary that decodes the top-level envelope, constructs browser-owned sender/tab/frame/document context, derives document and DeepSeek route session identity, and authorizes the released 28-command DeepSeek content surface before the existing router. Extension-page behavior and the 119-case router remain intact.
+- Restricted content tab RPC/notification receivers and the sandbox offscreen Port to this extension's generated Chrome/Edge service-worker or Firefox background-page path; invalid sender, inactive document, child frame, tab mismatch, malformed envelope, and unauthorized content command cases are executable.
+- Replaced the shallow bridge validator with a direction-specific 13-type decoder, receiver-owned document session controller, and a reusable tool-record codec authority. Stale Port handlers have zero dispatch after pagehide/messageerror or replacement; BFCache opens a new epoch. Legal JSON records, MCP schema-valued `additionalProperties`, timeout behavior, and nullable captured headers remain compatible.
+- Unified `RUN_ARTIFACT_CODE` and `sandbox_run` request normalization, including the 30,000 UTF-8-byte cap, before offscreen creation. Port/frame/HTML envelopes now require strict nested results, exact source/origin, and receiver-owned correlation; opaque sandbox `postMessage('*')` remains as an explicit compatibility policy.
+- Shape-valid calls from the current bridge remain routing claims; descriptor/provider/mode/risk/call/session authorization, replay, and cross-session rejection are owned by T2.2 / Issue #317 rather than a second content-side authorization path.
+- Full `npm run ci:quality` passed: 75 files / 527 tests, seven prompt goldens, compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, 84-file UTF-8 and manifest policy, and release-asset verification. The 60-second full-test run left no orphan Vitest/Vite process.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
@@ -168,9 +177,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Run the full compatibility quality gate and review the T1.5 diff for behavior drift or duplicated contract truth.
-2. Open the Issue #315 PR and wait for all required checks.
-3. Record T1.5 telemetry, merge the PR, complete Milestone #43, and advance to T2.1.
+1. Review the final T2.1 diff for duplicated validators, hidden fallbacks, behavior drift, and security regressions.
+2. Open the Issue #316 PR and wait for all required checks.
+3. Record T2.1 telemetry, merge the PR, advance Milestone #44 to 1/6, and continue with T2.2.
 
 ## Session Log
 
@@ -191,3 +200,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T1.4 closure | Merged PR #340 at `d461c6a`, closed Issue #314, recorded task telemetry, and advanced Milestone #43 to 4/5 completed with zero cumulative drift. |
 | 2026-07-13 | T1.5 execution start | Opened isolated branch `codex/315-external-runtime-freeze` from `d461c6a` and started browser, DeepSeek, MCP/Native, Shell, installer, and Android-minimum contract characterization. |
 | 2026-07-13 | T1.5 implementation | Centralized route and Native envelope identities, added executable external-runtime fixtures, strengthened manifest and Android staging checks, and passed targeted/full test, compile, prompt, browser build, manifest, audit, protocol, Native Host, and asset-staging validation. |
+| 2026-07-13 | T1.5 closure | Merged PR #341 at `91dbe45`, closed Issue #315, completed Milestone #43 at 5/5 tasks with zero cumulative drift, and advanced to Phase 2. |
+| 2026-07-13 | T2.1 execution start | Opened isolated branch `codex/316-runtime-message-boundary` from `91dbe45` and audited runtime sender, MAIN/content, tool-record, sandbox Port, and opaque frame trust boundaries. |
+| 2026-07-13 | T2.1 implementation | Added browser-owned runtime context and content allowlisting, direction-specific bridge/tool codecs, background-only tab RPC/Port gates, shared sandbox normalization, strict frame/result decoding, and negative sender/source/payload tests without changing released legal wire records. |

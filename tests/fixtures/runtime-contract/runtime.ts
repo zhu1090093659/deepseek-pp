@@ -285,11 +285,6 @@ export const RUNTIME_CURRENT_GAPS = [
     target: 'explicit-rejection-after-T3.1',
   },
   {
-    name: 'missing command type returns ambiguous null',
-    current: {},
-    target: 'explicit-rejection-after-T3.1',
-  },
-  {
     name: 'direct payload casts do not decode external input',
     current: { type: 'GET_MEMORY_BY_ID', payload: {} },
     target: 'decoded-command-contract-after-T3.1',
@@ -298,6 +293,14 @@ export const RUNTIME_CURRENT_GAPS = [
     name: 'declared-only actions have no live route',
     current: ['TOOL_CALL_EXECUTED', 'MEMORIES_UPDATED'],
     target: 'single-exhaustive-command-map-after-T3.1',
+  },
+] as const;
+
+export const RUNTIME_RESOLVED_BOUNDARY_CASES = [
+  {
+    name: 'missing command type is rejected before the router',
+    input: {},
+    target: 'explicit-rejection-at-T2.1-boundary',
   },
 ] as const;
 

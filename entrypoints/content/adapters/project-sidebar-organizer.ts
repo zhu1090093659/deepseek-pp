@@ -5,6 +5,11 @@ import type {
   ProjectConversation,
 } from '../../../core/types';
 import {
+  BACKGROUND_RUNTIME_PATHNAMES,
+  createExtensionRuntimeMessageContext,
+  decodeRuntimeMessageEnvelope,
+} from '../../../core/messaging/runtime-boundary';
+import {
   extractHistoryItems,
   normalizeHistoryOrganizerState,
   parseSessionId,
@@ -243,7 +248,20 @@ export function startDeepSeekProjectSidebarOrganizer(
     }
   };
 
-  const messageHandler = (msg: { type?: string; state?: unknown }) => {
+  const messageHandler = (
+    msg: { type?: string; state?: unknown },
+    sender: chrome.runtime.MessageSender,
+  ) => {
+    try {
+      decodeRuntimeMessageEnvelope(msg);
+      createExtensionRuntimeMessageContext(sender, {
+        runtimeId: chrome.runtime.id,
+        extensionOrigin: chrome.runtime.getURL('/'),
+        allowedPathnames: BACKGROUND_RUNTIME_PATHNAMES,
+      });
+    } catch {
+      return;
+    }
     if (msg.type === 'PROJECT_CONTEXT_UPDATED' && isProjectContextState(msg.state)) {
       applyState(msg.state);
     }
