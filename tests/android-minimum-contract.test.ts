@@ -30,6 +30,9 @@ describe('Android minimum shared/security contract', () => {
     expect(gradle).toContain(`versionCode = ${ANDROID_MINIMUM_CONTRACT.versionCode}`);
     expect(gradle).toContain(`versionName = "${ANDROID_MINIMUM_CONTRACT.versionName}"`);
     expect(gradle).toContain('implementation("androidx.webkit:webkit:1.16.0")');
+    expect(gradle).toContain('sourceCompatibility = JavaVersion.VERSION_17');
+    expect(gradle).toContain('targetCompatibility = JavaVersion.VERSION_17');
+    expect(gradle).toContain('jvmToolchain(17)');
     expect(gradleProperties).toContain('android.useAndroidX=true');
     expect(manifest).toContain('android:usesCleartextTraffic="false"');
     expect(manifest).toContain(`android:scheme="${ANDROID_MINIMUM_CONTRACT.trustedScheme}"`);
