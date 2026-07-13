@@ -30,7 +30,7 @@ import { augmentRequestBody } from '../core/interceptor/request-augmentation';
 import { containsInternalPromptMarker, sanitizeInternalPromptText } from '../core/prompt';
 import { createRestoredArtifactToolResult } from '../core/artifact';
 import type { ResponseCompletePayload, ResponseTokenSpeedPayload } from '../core/interceptor/fetch-hook';
-import { shouldIgnoreEmptyTokenSpeedProgress } from '../core/interceptor/token-speed';
+import { shouldIgnoreEmptyTokenSpeedProgress } from '../core/deepseek/stream-metrics';
 import { runInlineAgentLoop } from '../core/inline-agent/loop';
 import {
   INCOMPLETE_TOOL_CALL_ERROR_CODE,

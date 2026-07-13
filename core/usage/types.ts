@@ -1,4 +1,4 @@
-import type { TokenMetricSource } from '../interceptor/token-speed';
+import type { TokenMetricSource } from '../deepseek/stream-metrics';
 
 export type UsageRangeDays = 7 | 30;
 export type UsageRecordSource = 'deepseek-web' | 'sidepanel-web' | 'sidepanel-api';

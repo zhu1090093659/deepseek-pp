@@ -12,11 +12,11 @@ export interface DeepSeekRoutePolicy {
   readonly method: DeepSeekHttpMethod;
 }
 
-type DeepSeekActiveRoutePolicyMap = {
+type DeepSeekWebRoutePolicyMap = {
   readonly [Route in DeepSeekWebRouteName]: DeepSeekRoutePolicy & { readonly route: Route };
 };
 
-export const DEEPSEEK_ACTIVE_ROUTE_POLICY = {
+export const DEEPSEEK_WEB_ROUTE_POLICY = {
   completion: { route: 'completion', method: 'POST' },
   regenerate: { route: 'regenerate', method: 'POST' },
   createSession: { route: 'createSession', method: 'POST' },
@@ -25,7 +25,7 @@ export const DEEPSEEK_ACTIVE_ROUTE_POLICY = {
   uploadFile: { route: 'uploadFile', method: 'POST' },
   fetchFiles: { route: 'fetchFiles', method: 'GET' },
   fetchSessions: { route: 'fetchSessions', method: 'GET' },
-} as const satisfies DeepSeekActiveRoutePolicyMap;
+} as const satisfies DeepSeekWebRoutePolicyMap;
 
 export interface EncodedDeepSeekRequest {
   readonly url: string;
@@ -35,6 +35,12 @@ export interface EncodedDeepSeekRequest {
 export interface EncodeDeepSeekRouteRequestOptions {
   readonly baseUrl?: string;
   readonly searchParams?: Readonly<Record<string, string>>;
+}
+
+export interface MatchDeepSeekWebRouteInput {
+  readonly url: string;
+  readonly method: string;
+  readonly baseUrl?: string;
 }
 
 export interface DeepSeekCompletionRequestInput {
@@ -59,20 +65,24 @@ export function createDeepSeekRouteUrl(
   return new URL(DEEPSEEK_WEB_ROUTES[route], baseUrl);
 }
 
-export function matchesActiveDeepSeekRoute(
-  url: string,
-  method: string,
-  policy: DeepSeekRoutePolicy,
-): boolean {
+export function matchDeepSeekWebRoute(
+  input: MatchDeepSeekWebRouteInput,
+): DeepSeekWebRouteName | null {
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(input.url, input.baseUrl ?? DEEPSEEK_WEB_ORIGIN);
   } catch {
-    return false;
+    return null;
   }
-  return parsed.origin === DEEPSEEK_WEB_ORIGIN &&
-    parsed.pathname === DEEPSEEK_WEB_ROUTES[policy.route] &&
-    method.toUpperCase() === policy.method;
+  if (parsed.origin !== DEEPSEEK_WEB_ORIGIN) return null;
+
+  const method = input.method.toUpperCase();
+  for (const policy of Object.values(DEEPSEEK_WEB_ROUTE_POLICY)) {
+    if (parsed.pathname === DEEPSEEK_WEB_ROUTES[policy.route] && method === policy.method) {
+      return policy.route;
+    }
+  }
+  return null;
 }
 
 export function encodeDeepSeekRouteRequest(
@@ -88,7 +98,7 @@ export function encodeDeepSeekRouteRequest(
     url: url.href,
     init: {
       ...init,
-      method: DEEPSEEK_ACTIVE_ROUTE_POLICY[route].method,
+      method: DEEPSEEK_WEB_ROUTE_POLICY[route].method,
     },
   };
 }

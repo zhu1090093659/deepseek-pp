@@ -8,7 +8,7 @@ import {
 import { extractToolCalls } from '../interceptor/tool-parser';
 import { createStreamingToolTextAccumulator } from '../interceptor/streaming-tool-text';
 import { createStreamingToolCallParser } from '../interceptor/streaming-tool-call-parser';
-import type { ResponseTokenSpeedPayload } from '../interceptor/token-speed';
+import type { ResponseTokenSpeedPayload } from '../deepseek/stream-metrics';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { executeToolCallsSequentially } from '../tool-loop/engine';
 import type { ToolCall, ToolDescriptor, ToolExecutionRecord } from '../types';

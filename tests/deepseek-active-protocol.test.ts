@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEEPSEEK_ACTIVE_ROUTE_POLICY,
+  DEEPSEEK_WEB_ROUTE_POLICY,
   encodeCompletionRequest,
   encodeCreateSessionRequest,
   encodeHistoryRequest,
   encodePowChallengeRequest,
-  matchesActiveDeepSeekRoute,
+  matchDeepSeekWebRoute,
   normalizeDeepSeekModelType,
 } from '../core/deepseek/request-codec';
 import {
@@ -24,15 +24,19 @@ import {
 describe('active DeepSeek protocol codecs', () => {
   it('matches every released web route by exact origin, path, and method', () => {
     for (const fixture of DEEPSEEK_ACTIVE_ROUTE_METHOD_FIXTURES) {
-      const policy = DEEPSEEK_ACTIVE_ROUTE_POLICY[
-        fixture.name as keyof typeof DEEPSEEK_ACTIVE_ROUTE_POLICY
-      ];
+      const route = fixture.name as keyof typeof DEEPSEEK_WEB_ROUTE_POLICY;
       const url = `${DEEPSEEK_ROUTE_CONTRACT.origin}${fixture.path}`;
-      expect(matchesActiveDeepSeekRoute(url, fixture.method, policy), fixture.name).toBe(true);
-      expect(matchesActiveDeepSeekRoute(url, fixture.method === 'GET' ? 'POST' : 'GET', policy)).toBe(false);
-      expect(matchesActiveDeepSeekRoute(`https://example.test${fixture.path}`, fixture.method, policy)).toBe(false);
-      expect(matchesActiveDeepSeekRoute(`${url}/suffix`, fixture.method, policy)).toBe(false);
-      expect(matchesActiveDeepSeekRoute(`https://example.test/?next=${fixture.path}`, fixture.method, policy)).toBe(false);
+      expect(matchDeepSeekWebRoute({ url, method: fixture.method }), fixture.name).toBe(route);
+      expect(matchDeepSeekWebRoute({
+        url,
+        method: fixture.method === 'GET' ? 'POST' : 'GET',
+      })).toBeNull();
+      expect(matchDeepSeekWebRoute({ url: `https://example.test${fixture.path}`, method: fixture.method })).toBeNull();
+      expect(matchDeepSeekWebRoute({ url: `${url}/suffix`, method: fixture.method })).toBeNull();
+      expect(matchDeepSeekWebRoute({
+        url: `https://example.test/?next=${fixture.path}`,
+        method: fixture.method,
+      })).toBeNull();
     }
   });
 
@@ -122,7 +126,7 @@ describe('active DeepSeek protocol codecs', () => {
     ]);
   });
 
-  it('decodes split UTF-8 bytes, message-id aliases, usage metadata, and FINISHED once', () => {
+  it('decodes every UTF-8 split point with stable ids, usage, and FINISHED state', () => {
     const wire = [
       'event: ready\ndata: {"requestMessageId":"10","response_message_id":11,"model_type":"vision"}',
       'data: {"p":"response/fragments/-1/content","v":"你好"}',
@@ -130,28 +134,29 @@ describe('active DeepSeek protocol codecs', () => {
       'event: update_session\ndata: {"updated_at":1003}',
     ].join('\n\n');
     const bytes = new TextEncoder().encode(wire);
-    const splitAt = bytes.indexOf(0xe5) + 1;
-    const decoder = createDeepSeekSseByteDecoder();
-    const events = [
-      ...decoder.push(bytes.slice(0, splitAt)),
-      ...decoder.push(bytes.slice(splitAt)),
-      ...decoder.finish(),
-    ];
-    const summary = createDeepSeekStreamSummary();
-    const usage = events
-      .map((event) => ({ event, parsed: parseSSEData(event.data) }))
-      .map(({ event, parsed }) => extractResponseUsageStatsFromParsed(parsed, event.type))
-      .filter((value) => value !== null);
+    for (let splitAt = 0; splitAt <= bytes.length; splitAt++) {
+      const decoder = createDeepSeekSseByteDecoder();
+      const events = [
+        ...decoder.push(bytes.slice(0, splitAt)),
+        ...decoder.push(bytes.slice(splitAt)),
+        ...decoder.finish(),
+      ];
+      const summary = createDeepSeekStreamSummary();
+      const usage = events
+        .map((event) => ({ event, parsed: parseSSEData(event.data) }))
+        .map(({ event, parsed }) => extractResponseUsageStatsFromParsed(parsed, event.type))
+        .filter((value) => value !== null);
 
-    expect(consumeDeepSeekSseEvents(events, summary)).toBe('你好');
-    expect(summary).toEqual({
-      assistantText: '你好',
-      requestMessageId: 10,
-      responseMessageId: 11,
-      finished: true,
-    });
-    expect(usage).toContainEqual({ modelType: 'vision' });
-    expect(usage).toContainEqual({ accumulatedTokenUsage: 33 });
-    expect(usage).toContainEqual({ updatedAt: 1003 });
+      expect(consumeDeepSeekSseEvents(events, summary), `split ${splitAt}`).toBe('你好');
+      expect(summary, `split ${splitAt}`).toEqual({
+        assistantText: '你好',
+        requestMessageId: 10,
+        responseMessageId: 11,
+        finished: true,
+      });
+      expect(usage, `split ${splitAt}`).toContainEqual({ modelType: 'vision' });
+      expect(usage, `split ${splitAt}`).toContainEqual({ accumulatedTokenUsage: 33 });
+      expect(usage, `split ${splitAt}`).toContainEqual({ updatedAt: 1003 });
+    }
   });
 });

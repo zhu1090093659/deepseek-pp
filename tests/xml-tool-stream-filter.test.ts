@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createArtifactToolDescriptors } from '../core/artifact';
-import { createBufferedSSEParser, XmlToolStreamFilter } from '../core/interceptor/fetch-hook';
-import { extractResponseTextFromParsed, parseSSEChunk, parseSSEData } from '../core/interceptor/sse-parser';
+import { XmlToolStreamFilter } from '../core/interceptor/fetch-hook';
+import {
+  createDeepSeekSseFrameDecoder,
+  extractResponseTextFromParsed,
+  parseSSEChunk,
+  parseSSEData,
+} from '../core/deepseek/stream-codec';
 
 describe('XmlToolStreamFilter', () => {
   it('strips whitespace-padded artifact tags with large canvas HTML across SSE events', () => {
@@ -53,14 +58,14 @@ describe('XmlToolStreamFilter', () => {
 
   it('buffers partial SSE events before parsing full-text stream state', () => {
     const parsed: unknown[] = [];
-    const parser = createBufferedSSEParser((event) => parsed.push(event));
+    const decoder = createDeepSeekSseFrameDecoder();
     const event = sseText('Split event text');
 
-    parser.append(event.slice(0, 8));
-    parser.append(event.slice(8, 21));
+    parsed.push(...decoder.push(event.slice(0, 8)).map((frame) => frame.parsed));
+    parsed.push(...decoder.push(event.slice(8, 21)).map((frame) => frame.parsed));
     expect(parsed).toEqual([]);
 
-    parser.append(event.slice(21));
+    parsed.push(...decoder.push(event.slice(21)).map((frame) => frame.parsed));
     expect(parsed).toHaveLength(1);
     expect(extractResponseTextFromParsed(parsed[0])).toBe('Split event text');
   });
@@ -68,6 +73,7 @@ describe('XmlToolStreamFilter', () => {
 
 function runFilter(chunks: string[]): string {
   const filter = new XmlToolStreamFilter(createArtifactToolDescriptors('en'));
+  const frameDecoder = createDeepSeekSseFrameDecoder();
   const decoder = new TextDecoder();
   const output: string[] = [];
   const controller = {
@@ -77,8 +83,9 @@ function runFilter(chunks: string[]): string {
   } as ReadableStreamDefaultController<Uint8Array>;
 
   for (const chunk of chunks) {
-    filter.processChunk(chunk, controller);
+    filter.processFrames(frameDecoder.push(chunk), controller);
   }
+  filter.processFrames(frameDecoder.finish(), controller);
   filter.flush(controller);
   return output.join('');
 }

@@ -1,4 +1,4 @@
-import type { TokenMetricSource } from '../interceptor/token-speed';
+import type { TokenMetricSource } from '../deepseek/stream-metrics';
 import {
   normalizeUsageRangeDays,
   summarizeUsage,

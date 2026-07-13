@@ -11,11 +11,6 @@ export const DEEPSEEK_WEB_ROUTES = {
   fetchFiles: '/api/v0/file/fetch_files',
 } as const;
 
-export const DEEPSEEK_CHAT_STREAM_ROUTE_PATHS = [
-  DEEPSEEK_WEB_ROUTES.completion,
-  DEEPSEEK_WEB_ROUTES.regenerate,
-] as const;
-
 export const DEEPSEEK_API_URL = `${DEEPSEEK_WEB_ORIGIN}${DEEPSEEK_WEB_ROUTES.completion}`;
 export const DEEPSEEK_OFFICIAL_API_URL = 'https://api.deepseek.com/chat/completions';
 export const DEEPSEEK_FILE_UPLOAD_PATH = DEEPSEEK_WEB_ROUTES.uploadFile;
@@ -29,15 +24,3 @@ export const DEEPSEEK_BODY_BUDGETS = {
   // A per-session export can be much larger than one streaming turn, while still needing a hard memory bound.
   conversationExport: 32 * 1024 * 1024,
 } as const;
-
-export function matchesReleasedDeepSeekRoute(url: string, path: string): boolean {
-  return url.includes(path);
-}
-
-export function isDeepSeekChatStreamUrl(url: string): boolean {
-  return DEEPSEEK_CHAT_STREAM_ROUTE_PATHS.some((path) => matchesReleasedDeepSeekRoute(url, path));
-}
-
-export function isDeepSeekHistoryUrl(url: string): boolean {
-  return matchesReleasedDeepSeekRoute(url, DEEPSEEK_WEB_ROUTES.history);
-}

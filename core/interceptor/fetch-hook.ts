@@ -1,8 +1,8 @@
+import { DEEPSEEK_BYPASS_HOOK_HEADER } from '../deepseek/contracts';
 import {
-  DEEPSEEK_BYPASS_HOOK_HEADER,
-  isDeepSeekChatStreamUrl,
-  isDeepSeekHistoryUrl,
-} from '../deepseek/contracts';
+  matchDeepSeekWebRoute,
+  normalizeDeepSeekMessageId,
+} from '../deepseek/request-codec';
 import type { ToolCall, ToolCallRestoreRecord, ToolCallSource, ToolDescriptor } from '../types';
 import { isInlineAgentContinuationRequest } from '../inline-agent/prompt';
 import { sanitizeInternalPromptText } from '../prompt';
@@ -13,15 +13,20 @@ import {
 } from '../tool/xml-tags';
 import { stripToolCallsFromHistory, stripToolCallsFromIDBResult } from './history-cleanup';
 import {
+  consumeDeepSeekSseFrames,
+  createDeepSeekSseFrameDecoder,
+  createDeepSeekStreamSummary,
   extractResponseTextForTokenSpeed,
   extractResponseTextFromParsed,
   extractResponseUsageStatsFromParsed,
   isResponseTextPatchPath,
-  isStreamFinishedFromParsed,
-  parseSSEChunk,
-  parseSSEData,
-} from './sse-parser';
-import { createResponseTokenSpeedTracker, type ResponseTokenSpeedPayload } from './token-speed';
+  replaceDeepSeekSseFrameData,
+  type DeepSeekSseFrame,
+} from '../deepseek/stream-codec';
+import {
+  createResponseTokenSpeedTracker,
+  type ResponseTokenSpeedPayload,
+} from '../deepseek/stream-metrics';
 import { createStreamingToolTextAccumulator } from './streaming-tool-text';
 import { createStreamingToolCallParser, type ToolCallPayloadChunk } from './streaming-tool-call-parser';
 import { extractToolCalls } from './tool-parser';
@@ -102,7 +107,7 @@ export interface RequestTerminalPayload {
   requestId: string;
 }
 
-export type { ResponseTokenSpeedPayload } from './token-speed';
+export type { ResponseTokenSpeedPayload } from '../deepseek/stream-metrics';
 
 export interface RequestContext {
   requestId: string;
@@ -129,17 +134,31 @@ export interface RequestBodyModification {
   toolDescriptors?: ToolDescriptor[];
 }
 
-function hookFetch() {
+export function hookFetch() {
   originalFetch = window.fetch;
 
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input instanceof Request
+          ? input.url
+          : null;
+    const method = init?.method !== undefined
+      ? init.method
+      : input instanceof Request
+        ? input.method
+        : 'GET';
+    const route = url !== null && typeof method === 'string'
+      ? matchDeepSeekWebRoute({ url, method, baseUrl: document.baseURI })
+      : null;
 
-    if (isDeepSeekHistoryUrl(url)) {
+    if (route === 'history') {
       return interceptHistoryResponse(originalFetch.call(this, input, init));
     }
 
-    if (!isChatStreamURL(url) || typeof init?.body !== 'string') {
+    if ((route !== 'completion' && route !== 'regenerate') || typeof init?.body !== 'string') {
       return originalFetch.call(this, input, init);
     }
 
@@ -171,17 +190,35 @@ function hookFetch() {
   };
 }
 
-function hookXHR() {
-  const xhrUrls = new WeakMap<XMLHttpRequest, string>();
+export function hookXHR() {
+  const xhrRoutes = new WeakMap<XMLHttpRequest, ReturnType<typeof matchDeepSeekWebRoute>>();
   const xhrHeaders = new WeakMap<XMLHttpRequest, Record<string, string>>();
   const origOpen = XMLHttpRequest.prototype.open;
   const origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
   const origSend = XMLHttpRequest.prototype.send;
 
   XMLHttpRequest.prototype.open = function (method: string, url: string | URL, ...rest: any[]) {
-    xhrUrls.set(this, typeof url === 'string' ? url : url.href);
+    const previousRoute = xhrRoutes.get(this);
+    const previousHeaders = xhrHeaders.get(this);
+    const routeUrl = typeof url === 'string' ? url : url instanceof URL ? url.href : null;
+    const route = typeof method === 'string' && routeUrl !== null
+      ? matchDeepSeekWebRoute({ method, url: routeUrl, baseUrl: document.baseURI })
+      : null;
+
+    // Native open() synchronously emits OPENED/readystatechange before it
+    // returns. Publish this request's metadata first so a handler that calls
+    // setRequestHeader()/send() during that event cannot observe stale state.
+    xhrRoutes.set(this, route);
     xhrHeaders.set(this, {});
-    return origOpen.apply(this, [method, url, ...rest] as any);
+    try {
+      return origOpen.apply(this, [method, url, ...rest] as any);
+    } catch (error) {
+      if (previousRoute === undefined) xhrRoutes.delete(this);
+      else xhrRoutes.set(this, previousRoute);
+      if (previousHeaders === undefined) xhrHeaders.delete(this);
+      else xhrHeaders.set(this, previousHeaders);
+      throw error;
+    }
   };
 
   XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
@@ -191,17 +228,18 @@ function hookXHR() {
   };
 
   XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
-    const url = xhrUrls.get(this);
-    if (url && isChatStreamURL(url) && typeof body === 'string') {
+    const route = xhrRoutes.get(this);
+    if ((route === 'completion' || route === 'regenerate') && typeof body === 'string') {
       const xhr = this;
       const sendChatRequest = async () => {
         const originalContext = createRequestContext(body);
+        let cancelResponseInterceptor: (() => void) | null = null;
         try {
           hookState.onHeadersCaptured(captureDeepSeekClientHeaders(xhrHeaders.get(xhr)));
           const fallbackToolDescriptors = [...hookState.toolDescriptors];
           const modified = await hookState.onRequestBody(body, originalContext.requestId);
           const requestBody = modified?.body ?? body;
-          setupXHRResponseInterceptor(xhr, createRequestContext(requestBody, {
+          cancelResponseInterceptor = setupXHRResponseInterceptor(xhr, createRequestContext(requestBody, {
             requestId: originalContext.requestId,
             ...(modified?.requestId ? { requestId: modified.requestId } : {}),
             originalPrompt: originalContext.originalPrompt,
@@ -210,7 +248,8 @@ function hookXHR() {
           }));
           return origSend.call(xhr, requestBody);
         } catch (error) {
-          hookState.onRequestTerminal({ requestId: originalContext.requestId });
+          if (cancelResponseInterceptor) cancelResponseInterceptor();
+          else hookState.onRequestTerminal({ requestId: originalContext.requestId });
           throw error;
         }
       };
@@ -224,7 +263,7 @@ function hookXHR() {
       void waitForInitialHookState().then(sendChatRequest).catch(reportSendFailure);
       return;
     }
-    if (url && isDeepSeekHistoryUrl(url)) {
+    if (route === 'history') {
       setupXHRHistoryInterceptor(this);
     }
     return origSend.call(this, body);
@@ -298,7 +337,7 @@ export function createRequestContext(bodyStr: string, overrides: RequestContextO
       originalPrompt,
       agentTaskPrompt: overrides.agentTaskPrompt ?? bodyPrompt,
       chatSessionId: typeof body.chat_session_id === 'string' ? body.chat_session_id : null,
-      parentMessageId: normalizeMessageId(body.parent_message_id),
+      parentMessageId: normalizeDeepSeekMessageId(body.parent_message_id),
       promptOptions: {
         modelType: typeof body.model_type === 'string' ? body.model_type : null,
         searchEnabled: body.search_enabled === true,
@@ -327,10 +366,6 @@ export function createRequestContext(bodyStr: string, overrides: RequestContextO
   }
 }
 
-function isChatStreamURL(url: string): boolean {
-  return isDeepSeekChatStreamUrl(url);
-}
-
 function hasBypassHookHeader(headers: HeadersInit | undefined): boolean {
   if (!headers) return false;
   return new Headers(headers).has(BYPASS_HOOK_HEADER);
@@ -341,15 +376,6 @@ function stripBypassHookHeader(headers: HeadersInit | undefined): HeadersInit | 
   const next = new Headers(headers);
   next.delete(BYPASS_HOOK_HEADER);
   return next;
-}
-
-function normalizeMessageId(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function createStreamingResponseToolState(
@@ -642,32 +668,6 @@ function extractCleanResponseTextForParsing(parsed: unknown): string | null {
   return sanitized === text ? text : '';
 }
 
-function collectAssistantMessageId(parsed: unknown, current: number | null): number | null {
-  if (!parsed || typeof parsed !== 'object') return current;
-  const value = parsed as Record<string, unknown>;
-  const direct = normalizeMessageId(value.response_message_id) ?? normalizeMessageId(value.responseMessageId);
-  if (direct !== null) return direct;
-
-  if (typeof value.p === 'string' && value.p.includes('response_message_id')) {
-    const id = normalizeMessageId(value.v);
-    if (id !== null) return id;
-  }
-
-  if (value.o === 'BATCH' && Array.isArray(value.v)) {
-    return value.v.reduce((next, item) => collectAssistantMessageId(item, next), current);
-  }
-
-  if (Array.isArray(value.v)) {
-    return value.v.reduce((next, item) => collectAssistantMessageId(item, next), current);
-  }
-
-  if (value.v && typeof value.v === 'object') {
-    return collectAssistantMessageId(value.v, current);
-  }
-
-  return current;
-}
-
 function cloneParsedWithTextPrefix(parsed: any, keepChars: number): any | null {
   const cloned = JSON.parse(JSON.stringify(parsed));
   let remaining = Math.max(0, keepChars);
@@ -743,8 +743,13 @@ export class XmlToolStreamFilter {
   private state: 'NORMAL' | 'SUPPRESSING' = 'NORMAL';
   private currentTool: string | null = null;
   private pendingText = '';
-  private pendingBlocks: Array<{ block: string; isFragmentCreation: boolean; parsed: any }> = [];
-  private chunkBuffer = '';
+  private pendingBlocks: Array<{
+    block: string;
+    separator: string;
+    sourceFrame: DeepSeekSseFrame;
+    isFragmentCreation: boolean;
+    parsed: any;
+  }> = [];
   private encoder = new TextEncoder();
 
   constructor(descriptors: readonly ToolDescriptor[] = [], visiblePrompt: string = '') {
@@ -752,49 +757,25 @@ export class XmlToolStreamFilter {
     this.toolInvocationNameSet = new Set(createToolInvocationCatalog(descriptors).invocationNames);
   }
 
-  processChunk(chunk: string, controller: ReadableStreamDefaultController<Uint8Array>) {
-    this.chunkBuffer += chunk;
-
-    // Find last complete event boundary
-    const lastBoundary = this.chunkBuffer.lastIndexOf('\n\n');
-    if (lastBoundary === -1) {
-      // No complete events yet — buffer until we have one
-      return;
-    }
-
-    // Extract complete events; keep partial remainder for next chunk
-    const completePart = this.chunkBuffer.slice(0, lastBoundary);
-    this.chunkBuffer = this.chunkBuffer.slice(lastBoundary + 2);
-
-    this.processBlocks(completePart, controller);
-  }
-
-  private processBlocks(text: string, controller: ReadableStreamDefaultController<Uint8Array>) {
-    const blocks = text.split('\n\n');
-
-    for (const block of blocks) {
-      if (!block.trim()) continue;
-
-      const dataLine = block.split('\n').find(l => l.startsWith('data:'));
-      if (!dataLine) {
-        this.emit(controller, block);
+  processFrames(
+    frames: readonly DeepSeekSseFrame[],
+    controller: ReadableStreamDefaultController<Uint8Array>,
+  ) {
+    for (const frame of frames) {
+      if (!frame.block.trim() || !frame.event || !frame.parsed) {
+        this.emit(controller, frame.block, frame.separator);
         continue;
       }
 
-      const jsonStr = dataLine.slice(5).trim();
-      const parsed = parseSSEData(jsonStr);
-      if (!parsed) {
-        this.emit(controller, block);
-        continue;
-      }
-
-      const sanitizedParsed = cloneParsedWithSanitizedInternalPrompt(parsed, this.visiblePrompt);
-      const effectiveParsed = sanitizedParsed ?? parsed;
-      const effectiveBlock = sanitizedParsed ? 'data: ' + JSON.stringify(sanitizedParsed) : block;
+      const sanitizedParsed = cloneParsedWithSanitizedInternalPrompt(frame.parsed, this.visiblePrompt);
+      const effectiveParsed = sanitizedParsed ?? frame.parsed;
+      const effectiveBlock = sanitizedParsed
+        ? replaceDeepSeekSseFrameData(frame, JSON.stringify(sanitizedParsed))
+        : frame.block;
       const text = extractResponseTextFromParsed(effectiveParsed);
       if (text === null) {
         // Non-response events, including request-message echoes, pass through after prompt cleanup.
-        this.emit(controller, effectiveBlock);
+        this.emit(controller, effectiveBlock, frame.separator);
         continue;
       }
 
@@ -809,12 +790,26 @@ export class XmlToolStreamFilter {
         if (closeTag) {
           const tailStart = closeTag.endIndex;
           const tailOffsetInCurrentText = tailStart - previousPendingLength;
-          const toolTail = this.getCurrentToolTail(effectiveParsed, text, isFragmentCreation, tailOffsetInCurrentText);
+          const toolTail = this.getCurrentToolTail(
+            effectiveParsed,
+            text,
+            isFragmentCreation,
+            tailOffsetInCurrentText,
+            frame,
+          );
           this.state = 'NORMAL';
           this.pendingText = '';
           this.currentTool = null;
           if (toolTail) {
-            this.processNormalTextBlock(controller, toolTail.block, toolTail.parsed, toolTail.text, toolTail.isFragmentCreation);
+            this.processNormalTextBlock(
+              controller,
+              toolTail.block,
+              toolTail.separator,
+              toolTail.sourceFrame,
+              toolTail.parsed,
+              toolTail.text,
+              toolTail.isFragmentCreation,
+            );
           }
           continue;
         }
@@ -822,27 +817,41 @@ export class XmlToolStreamFilter {
         if (isFragmentCreation || isBatchPatch(effectiveParsed)) {
           const modified = cloneParsedWithTextPrefix(effectiveParsed, 0);
           if (modified) {
-            this.emit(controller, 'data: ' + JSON.stringify(modified));
+            this.emit(
+              controller,
+              replaceDeepSeekSseFrameData(frame, JSON.stringify(modified)),
+              frame.separator,
+            );
           }
         }
         continue;
       }
 
       // State: NORMAL
-      this.processNormalTextBlock(controller, effectiveBlock, effectiveParsed, text, isFragmentCreation);
+      this.processNormalTextBlock(
+        controller,
+        effectiveBlock,
+        frame.separator,
+        frame,
+        effectiveParsed,
+        text,
+        isFragmentCreation,
+      );
     }
   }
 
   private processNormalTextBlock(
     controller: ReadableStreamDefaultController<Uint8Array>,
     block: string,
+    separator: string,
+    sourceFrame: DeepSeekSseFrame,
     parsed: any,
     text: string,
     isFragmentCreation: boolean,
   ) {
     const previousPendingLength = this.pendingText.length;
     this.pendingText += text;
-    this.pendingBlocks.push({ block, isFragmentCreation, parsed });
+    this.pendingBlocks.push({ block, separator, sourceFrame, isFragmentCreation, parsed });
 
     const found = this.findFirstToolOpen(this.pendingText);
     if (found) {
@@ -863,9 +872,23 @@ export class XmlToolStreamFilter {
       this.state = 'NORMAL';
       this.currentTool = null;
       this.pendingText = '';
-      const toolTail = this.getCurrentToolTail(parsed, text, isFragmentCreation, tailOffsetInCurrentText);
+      const toolTail = this.getCurrentToolTail(
+        parsed,
+        text,
+        isFragmentCreation,
+        tailOffsetInCurrentText,
+        sourceFrame,
+      );
       if (toolTail) {
-        this.processNormalTextBlock(controller, toolTail.block, toolTail.parsed, toolTail.text, toolTail.isFragmentCreation);
+        this.processNormalTextBlock(
+          controller,
+          toolTail.block,
+          toolTail.separator,
+          toolTail.sourceFrame,
+          toolTail.parsed,
+          toolTail.text,
+          toolTail.isFragmentCreation,
+        );
       }
       return;
     }
@@ -876,7 +899,7 @@ export class XmlToolStreamFilter {
 
     // Safe — flush all pending
     for (const b of this.pendingBlocks) {
-      this.emit(controller, b.block);
+      this.emit(controller, b.block, b.separator);
     }
     this.pendingBlocks = [];
     this.pendingText = '';
@@ -887,7 +910,15 @@ export class XmlToolStreamFilter {
     text: string,
     isFragmentCreation: boolean,
     tailOffsetInCurrentText: number,
-  ): { block: string; parsed: any; text: string; isFragmentCreation: boolean } | null {
+    sourceFrame: DeepSeekSseFrame,
+  ): {
+    block: string;
+    separator: string;
+    sourceFrame: DeepSeekSseFrame;
+    parsed: any;
+    text: string;
+    isFragmentCreation: boolean;
+  } | null {
     if (tailOffsetInCurrentText >= text.length) return null;
 
     const modified = cloneParsedWithTextSuffix(parsed, Math.max(0, tailOffsetInCurrentText));
@@ -897,7 +928,9 @@ export class XmlToolStreamFilter {
     if (!modifiedText) return null;
 
     return {
-      block: 'data: ' + JSON.stringify(modified),
+      block: replaceDeepSeekSseFrameData(sourceFrame, JSON.stringify(modified)),
+      separator: sourceFrame.separator,
+      sourceFrame,
       parsed: modified,
       text: modifiedText,
       isFragmentCreation: isFragmentCreation || isFragmentCreationPatch(modified),
@@ -910,21 +943,22 @@ export class XmlToolStreamFilter {
   }
 
   flush(controller: ReadableStreamDefaultController<Uint8Array>) {
-    // Process any remaining buffered chunk data
-    if (this.chunkBuffer.trim()) {
-      this.processBlocks(this.chunkBuffer, controller);
-      this.chunkBuffer = '';
-    }
     // Flush any unsent pending blocks (they were buffered as potential tool start but never confirmed)
     for (const b of this.pendingBlocks) {
-      this.emit(controller, b.block);
+      this.emit(controller, b.block, b.separator);
     }
     this.pendingBlocks = [];
     this.pendingText = '';
   }
 
-  private emit(controller: ReadableStreamDefaultController<Uint8Array>, block: string) {
-    controller.enqueue(this.encoder.encode(block + '\n\n'));
+  private emit(
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    block: string,
+    separator: string,
+  ) {
+    // Released passive output always terminated a final buffered frame. Keep
+    // that EOF contract while preserving an explicit LF/CRLF separator.
+    controller.enqueue(this.encoder.encode(block + (separator || '\n\n')));
   }
 
   private findFirstToolOpen(text: string): { idx: number; endIndex: number; tool: string } | null {
@@ -947,18 +981,22 @@ export class XmlToolStreamFilter {
     for (const entry of this.pendingBlocks) {
       const text = extractResponseTextFromParsed(entry.parsed);
       if (text === null) {
-        this.emit(controller, entry.block);
+        this.emit(controller, entry.block, entry.separator);
         continue;
       }
       if (charsSeen + text.length <= idx) {
-        this.emit(controller, entry.block);
+        this.emit(controller, entry.block, entry.separator);
         charsSeen += text.length;
       } else {
         const keepChars = idx - charsSeen;
         if (keepChars > 0 || entry.isFragmentCreation || isBatchPatch(entry.parsed)) {
           const modified = cloneParsedWithTextPrefix(entry.parsed, keepChars);
           if (modified) {
-            this.emit(controller, 'data: ' + JSON.stringify(modified));
+            this.emit(
+              controller,
+              replaceDeepSeekSseFrameData(entry.sourceFrame, JSON.stringify(modified)),
+              entry.separator,
+            );
           }
         }
         break;
@@ -967,35 +1005,82 @@ export class XmlToolStreamFilter {
   }
 }
 
-function processCompleteSSEBlocks(
-  text: string,
-  onParsed: (parsed: unknown, event: ReturnType<typeof parseSSEChunk>[number]) => void,
-): void {
-  const events = parseSSEChunk(text);
-  for (const event of events) {
-    const parsed = parseSSEData(event.data);
-    if (parsed) onParsed(parsed, event);
-  }
+interface PassiveDeepSeekStreamState {
+  append(text: string, controller: ReadableStreamDefaultController<Uint8Array>): void;
+  finish(controller: ReadableStreamDefaultController<Uint8Array>): ResponseCompletePayload | null;
+  cancel(): void;
 }
 
-export function createBufferedSSEParser(
-  onParsed: (parsed: unknown, event: ReturnType<typeof parseSSEChunk>[number]) => void,
-): { append(text: string): void; flush(): void } {
-  let buffer = '';
+function createPassiveDeepSeekStreamState(requestContext: RequestContext): PassiveDeepSeekStreamState {
+  const frameDecoder = createDeepSeekSseFrameDecoder();
+  const summary = createDeepSeekStreamSummary();
+  const filter = new XmlToolStreamFilter(requestContext.toolDescriptors, requestContext.originalPrompt);
+  let cancelled = false;
+  let completed = false;
+
+  const responseToolState = createStreamingResponseToolState(
+    requestContext.toolDescriptors,
+    () => createManualChatToolCallSource(requestContext, summary.responseMessageId),
+    { suppressEvents: requestContext.suppressPageEvents },
+  );
+  const speedTracker = createResponseTokenSpeedTracker(
+    (progress) => {
+      if (!requestContext.suppressPageEvents && !cancelled) {
+        hookState.onResponseTokenSpeed(
+          attachResponseContextToTokenSpeedProgress(progress, requestContext, summary.responseMessageId),
+        );
+      }
+    },
+    TOKEN_SPEED_EMIT_INTERVAL_MS,
+  );
+
+  const processFrames = (
+    frames: readonly DeepSeekSseFrame[],
+    controller: ReadableStreamDefaultController<Uint8Array>,
+  ) => {
+    if (cancelled || frames.length === 0) return;
+    const wasFinished = summary.finished;
+    consumeDeepSeekSseFrames(frames, summary, {
+      retainAssistantText: false,
+      onParsed(parsed, event) {
+        speedTracker.updateServerStats(extractResponseUsageStatsFromParsed(parsed, event.type));
+        const tokenSpeedText = extractResponseTextForTokenSpeed(parsed);
+        if (tokenSpeedText) speedTracker.append(tokenSpeedText);
+        const eventText = extractCleanResponseTextForParsing(parsed);
+        if (eventText) responseToolState.append(eventText);
+      },
+    });
+    if (!wasFinished && summary.finished) speedTracker.finish();
+    filter.processFrames(frames, controller);
+  };
 
   return {
-    append(text: string) {
-      buffer += text;
-      const lastBoundary = buffer.lastIndexOf('\n\n');
-      if (lastBoundary === -1) return;
-
-      const completePart = buffer.slice(0, lastBoundary + 2);
-      buffer = buffer.slice(lastBoundary + 2);
-      processCompleteSSEBlocks(completePart, onParsed);
+    append(text, controller) {
+      processFrames(frameDecoder.push(text), controller);
     },
-    flush() {
-      if (buffer.trim()) processCompleteSSEBlocks(buffer, onParsed);
-      buffer = '';
+    finish(controller) {
+      if (cancelled || completed) return null;
+      processFrames(frameDecoder.finish(), controller);
+      filter.flush(controller);
+      responseToolState.finish();
+      speedTracker.finish();
+      completed = true;
+      if (requestContext.suppressPageEvents) return null;
+      return {
+        requestId: requestContext.requestId,
+        text: responseToolState.getVisibleText(),
+        originalPrompt: requestContext.originalPrompt,
+        agentTaskPrompt: requestContext.agentTaskPrompt,
+        chatSessionId: requestContext.chatSessionId,
+        parentMessageId: requestContext.parentMessageId,
+        assistantMessageId: summary.responseMessageId,
+        promptOptions: requestContext.promptOptions,
+      };
+    },
+    cancel() {
+      if (cancelled || completed) return;
+      speedTracker.finish();
+      cancelled = true;
     },
   };
 }
@@ -1024,85 +1109,57 @@ export async function interceptFetchResponse(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const toolDescriptors = requestContext.toolDescriptors;
-  const filter = new XmlToolStreamFilter(toolDescriptors, requestContext.originalPrompt);
-  let assistantMessageId: number | null = null;
-  const responseToolState = createStreamingResponseToolState(
-    toolDescriptors,
-    () => createManualChatToolCallSource(requestContext, assistantMessageId),
-    { suppressEvents: requestContext.suppressPageEvents },
-  );
-  const speedTracker = createResponseTokenSpeedTracker(
-    (progress) => {
-      if (!requestContext.suppressPageEvents) {
-        hookState.onResponseTokenSpeed(
-          attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
-        );
-      }
-    },
-    TOKEN_SPEED_EMIT_INTERVAL_MS,
-  );
-  const fullTextParser = createBufferedSSEParser((parsed, event) => {
-    assistantMessageId = collectAssistantMessageId(parsed, assistantMessageId);
-    speedTracker.updateServerStats(extractResponseUsageStatsFromParsed(parsed, event.type));
-    const tokenSpeedText = extractResponseTextForTokenSpeed(parsed);
-    if (tokenSpeedText) {
-      speedTracker.append(tokenSpeedText);
-    }
-    const eventText = extractCleanResponseTextForParsing(parsed);
-    if (eventText) {
-      responseToolState.append(eventText);
-    }
-    if (isStreamFinishedFromParsed(parsed)) {
-      speedTracker.finish();
-    }
-  });
-
+  let streamState: PassiveDeepSeekStreamState | null = null;
+  const getStreamState = () => {
+    streamState ??= createPassiveDeepSeekStreamState(requestContext);
+    return streamState;
+  };
   let cancelled = false;
+  let finished = false;
 
   const stream = new ReadableStream({
-    async start(controller) {
+    async pull(controller) {
+      if (cancelled || finished) return;
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            fullTextParser.flush();
-            filter.flush(controller);
-            break;
-          }
-
-          const chunk = decoder.decode(value, { stream: true });
-          fullTextParser.append(chunk);
-          filter.processChunk(chunk, controller);
-        }
+        const { done, value } = await reader.read();
         if (cancelled) return;
-        responseToolState.finish();
-
-        if (!requestContext.suppressPageEvents) {
-          hookState.onResponseComplete({
-            requestId: requestContext.requestId,
-            text: responseToolState.getVisibleText(),
-            originalPrompt: requestContext.originalPrompt,
-            agentTaskPrompt: requestContext.agentTaskPrompt,
-            chatSessionId: requestContext.chatSessionId,
-            parentMessageId: requestContext.parentMessageId,
-            assistantMessageId,
-            promptOptions: requestContext.promptOptions,
-          });
+        if (!done) {
+          getStreamState().append(decoder.decode(value, { stream: true }), controller);
+          return;
         }
+
+        const finalText = decoder.decode();
+        if (finalText) getStreamState().append(finalText, controller);
+        const complete = getStreamState().finish(controller);
+        if (complete) hookState.onResponseComplete(complete);
+        finished = true;
         controller.close();
+        notifyTerminal();
+      } catch (error) {
+        cancelled = true;
+        streamState?.cancel();
+        try {
+          await reader.cancel(error);
+        } finally {
+          try {
+            controller.error(error);
+          } finally {
+            notifyTerminal();
+          }
+        }
+      }
+    },
+    async cancel(reason) {
+      if (cancelled || finished) return;
+      cancelled = true;
+      streamState?.cancel();
+      try {
+        await reader.cancel(reason);
       } finally {
-        speedTracker.finish();
         notifyTerminal();
       }
     },
-    cancel() {
-      cancelled = true;
-      speedTracker.finish();
-      notifyTerminal();
-      reader.cancel().catch(() => {});
-    },
-  });
+  }, { highWaterMark: 0 });
 
   return new Response(stream, {
     headers: response.headers,
@@ -1125,57 +1182,20 @@ function attachResponseContextToTokenSpeedProgress(
   };
 }
 
-function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: RequestContext) {
+function setupXHRResponseInterceptor(
+  xhr: XMLHttpRequest,
+  requestContext: RequestContext,
+): () => void {
   let lastLen = 0;
-  let completed = false;
   let filteredResponse = '';
-  let assistantMessageId: number | null = null;
-  const toolDescriptors = requestContext.toolDescriptors;
-  const filter = new XmlToolStreamFilter(toolDescriptors, requestContext.originalPrompt);
-  const responseToolState = createStreamingResponseToolState(
-    toolDescriptors,
-    () => createManualChatToolCallSource(requestContext, assistantMessageId),
-    { suppressEvents: requestContext.suppressPageEvents },
-  );
-  const speedTracker = createResponseTokenSpeedTracker(
-    (progress) => {
-      if (!requestContext.suppressPageEvents) {
-        hookState.onResponseTokenSpeed(
-          attachResponseContextToTokenSpeedProgress(progress, requestContext, assistantMessageId),
-        );
-      }
-    },
-    TOKEN_SPEED_EMIT_INTERVAL_MS,
-  );
+  const streamState = createPassiveDeepSeekStreamState(requestContext);
+  let responseFinished = false;
 
   let terminalSent = false;
   const notifyTerminal = () => {
     if (terminalSent) return;
     terminalSent = true;
     hookState.onRequestTerminal({ requestId: requestContext.requestId });
-  };
-
-  const finalizeIfNeeded = () => {
-    if (completed) return;
-    completed = true;
-    responseToolState.finish();
-    speedTracker.finish();
-    try {
-      if (!requestContext.suppressPageEvents) {
-        hookState.onResponseComplete({
-          requestId: requestContext.requestId,
-          text: responseToolState.getVisibleText(),
-          originalPrompt: requestContext.originalPrompt,
-          agentTaskPrompt: requestContext.agentTaskPrompt,
-          chatSessionId: requestContext.chatSessionId,
-          parentMessageId: requestContext.parentMessageId,
-          assistantMessageId,
-          promptOptions: requestContext.promptOptions,
-        });
-      }
-    } finally {
-      notifyTerminal();
-    }
   };
 
   const origResponseTextDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText') ||
@@ -1187,56 +1207,69 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
       filteredResponse += new TextDecoder().decode(data);
     },
   } as unknown as ReadableStreamDefaultController<Uint8Array>;
-  const fullTextParser = createBufferedSSEParser((parsed, event) => {
-    assistantMessageId = collectAssistantMessageId(parsed, assistantMessageId);
-    speedTracker.updateServerStats(extractResponseUsageStatsFromParsed(parsed, event.type));
-    const tokenSpeedText = extractResponseTextForTokenSpeed(parsed);
-    if (tokenSpeedText) {
-      speedTracker.append(tokenSpeedText);
-    }
-    const text = extractCleanResponseTextForParsing(parsed);
-    if (text) {
-      responseToolState.append(text);
-    }
-    if (isStreamFinishedFromParsed(parsed)) {
-      speedTracker.finish();
-    }
-  });
+
+  const consumeAvailableResponse = () => {
+    const raw = origResponseTextDesc?.get?.call(xhr) || '';
+    const newData = raw.slice(lastLen);
+    lastLen = raw.length;
+    if (newData) streamState.append(newData, fakeController);
+  };
+  const finishResponse = () => {
+    if (responseFinished) return;
+    consumeAvailableResponse();
+    const complete = streamState.finish(fakeController);
+    responseFinished = true;
+    if (complete) hookState.onResponseComplete(complete);
+  };
+  const finishSuccessfulResponse = () => {
+    // XHR also enters DONE before abort/error/timeout. A non-zero status is
+    // available before DONE for same-origin DeepSeek HTTP responses and keeps
+    // failure paths from publishing a false RESPONSE_COMPLETE event.
+    if (xhr.readyState === 4 && xhr.status !== 0) finishResponse();
+  };
 
   xhr.addEventListener('readystatechange', function () {
     if (xhr.readyState === 3 || xhr.readyState === 4) {
-      const raw = origResponseTextDesc?.get?.call(xhr) || '';
-      const newData = raw.slice(lastLen);
-      lastLen = raw.length;
-      if (newData) {
-        fullTextParser.append(newData);
-        // Filter for frontend
-        filter.processChunk(newData, fakeController);
-      }
-    }
-    if (xhr.readyState === 4) {
-      fullTextParser.flush();
-      filter.flush(fakeController);
-      finalizeIfNeeded();
+      consumeAvailableResponse();
+      finishSuccessfulResponse();
     }
   });
-  xhr.addEventListener('abort', notifyTerminal, { once: true });
-  xhr.addEventListener('error', notifyTerminal, { once: true });
-  xhr.addEventListener('timeout', notifyTerminal, { once: true });
+  xhr.addEventListener('load', () => {
+    try {
+      finishResponse();
+    } finally {
+      notifyTerminal();
+    }
+  }, { once: true });
+  const notifyFailure = () => {
+    streamState.cancel();
+    notifyTerminal();
+  };
+  xhr.addEventListener('abort', notifyFailure, { once: true });
+  xhr.addEventListener('error', notifyFailure, { once: true });
+  xhr.addEventListener('timeout', notifyFailure, { once: true });
 
   Object.defineProperty(xhr, 'responseText', {
-    get() { return filteredResponse; },
+    get() {
+      if (xhr.readyState === 3 || xhr.readyState === 4) consumeAvailableResponse();
+      finishSuccessfulResponse();
+      return filteredResponse;
+    },
     configurable: true,
   });
   Object.defineProperty(xhr, 'response', {
     get() {
       if (xhr.responseType === '' || xhr.responseType === 'text') {
+        if (xhr.readyState === 3 || xhr.readyState === 4) consumeAvailableResponse();
+        finishSuccessfulResponse();
         return filteredResponse;
       }
       return undefined;
     },
     configurable: true,
   });
+
+  return notifyFailure;
 }
 
 // --- History API interception: strip tool-call blocks from saved messages ---

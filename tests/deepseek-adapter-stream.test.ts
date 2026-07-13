@@ -6,7 +6,7 @@ import {
   submitPromptStreaming,
   uploadDeepSeekFile,
 } from '../core/deepseek/adapter';
-import type { ResponseTokenSpeedPayload } from '../core/interceptor/token-speed';
+import type { ResponseTokenSpeedPayload } from '../core/deepseek/stream-metrics';
 
 vi.mock('../core/deepseek/pow', () => ({
   solvePowChallengeLocally: vi.fn(async () => ({

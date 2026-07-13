@@ -4,13 +4,13 @@ import {
   createResponseTokenSpeedTracker,
   shouldIgnoreEmptyTokenSpeedProgress,
   type ResponseTokenSpeedPayload,
-} from '../core/interceptor/token-speed';
+} from '../core/deepseek/stream-metrics';
 import {
   extractResponseTextForTokenSpeed,
   extractResponseUsageStatsFromParsed,
   parseSSEChunk,
   parseSSEData,
-} from '../core/interceptor/sse-parser';
+} from '../core/deepseek/stream-codec';
 
 describe('estimateTokenUnits', () => {
   it('estimates ASCII text at ~0.3 token per character', () => {

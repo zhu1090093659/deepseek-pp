@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('DeepSeek active protocol import boundary', () => {
@@ -29,13 +29,16 @@ describe('DeepSeek active protocol import boundary', () => {
     expect(adapter).not.toContain('fetch(');
   });
 
-  it('owns SSE implementations below the passive interceptor compatibility path', () => {
+  it('makes active and passive consumers import the shared SSE authority directly', () => {
     const activeClient = readFileSync('core/deepseek/active-client.ts', 'utf8');
     const officialApi = readFileSync('core/deepseek/official-api.ts', 'utf8');
-    const passiveFacade = readFileSync('core/interceptor/sse-parser.ts', 'utf8');
+    const passiveInterceptor = readFileSync('core/interceptor/fetch-hook.ts', 'utf8');
     expect(activeClient).not.toMatch(/from ['"].*interceptor/);
     expect(officialApi).not.toMatch(/from ['"].*interceptor/);
-    expect(passiveFacade).toContain("export * from '../deepseek/stream-codec'");
+    expect(passiveInterceptor).toContain("from '../deepseek/stream-codec'");
+    expect(passiveInterceptor).toContain("from '../deepseek/stream-metrics'");
+    expect(existsSync('core/interceptor/sse-parser.ts')).toBe(false);
+    expect(existsSync('core/interceptor/token-speed.ts')).toBe(false);
   });
 
   it('does not retain the retired automation window bridge path', () => {

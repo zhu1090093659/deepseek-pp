@@ -22,6 +22,23 @@ export interface DeepSeekSseByteDecoder {
   finish(): SSEEvent[];
 }
 
+export interface DeepSeekSseTextDecoder {
+  push(text: string): SSEEvent[];
+  finish(): SSEEvent[];
+}
+
+export interface DeepSeekSseFrame {
+  readonly block: string;
+  readonly separator: string;
+  readonly event: SSEEvent | null;
+  readonly parsed: unknown | null;
+}
+
+export interface DeepSeekSseFrameDecoder {
+  push(text: string): DeepSeekSseFrame[];
+  finish(): DeepSeekSseFrame[];
+}
+
 export function createDeepSeekStreamSummary(): DeepSeekStreamSummary {
   return {
     assistantText: '',
@@ -33,24 +50,66 @@ export function createDeepSeekStreamSummary(): DeepSeekStreamSummary {
 
 export function createDeepSeekSseByteDecoder(): DeepSeekSseByteDecoder {
   const decoder = new TextDecoder();
-  let buffer = '';
-
-  const drain = (flush: boolean): SSEEvent[] => {
-    if (flush) buffer += decoder.decode();
-    const boundary = flush ? buffer.length : buffer.lastIndexOf('\n\n') + 2;
-    if (boundary <= 1) return [];
-    const complete = buffer.slice(0, boundary);
-    buffer = buffer.slice(boundary);
-    return parseSSEChunk(complete);
-  };
+  const textDecoder = createDeepSeekSseTextDecoder();
 
   return {
     push(bytes) {
-      buffer += decoder.decode(bytes, { stream: true });
-      return drain(false);
+      return textDecoder.push(decoder.decode(bytes, { stream: true }));
     },
     finish() {
-      return drain(true);
+      const decoded = decoder.decode();
+      const events = decoded ? textDecoder.push(decoded) : [];
+      return events.concat(textDecoder.finish());
+    },
+  };
+}
+
+export function createDeepSeekSseTextDecoder(): DeepSeekSseTextDecoder {
+  const frameDecoder = createDeepSeekSseFrameDecoder();
+
+  return {
+    push(text) {
+      return parseSSEFrames(frameDecoder.push(text));
+    },
+    finish() {
+      return parseSSEFrames(frameDecoder.finish());
+    },
+  };
+}
+
+export function createDeepSeekSseFrameDecoder(): DeepSeekSseFrameDecoder {
+  let buffer = '';
+  let scanFrom = 0;
+
+  const drain = (): DeepSeekSseFrame[] => {
+    const frames: DeepSeekSseFrame[] = [];
+    const boundaryPattern = /\r?\n\r?\n/g;
+    boundaryPattern.lastIndex = scanFrom;
+    let offset = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = boundaryPattern.exec(buffer)) !== null) {
+      const separator = match[0];
+      frames.push(createDeepSeekSseFrame(buffer.slice(offset, match.index), separator));
+      offset = match.index + separator.length;
+    }
+
+    buffer = buffer.slice(offset);
+    scanFrom = Math.max(0, buffer.length - 3);
+    return frames;
+  };
+
+  return {
+    push(text) {
+      buffer += text;
+      return drain();
+    },
+    finish() {
+      const frames = drain();
+      if (buffer) frames.push(createDeepSeekSseFrame(buffer, ''));
+      buffer = '';
+      scanFrom = 0;
+      return frames;
     },
   };
 }
@@ -63,56 +122,106 @@ export function consumeDeepSeekSseEvents(
     onParsed?: (parsed: unknown, event: SSEEvent) => void;
   } = {},
 ): string {
-  const retainAssistantText = options.retainAssistantText !== false;
   const appendedText: string[] = [];
 
   for (const event of events) {
     const parsed = parseSSEData(event.data);
     if (!parsed) continue;
-    collectDeepSeekMessageIds(parsed, summary);
-    options.onParsed?.(parsed, event);
-
-    const eventText = extractResponseTextFromParsed(parsed);
-    if (eventText) {
-      appendedText.push(eventText);
-      if (retainAssistantText) summary.assistantText += eventText;
-    }
-    if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
+    consumeParsedDeepSeekSseEvent(parsed, event, summary, options, appendedText);
   }
 
   return appendedText.join('');
 }
 
+export function consumeDeepSeekSseFrames(
+  frames: readonly DeepSeekSseFrame[],
+  summary: DeepSeekStreamSummary,
+  options: {
+    retainAssistantText?: boolean;
+    onParsed?: (parsed: unknown, event: SSEEvent) => void;
+  } = {},
+): string {
+  const appendedText: string[] = [];
+  for (const frame of frames) {
+    if (!frame.event || !frame.parsed) continue;
+    consumeParsedDeepSeekSseEvent(frame.parsed, frame.event, summary, options, appendedText);
+  }
+  return appendedText.join('');
+}
+
 export function parseSSEChunk(chunk: string): SSEEvent[] {
+  const decoder = createDeepSeekSseFrameDecoder();
+  return parseSSEFrames(decoder.push(chunk).concat(decoder.finish()));
+}
+
+function parseSSEFrames(frames: readonly DeepSeekSseFrame[]): SSEEvent[] {
   const events: SSEEvent[] = [];
-  const blocks = chunk.split('\n\n');
+  for (const frame of frames) {
+    if (frame.event) events.push(frame.event);
+  }
+  return events;
+}
 
-  for (const block of blocks) {
-    if (!block.trim()) continue;
-
-    const event: Partial<SSEEvent> = {};
-    const lines = block.split('\n');
-
-    for (const line of lines) {
-      if (line.startsWith('id:')) {
-        event.id = line.slice(3).trim();
-      } else if (line.startsWith('event:')) {
-        event.type = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        event.data = event.data != null ? event.data + '\n' + line.slice(5).trim() : line.slice(5).trim();
+function createDeepSeekSseFrame(block: string, separator: string): DeepSeekSseFrame {
+  const event = parseSSEBlock(block);
+  let parsedResolved = false;
+  let parsed: unknown | null = null;
+  return {
+    block,
+    separator,
+    event,
+    get parsed() {
+      if (!parsedResolved) {
+        parsed = event ? parseSSEData(event.data) : null;
+        parsedResolved = true;
       }
-    }
+      return parsed;
+    },
+  };
+}
 
-    if (event.data !== undefined) {
-      events.push({
-        type: event.type ?? 'message',
-        data: event.data,
-        id: event.id,
-      });
+function parseSSEBlock(block: string): SSEEvent | null {
+  if (!block.trim()) return null;
+
+  const event: Partial<SSEEvent> = {};
+  for (const line of block.split(/\r\n|\r|\n/)) {
+    if (line.startsWith('id:')) {
+      event.id = line.slice(3).trim();
+    } else if (line.startsWith('event:')) {
+      event.type = line.slice(6).trim();
+    } else if (line.startsWith('data:')) {
+      const data = line.slice(5).trim();
+      event.data = event.data != null ? `${event.data}\n${data}` : data;
     }
   }
 
-  return events;
+  if (event.data === undefined) return null;
+  return {
+    type: event.type ?? 'message',
+    data: event.data,
+    id: event.id,
+  };
+}
+
+function consumeParsedDeepSeekSseEvent(
+  parsed: unknown,
+  event: SSEEvent,
+  summary: DeepSeekStreamSummary,
+  options: {
+    retainAssistantText?: boolean;
+    onParsed?: (parsed: unknown, event: SSEEvent) => void;
+  },
+  appendedText: string[],
+): void {
+  collectDeepSeekMessageIds(parsed, summary);
+  options.onParsed?.(parsed, event);
+
+  const eventText = extractResponseTextFromParsed(parsed);
+  if (eventText) {
+    appendedText.push(eventText);
+    if (options.retainAssistantText !== false) summary.assistantText += eventText;
+  }
+  if (isStreamFinishedFromParsed(parsed)) summary.finished = true;
 }
 
 export function parseSSEData(data: string): unknown | null {
@@ -121,6 +230,30 @@ export function parseSSEData(data: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+export function replaceDeepSeekSseFrameData(
+  frame: DeepSeekSseFrame,
+  data: string,
+): string {
+  const parts = frame.block.split(/(\r\n|\r|\n)/);
+  let replaced = false;
+  let output = '';
+
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? '';
+    const lineEnding = parts[index + 1] ?? '';
+    if (!line.startsWith('data:')) {
+      output += line + lineEnding;
+      continue;
+    }
+    if (!replaced) {
+      output += `data: ${data}${lineEnding}`;
+      replaced = true;
+    }
+  }
+
+  return replaced ? output : frame.block;
 }
 
 export function extractResponseUsageStatsFromParsed(

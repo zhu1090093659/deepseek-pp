@@ -15,9 +15,15 @@ export const DEEPSEEK_ROUTE_CONTRACT = {
 } as const;
 
 export const LEGAL_DEEPSEEK_ROUTE_FIXTURES = [
-  { kind: 'stream', url: 'https://chat.deepseek.com/api/v0/chat/completion' },
-  { kind: 'stream', url: 'https://chat.deepseek.com/api/v0/chat/regenerate' },
-  { kind: 'history', url: 'https://chat.deepseek.com/api/v0/chat/history_messages?chat_session_id=one' },
+  { route: 'completion', method: 'POST', url: 'https://chat.deepseek.com/api/v0/chat/completion' },
+  { route: 'regenerate', method: 'POST', url: 'https://chat.deepseek.com/api/v0/chat/regenerate' },
+  { route: 'history', method: 'GET', url: 'https://chat.deepseek.com/api/v0/chat/history_messages?chat_session_id=one' },
+  {
+    route: 'completion',
+    method: 'POST',
+    url: '/api/v0/chat/completion',
+    baseUrl: 'https://chat.deepseek.com/a/chat/s/session-contract',
+  },
 ] as const;
 
 export const DEEPSEEK_ACTIVE_ROUTE_METHOD_FIXTURES = [
@@ -31,27 +37,37 @@ export const DEEPSEEK_ACTIVE_ROUTE_METHOD_FIXTURES = [
   { name: 'fetchFiles', path: '/api/v0/file/fetch_files', method: 'GET' },
 ] as const;
 
-export const DEEPSEEK_ROUTE_CURRENT_GAPS = [
+export const REJECTED_DEEPSEEK_ROUTE_FIXTURES = [
   {
-    name: 'stream matching accepts a different origin when the released path appears in the URL',
-    kind: 'stream',
+    name: 'different origin with a released path',
     url: 'https://example.test/proxy/api/v0/chat/completion',
-    currentMatch: true,
-    target: 'exact-origin-path-and-method-policy-after-T3.4',
+    method: 'POST',
   },
   {
-    name: 'stream matching accepts a released path inside a query parameter',
-    kind: 'stream',
+    name: 'released path embedded in a query parameter',
     url: 'https://example.test/?next=/api/v0/chat/regenerate',
-    currentMatch: true,
-    target: 'exact-origin-path-and-method-policy-after-T3.4',
+    method: 'POST',
   },
   {
-    name: 'history matching accepts a different origin when the released path appears in the URL',
-    kind: 'history',
-    url: 'https://example.test/proxy/api/v0/chat/history_messages',
-    currentMatch: true,
-    target: 'exact-origin-path-and-method-policy-after-T3.4',
+    name: 'released path with a suffix',
+    url: 'https://chat.deepseek.com/api/v0/chat/history_messages/suffix',
+    method: 'GET',
+  },
+  {
+    name: 'completion with the wrong method',
+    url: 'https://chat.deepseek.com/api/v0/chat/completion',
+    method: 'GET',
+  },
+  {
+    name: 'history with the wrong method',
+    url: 'https://chat.deepseek.com/api/v0/chat/history_messages',
+    method: 'POST',
+  },
+  {
+    name: 'relative route on a non-DeepSeek page',
+    url: '/api/v0/chat/completion',
+    method: 'POST',
+    baseUrl: 'https://example.test/page',
   },
 ] as const;
 
@@ -132,13 +148,15 @@ export const DEEPSEEK_SSE_CURRENT_GAPS = [
     currentBehavior: 'parse-null-without-diagnostic',
     target: 'observable-protocol-error-after-T5.1',
   },
-  {
-    name: 'CRLF event boundaries merge multiple events into one invalid JSON payload',
-    wire: 'event: ready\r\ndata: {"model_type":"vision"}\r\n\r\ndata: {"v":"text"}\r\n\r\n',
-    currentBehavior: 'merged-event-parse-null',
-    target: 'crlf-compatible-sse-codec-after-T3.4',
-  },
 ] as const;
+
+export const CRLF_DEEPSEEK_SSE_FIXTURE = {
+  wire: 'event: ready\r\ndata: {"model_type":"vision"}\r\n\r\ndata: {"v":"text"}\r\n\r\n',
+  events: [
+    { type: 'ready', parsed: { model_type: 'vision' } },
+    { type: 'message', parsed: { v: 'text' } },
+  ],
+} as const;
 
 export const UNKNOWN_DEEPSEEK_SSE_EVENT =
   'event: future\ndata: {"p":"future/patch","o":"APPEND","v":{"preserve":true}}\n\n';
