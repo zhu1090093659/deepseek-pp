@@ -11,7 +11,7 @@
 
 - **Project Board**: Not used in `GITHUB_STANDARD` mode.
 - **Run labels**: `spec-driven` + `spec:core-refactor-2026-07`
-- **Issue range**: [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) through [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345)
+- **Issue range**: completed/superseded history [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311)–[#345](https://github.com/zhu1090093659/deepseek-pp/issues/345); replanned active work [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351)–[#380](https://github.com/zhu1090093659/deepseek-pp/issues/380)
 - **Task state authority**: GitHub Issues; this file is the local continuity index.
 - **Adaptive state authority**: Each GitHub Milestone description; task telemetry is recorded in Issue comments before closure.
 
@@ -28,14 +28,14 @@
 
 ## Milestones
 
-| Phase | Name | Milestone URL | Open | Closed | Total |
-|:--:|:--|:--|--:|--:|--:|
-| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
-| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 1 | 6 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
-| 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
-| 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 |
-| 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 3 | 0 | 3 |
+| Phase | Name | Milestone URL | Active Open | Completed | Superseded | Active Total |
+|:--:|:--|:--|--:|--:|--:|--:|
+| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
+| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 10 | 0 | 5 | 10 |
+| 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
+| 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
+| 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
 
 ## Issue Mapping
 
@@ -52,22 +52,38 @@
 | T2.3A | [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) | Remove Android template and support surface | closed |
 | T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | closed |
 | T2.5 | [#320](https://github.com/zhu1090093659/deepseek-pp/issues/320) | Add staged sync download, journal, and rollback | closed |
-| T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | open |
-| T3.1 | [#322](https://github.com/zhu1090093659/deepseek-pp/issues/322) | Establish exhaustive runtime command map and handler port | open |
-| T3.2 | [#323](https://github.com/zhu1090093659/deepseek-pp/issues/323) | Adopt narrow platform ports with real consumers | open |
-| T3.3 | [#324](https://github.com/zhu1090093659/deepseek-pp/issues/324) | Version persistence codecs, repositories, and transaction boundary | open |
-| T3.4 | [#325](https://github.com/zhu1090093659/deepseek-pp/issues/325) | Separate DeepSeek protocol, network policy, and page adapter | open |
-| T3.5 | [#326](https://github.com/zhu1090093659/deepseek-pp/issues/326) | Replace hard-coded tool dispatch and split contract cycles | open |
-| T4.1 | [#327](https://github.com/zhu1090093659/deepseek-pp/issues/327) | Migrate background to domain handlers and a composition root | open |
-| T4.2 | [#328](https://github.com/zhu1090093659/deepseek-pp/issues/328) | Migrate content to a lifecycle kernel and capability controllers | open |
-| T4.3 | [#329](https://github.com/zhu1090093659/deepseek-pp/issues/329) | Define floating-chat permission and lifecycle state machine | open |
-| T4.4 | [#330](https://github.com/zhu1090093659/deepseek-pp/issues/330) | Extract Side Panel runtime client and domain controllers | open |
-| T4.5 | [#331](https://github.com/zhu1090093659/deepseek-pp/issues/331) | Split Shell Host by protocol, router, and provider | open |
-| T5.1 | [#332](https://github.com/zhu1090093659/deepseek-pp/issues/332) | Make migrated failure semantics observable | open |
-| T5.2 | [#333](https://github.com/zhu1090093659/deepseek-pp/issues/333) | Remove legacy paths and close compatibility | open |
-| T6.1 | [#334](https://github.com/zhu1090093659/deepseek-pp/issues/334) | Optimize content observers, polling, and teardown | open |
-| T6.2 | [#335](https://github.com/zhu1090093659/deepseek-pp/issues/335) | Lazy-initialize Pyodide, bundled Skills, and heavy chunks | open |
-| T6.3 | [#336](https://github.com/zhu1090093659/deepseek-pp/issues/336) | Reduce persistence write amplification and concurrent overwrite | open |
+| T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | closed |
+| T3.1–T6.3 (old) | [#322](https://github.com/zhu1090093659/deepseek-pp/issues/322) through #336 | Original remaining decomposition | closed; `superseded-by-replan`, each Issue links replacements |
+| R3.1 | [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351) | Create typed handler seam and migrate the two bootstrap commands | open |
+| R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | open |
+| R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | open |
+| R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | open |
+| R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | open |
+| R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | open |
+| R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | open |
+| R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | open |
+| R3.9 | [#359](https://github.com/zhu1090093659/deepseek-pp/issues/359) | Remove dead platform facade and preserve PC capability truth | open |
+| R3.10 | [#380](https://github.com/zhu1090093659/deepseek-pp/issues/380) | Version remaining Skill/Preset/History local state and cross-key mutations | open |
+| R4.1 | [#360](https://github.com/zhu1090093659/deepseek-pp/issues/360) | Extract Background persistence and library handlers | open |
+| R4.2 | [#361](https://github.com/zhu1090093659/deepseek-pp/issues/361) | Extract Background MCP, tool, and browser-control handlers | open |
+| R4.3 | [#362](https://github.com/zhu1090093659/deepseek-pp/issues/362) | Extract Background DeepSeek, chat, multimodal, and export handlers | open |
+| R4.4 | [#363](https://github.com/zhu1090093659/deepseek-pp/issues/363) | Close Background sync, automation, usage, scenario, and lifecycle root | open |
+| R4.5 | [#364](https://github.com/zhu1090093659/deepseek-pp/issues/364) | Build Content lifecycle kernel and bridge controller | open |
+| R4.6 | [#365](https://github.com/zhu1090093659/deepseek-pp/issues/365) | Extract Content tool, inline-agent, and chat controllers | open |
+| R4.7 | [#366](https://github.com/zhu1090093659/deepseek-pp/issues/366) | Extract remaining Content DOM capability controllers | open |
+| R4.8 | [#367](https://github.com/zhu1090093659/deepseek-pp/issues/367) | Model floating-chat permission and lifecycle state | open |
+| R4.9 | [#368](https://github.com/zhu1090093659/deepseek-pp/issues/368) | Extract Side Panel typed runtime client and async-state core | open |
+| R4.10 | [#369](https://github.com/zhu1090093659/deepseek-pp/issues/369) | Move Side Panel MCP and Tools policy into controllers | open |
+| R4.11 | [#370](https://github.com/zhu1090093659/deepseek-pp/issues/370) | Move Side Panel Chat, Settings, and Library policy into controllers | open |
+| R4.12 | [#371](https://github.com/zhu1090093659/deepseek-pp/issues/371) | Split Shell Host framing, router, and session/process providers | open |
+| R4.13 | [#372](https://github.com/zhu1090093659/deepseek-pp/issues/372) | Split Shell file, Skill, picker, OS adapters, and installer | open |
+| R5.1 | [#373](https://github.com/zhu1090093659/deepseek-pp/issues/373) | Audit changed-path failure, legacy, cycle, and second-truth gaps | open |
+| R5.2 | [#374](https://github.com/zhu1090093659/deepseek-pp/issues/374) | Close PC Chrome, Edge, and Firefox compatibility | open |
+| R6.1 | [#375](https://github.com/zhu1090093659/deepseek-pp/issues/375) | Optimize Content observers, polling, and callback work | open |
+| R6.2 | [#376](https://github.com/zhu1090093659/deepseek-pp/issues/376) | Audit packaged Pyodide cost and eliminate proven duplication | open |
+| R6.3 | [#377](https://github.com/zhu1090093659/deepseek-pp/issues/377) | Load bundled Skill resources on demand | open |
+| R6.4 | [#378](https://github.com/zhu1090093659/deepseek-pp/issues/378) | Split heavy Side Panel pages and chunks on demand | open |
+| R6.5 | [#379](https://github.com/zhu1090093659/deepseek-pp/issues/379) | Coalesce persistence burst writes | open |
 
 ## Quick Status Commands
 
@@ -83,9 +99,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 gh api 'repos/zhu1090093659/deepseek-pp/milestones?state=all&per_page=100' \
   --jq '.[] | select(.title | startswith("[core-refactor-2026-07]")) | {number,title,open_issues,closed_issues,description}'
 
-# Open Phase 2 tasks
+# Open replanned Phase 3 tasks
 gh issue list -R zhu1090093659/deepseek-pp \
-  --milestone '[core-refactor-2026-07] Phase 2: Critical Boundaries and Failure Safety' \
+  --milestone '[core-refactor-2026-07] Phase 3: Authoritative Contracts and Real Ports' \
   --state open \
   --json number,title
 ```
@@ -93,23 +109,23 @@ gh issue list -R zhu1090093659/deepseek-pp \
 ## Phase Checklist
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
-- [ ] Phase 2: Critical Boundaries and Failure Safety (6/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
-- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
+- [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (0/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
-- [ ] Phase 6: Measured Performance Optimization (0/3 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
+- [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
 
 ## Current Status
 
-**Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
+**Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation not started)
 
-**Active Task**: T2.6 / [Issue #321](https://github.com/zhu1090093659/deepseek-pp/issues/321) — Propagate automation cancellation, lease, and idempotency.
+**Active Task**: None until this Phase 2 closeout/adaptive-replan PR merges. First ready task is R3.1 / [Issue #351](https://github.com/zhu1090093659/deepseek-pp/issues/351).
 
-**Execution Branch**: `codex/321-automation-cancellation` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/321-automation-cancellation`, based on `origin/main@26ef8dc`.
+**Execution Branch**: `codex/321-phase2-closeout` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/321-phase2-closeout`, based on `origin/main@1b933d1`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `26ef8dc` after T2.5 closed at `737c91f` and its progress closeout merged. T2.5 passed 92 test files / 671 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, hosted quality run `29267498354`, and contribution-evidence run `29267706250`. Android project/build/runtime/test support is retired.
+**Baseline Evidence**: PC-only main is `1b933d1` after T2.6 closed. The current baseline passes 97 test files / 710 tests, full `ci:quality`, seven prompt goldens, Chrome/Edge/Firefox builds/packages, MCP/live-mock/Shell/PoW smoke, and hosted runs `29273029432` / `29273029933`. Android project/build/runtime/test support is retired.
 
 **T1.1 Evidence**:
 
@@ -131,14 +147,14 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - Added an executable 121-entry runtime command registry tied to TypeScript-AST discovery of the 119 live handlers, 89 declared actions, payload access/presence, listener error families, 17 notifications, and three tab RPCs.
 - Centralized the 13 bridge message names, sources, and handshake types, plus the seven sandbox envelope names, port identity, frame target, envelope parser, result normalizer, and boundary request normalizer used by real producers and consumers.
-- Added legal and malformed fixtures for runtime requests/responses/errors, bridge traffic, tool wire records, and sandbox multi-hop traffic; permissive shallow envelopes and other unsafe accepted behavior remain labeled `current-gap` with T2.1, T2.2, or T3.1 owners.
+- Added legal and malformed fixtures for runtime requests/responses/errors, bridge traffic, tool wire records, and sandbox multi-hop traffic; permissive shallow envelopes and other unsafe accepted behavior were assigned to then-owners T2.1/T2.2/T3.1, with remaining handler-seam ownership now carried by R3.1 / #351.
 - Preserved current legal behavior and error text while removing duplicated boundary normalization. Targeted validation passed 4 files / 71 tests; the full suite passed 66 files / 433 tests, compile, prompt freeze, and Chrome/Edge/Firefox builds passed, and no test child process remained.
 
 **T1.4 Evidence**:
 
 - Centralized the released Memory and Artifact database identities, schemas, retention limit, and legacy key in contract modules consumed by the production stores; centralized Project, Saved Items, Scenario, sync-config, and six remote sync keys without changing their values.
 - Added raw fixtures for Memory v1-v3, Artifact legacy storage, released Project v1/v2, Saved Items legacy/v1/future, Scenario storage, and every required/optional sync JSON file.
-- Executed Memory v1→v3 and v2→v3 upgrades, v3 project-scope reopen, and Artifact legacy migration through the production Dexie stores with fake IndexedDB. At the T1.4 freeze point, Project v1 reset, malformed Artifact filtering, Saved Items future-version downgrade, Scenario read fallback, and sync partial commits were labeled gaps owned by T2.4, T2.5, or T3.3; T2.4 and T2.5 are now closed.
+- Executed Memory v1→v3 and v2→v3 upgrades, v3 project-scope reopen, and Artifact legacy migration through the production Dexie stores with fake IndexedDB. At the T1.4 freeze point, Project v1 reset, malformed Artifact filtering, Saved Items future-version downgrade, Scenario read fallback, and sync partial commits were assigned to then-owners T2.4/T2.5/T3.3; T2.4/T2.5 are closed and remaining persistence ownership is now R3.5 / #355, R3.6 / #356, and R3.10 / #380.
 - Targeted validation passed 11 files / 49 tests; the full suite passed 69 files / 441 tests, TypeScript compile and prompt freeze passed, Chrome/Edge/Firefox builds passed, and no Vitest/WXT/TypeScript child process remained. Builds emitted only the existing Pyodide `node:*` externalization warnings.
 
 **T1.5 Evidence**:
@@ -189,7 +205,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Split the provider-agnostic `StorageBackend` port from the concrete composition factory, removing the sync provider dependency cycle while retaining the same WebDAV, Google Drive, and OneDrive implementations.
 - New uploads serialize all six logical files, precompute SHA-256/UTF-8 byte metadata, stage generation-scoped payloads, write a schema-v1 manifest, and replace `sync-current.json` last. They never dual-write legacy fixed files.
 - Readers use legacy fixed files only when the pointer is absent. A present pointer requires a valid manifest, exact six-file allowlist, generation identity, byte lengths, and checksums; corrupt/future/incomplete generations fail visibly before local mutation.
-- Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 has since closed staged local apply and rollback; config-operation serialization/concurrent overwrite remains assigned to T6.3, and committed-with-local-bookkeeping warning UX remains assigned to T5.1.
+- Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 has since closed staged local apply and rollback; config-operation serialization/concurrent overwrite is now owned by R3.7 / #357, and committed-with-local-bookkeeping warning UX by R4.11 / #370.
 - Current validation passes 6 targeted files / 73 tests and the 60-second full suite at 84 files / 613 tests, plus TypeScript compile, prompt freeze, i18n, manifest/UTF-8 policy, Chrome/Edge/Firefox builds, `git diff --check`, and orphan-process checks. Three independent final reviews report no remaining merge blocker after provider error-detail, raw-fixture, lost-response, manifest-integrity, and GDrive duplicate-object corrections.
 - PR #347 merged at `2928d85f5d0de361a98af461d5e54a566709d36f`; Issue #319 closed after telemetry, hosted quality and contribution-evidence runs passed, and Milestone #44 advanced to 5/7 with cumulative drift score 1.
 
@@ -199,17 +215,18 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Added `DeepSeekPPSyncRecovery` v1 with singleton `journal/current`. The SHA-256-protected record stores raw Memory rows and opaque present/value preimages for Skills, Skill Sources, Presets, active preset, Project Context, and Saved Items; unknown/corrupt/future journals fail closed without deletion.
 - Fixed-order target writes are committed only by deleting the journal. Every apply failure restores all stores in reverse order; incomplete rollback keeps the record for restart recovery. Lost prepare/clear responses are read back, and an unverifiable clear is reported as commit-indeterminate rather than guessed.
 - Local Skill-import merge, sync apply/recovery, ordinary Memory/Skill/Preset/Project/Saved Items mutations, and project/Memory cascade deletion now share one non-reentrant local-state lock, while the coordinator calls explicit already-locked store primitives. Failed-apply recovery runs before lock release; if it remains incomplete, the lock is fail-closed and retries recovery before any queued write or second download can stage. Background recovery gates runtime dispatch, stale-Memory archival, and startup/alarm automation scans; transient durable-recovery failures are retried by the next dispatch, and post-recovery broadcast failure is reported without poisoning readiness.
-- Exact rollback covers released raw Memory rows/IDs/unknown fields plus all affected raw key values/absence. IndexedDB cannot rewind its hidden `++id` generator, so a failed high-ID target can only make a future new ID skip forward; this has executable fake-IndexedDB evidence, loses no row/reference/retry identity, and remains an explicit `DB-001`/T3.3 schema-design gap rather than a silent compatibility claim.
+- Exact rollback covers released raw Memory rows/IDs/unknown fields plus all affected raw key values/absence. IndexedDB cannot rewind its hidden `++id` generator, so a failed high-ID target can only make a future new ID skip forward; this has executable fake-IndexedDB evidence, loses no row/reference/retry identity, and remains an explicit `DB-001` gap owned by R3.6 / #356 rather than a silent compatibility claim.
 - Targeted validation passes 14 files / 117 tests, including every target write's fail-before/commit-then-throw boundary, every recovery-write failure, queued mutation/download recovery ordering, all interrupted prefixes, corrupt/future/checksum journals, idempotent retry, executable raw journal fixture, raw missing-key restoration, occurrence-stable duplicate Memory IDs, and fake-IndexedDB reopen/generator evidence. The 60-second full suite passes 92 files / 671 tests; full `ci:quality` also passes prompt freeze, TypeScript, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release assets, and `git diff --check`.
 - PR #348 merged at `737c91f65d4a8f04c11cc55451748379ef903437`; Issue #320 closed after telemetry, hosted quality and contribution-evidence runs passed, and Milestone #44 advanced to 6/7 with cumulative drift score 2. The annotate threshold was reached, so Issue #321 carries the adaptive drift warning before T2.6 starts.
 
-**T2.6 Evidence (in progress)**:
+**T2.6 Evidence (closed)**:
 
 - Replaced the timeout `Promise.race`/in-memory-only lock with one atomic persisted `running` claim plus an in-process execution lease. The scheduler aborts at the deadline but awaits the real executor settlement before releasing authority; terminal writes are fenced to the same still-running row.
 - Added an execution context carrying run/automation IDs, persisted deadline, attempt, `AbortSignal`, current-lease assertion, and stable scoped idempotency keys. DeepSeek session/PoW/completion/history, automation continuation, runtime tools, web providers, MCP initialization/call, and cancellable transports receive the signal without changing released request bodies, headers, JSON-RPC IDs, commands, or UI. Concurrent PoW cold starts share one cancellable WASM load, while unconsumed web responses explicitly release their bodies.
 - Scheduled runs use stable occurrence identity and also deduplicate historical random run IDs by `(automationId,scheduledFor)`. Fresh persisted rows block restart execution; expired rows close as non-retryable ambiguous failures and advance without replay. Only explicit `retrySafe:true` plus `externalOutcome:not_started` results may retry; post-dispatch and thrown failures are terminal.
 - Store mutations are serialized in one authority; claim and finalization are atomic within the service worker. Historical runner requests without `deadlineAt` derive the released 180-second window from `requestedAt`. Deleting an automation first aborts the active context, while late executor output cannot recreate or overwrite deleted/terminal state.
 - Final local validation passes targeted cancellation/MCP slices, TypeScript compile, and the 60-second full suite at 97 files / 710 tests. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. Coverage includes timeout settlement, internal cancellation, stable retry keys, no ambiguous retry, scheduled occurrence dedupe, restart lease recovery, legacy deadline normalization, finalization fencing, shared cancellable PoW loading, web-response release, DeepSeek signal propagation, continuation cancellation, and MCP/Native cancellation. Independent final reviews report no P0/P1/P2 blocker.
+- PR #350 passed hosted quality and contribution-evidence runs `29273029432` / `29273029933`, then squash-merged at `1b933d1fdbc5a5ec4d5c47b5911d0e50ca297324`; Issue #321 closed after telemetry. Milestone #44 completed 7/7 with cumulative drift score 3, triggering adaptive replanning before any Phase 3 implementation.
 
 ## Governance Status
 
@@ -225,16 +242,17 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Adaptive Control
 
-- Strategy: `PC-browser-only compatibility firewall + risk-first vertical slices + strangler cutover`.
+- Strategy: `PC-browser-only compatibility firewall + telemetry-corrected vertical slices + strangler cutover`.
 - Milestone descriptions contain `drift_score`, thresholds, total/completed tasks, and last update time.
 - Each completed Issue receives execution telemetry before the PR closes it.
 - Threshold actions follow the spec-driven adaptive-control protocol: annotate, halt and replan, or halt and return for scope confirmation.
+- Phase 2 reached the replan threshold at `drift_score=3`. Completed work and telemetry remain unchanged; unstarted #322–#336 are closed as `superseded-by-replan`, and replacement #351–#380 reset each remaining milestone segment to drift 0 with recalculated thresholds.
 
 ## Next Steps
 
-1. Run the full 60-second suite and `ci:quality`, including prompt/contract checks, Chrome/Edge/Firefox builds/packages, protocol smokes, release assets, diff, and orphan-process checks.
-2. Complete independent final contract/diff reviews and correct any blocker without widening released automation commands or UI.
-3. Open and merge the T2.6 PR after hosted checks, record Issue telemetry, then close Phase 2 through the adaptive-control protocol before starting Phase 3.
+1. Validate and merge the Phase 2 closeout/adaptive-replan documentation PR.
+2. Start R3.1 / Issue #351 from the new main in an isolated worktree; do not reuse or reopen superseded #322–#336.
+3. After each replacement task, record telemetry against the reset Milestone state and enforce the new thresholds before starting another task.
 
 ## Session Log
 
@@ -276,3 +294,5 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T2.5 closure | Merged PR #348 at `737c91f`, closed Issue #320 after telemetry, passed local/hosted quality and contribution-evidence gates, advanced Milestone #44 to 6/7 with cumulative drift score 2, and annotated Issue #321 with the adaptive drift warning. |
 | 2026-07-13 | T2.6 execution start | Opened `codex/321-automation-cancellation` from `26ef8dc`; audited scheduler/store, active DeepSeek/MCP/tool execution, restart recovery, retry safety, runtime deletion, and frozen UI/command boundaries. |
 | 2026-07-13 | T2.6 implementation | Added atomic durable claims, deadline/AbortSignal execution context, settlement-held leases, occurrence dedupe, conservative retry, stale-run recovery, terminal fencing, historical deadline normalization, and targeted cancellation/restart/MCP contract coverage without adding a user-facing command or protocol field. |
+| 2026-07-13 | T2.6 closure | PR #350 passed local/hosted gates and merged at `1b933d1`; Issue #321 and Milestone #44 closed after telemetry, completing Phase 2 at 7/7 with cumulative drift score 3. |
+| 2026-07-13 | Adaptive replan | Halted before Phase 3, replaced unstarted #322–#336 with bounded #351–#380 vertical slices, reset Milestone #45–#48 adaptive state, removed redundant Pyodide-first-use work, assigned every frozen background command and persistence gap exactly once, and preserved PC Chrome/Edge/Firefox-only scope. |

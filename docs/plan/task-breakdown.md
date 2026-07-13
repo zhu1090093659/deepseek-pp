@@ -3,9 +3,9 @@
 ## Overview
 
 - **Run ID**: `core-refactor-2026-07`
-- **Strategy**: Compatibility firewall first, then risk-first vertical slices and strangler cutover
+- **Strategy**: Compatibility firewall first, then telemetry-corrected vertical slices and strangler cutover
 - **Total Phases**: 6
-- **Total Tasks**: 27
+- **Total Tasks**: 42 current tasks (12 completed + 30 replanned; 15 superseded tasks excluded)
 - **Estimated Total Effort**: XL
 - **Tracking Mode**: `GITHUB_STANDARD` (Issues + Milestones + PR, no Project board)
 
@@ -19,7 +19,7 @@ The plan intentionally combines two approaches. Phase 1 freezes the externally o
 - Every schema change requires an explicit, deterministic, idempotent migration. Unknown future versions and corrupt data must fail visibly without overwriting the original state.
 - Do not create a standalone E2E, coverage, or performance-infrastructure program. Each behavior, data, security, routing, permission, persistence, caching, or performance task adds the narrow automated evidence needed for its own acceptance criteria.
 - `AGENTS.md` is the sole project-level agent instruction truth source. Do not create `CLAUDE.md` or a repo-local memory file. Stable new engineering rules belong in `AGENTS.md`; execution state belongs in GitHub and `docs/progress/MASTER.md`.
-- Preserve the user's existing uncommitted work in `core/platform/chrome-api.ts`, `entrypoints/content/adapters/chat-launcher.ts`, and `tests/chat-launcher.test.ts`. Task T4.3 must not overwrite or absorb it without explicit provenance.
+- Preserve the user's existing uncommitted work in `core/platform/chrome-api.ts`, `entrypoints/content/adapters/chat-launcher.ts`, and `tests/chat-launcher.test.ts`. Task R4.8 must not overwrite or absorb it without explicit provenance.
 
 ## S.U.P.E.R Design Constraints
 
@@ -94,7 +94,134 @@ On 2026-07-13, T2.3A / [#345](https://github.com/zhu1090093659/deepseek-pp/issue
 | C | T2.4 → T2.5 | Medium | Sequential generation then rollback contract. |
 | D | T2.6 | High | Can implement independently, but rebase after Lane A before central wiring. |
 
-## Phase 3: Authoritative Contracts and Real Ports
+## Adaptive Replan Record
+
+Phase 2 completed 7/7 tasks with cumulative `drift_score=3`, reaching the replan threshold. The completed compatibility and safety work remains authoritative. The unstarted #322–#336 decomposition is superseded because its horizontal XL tasks repeatedly crossed the same background, content, persistence, Side Panel, and Shell hotspots.
+
+The replacement plan has these constraints:
+
+- Each task owns a bounded vertical slice: contract or port, one real production consumer, obsolete-path deletion, and targeted evidence ship together.
+- No XL issue remains. Central files have one serial owner lane; independent runtime surfaces may proceed in parallel.
+- Cancellation/lease and sync journal/recovery semantics from Phase 2 are preserved, not reimplemented.
+- Failure classification is part of every task's acceptance criteria. Phase 5 audits evidence and closes bounded gaps; it is not a late cross-codebase rewrite.
+- Performance tasks record their own reproducible before-state before changing behavior. Existing on-demand Pyodide initialization is preserved; Pyodide packaging work begins with asset-truth measurement and changes code only when a duplicate or preventable cost is proven.
+
+### Superseded Issue Mapping
+
+| Old Issue | Replacement ownership |
+|:--|:--|
+| #322 | R3.1; R4.1–R4.4; R4.9 |
+| #323 | R3.9 plus narrow ports introduced only with R3/R4 production consumers |
+| #324 | R3.5–R3.8; R3.10; R4.6; R6.5 |
+| #325 | R3.3–R3.4; R4.5 |
+| #326 | R3.2; R4.2; R4.6; R4.10; R4.12 |
+| #327 | R4.1–R4.4 |
+| #328 | R4.5–R4.7 |
+| #329 | R4.8 |
+| #330 | R4.9–R4.11; R6.4 |
+| #331 | R4.12–R4.13 |
+| #332 | Every R3/R4 Definition of Done; R5.1 audit |
+| #333 | Immediate deletion in every cutover; R5.1–R5.2 closure |
+| #334 | R4.5–R4.7 resource ownership; R6.1 measured optimization |
+| #335 | R6.2–R6.4; the already-satisfied first-use Pyodide initialization target is removed, and R6.2 is conditional on measured packaging truth |
+| #336 | R3.7–R3.8 correctness; R6.5 measured write optimization |
+
+## Replanned Phase 3: Authoritative Vertical Contracts
+
+**Goal**: Make typed boundaries and versioned data contracts authoritative through their first real consumers before moving monolith ownership.
+
+**Prerequisite**: Phase 2 complete.
+
+**S.U.P.E.R Focus**: S, U, P, E, R — one decoding authority, narrow real ports, and explicit data/network ownership.
+
+| ID | Task | Priority | Effort | Depends On | Lane | S.U.P.E.R | Test Expectation | Governance Impact | Primary Surfaces | Acceptance Criteria |
+|:--|:--|:--:|:--:|:--|:--:|:--:|:--|:--|:--|:--|
+| R3.1 | Create typed handler seam and migrate the two bootstrap commands | P0 | M | T2.1, T2.2 | A | S, U, P | Exhaustive command, duplicate, unknown, serialization, request/response/error fixtures | Record only a new durable registration invariant | `core/messaging/*`, root runtime types, `entrypoints/background.ts`, runtime clients | Existing commands parse once; only `GET_CONFIG` and `WHATS_NEW_DISMISSED` migrate here; all 121 live names have one exclusive owner in the runtime command inventory; no second router; released wire/error projection remains byte-compatible. |
+| R3.2 | Cut over tool contracts and local/MCP/browser provider registry | P0 | L | R3.1, T2.2 | A | S, U, P, R | Provider duplicate/unknown/order/authorization tests, persisted MCP future/corrupt config fixtures, prompt freeze, targeted cycle check | Record provider registration rules if stable | `core/tool/*`, `core/mcp/store.ts`, MCP/browser providers, composition root | Adding a provider no longer edits runtime dispatch; future MCP config is preserved without downgrade/overwrite; descriptor order, prompt/XML, grants, idempotency, and visible results remain unchanged; migrated cycles disappear. |
+| R3.3 | Extract active DeepSeek protocol and network-policy core | P1 | L | T2.6 | B | S, U, P, E, R | Route/request/SSE/body/error fixtures plus timeout and late-effect tests | Record only stable protocol ownership | `core/deepseek/*`, automation active client | Pure codecs and one network policy own routes, headers, SSE, timeout, and body budgets; automation is a production consumer; Phase 2 cancellation semantics remain intact. |
+| R3.4 | Make passive interceptor/page adapters reuse DeepSeek codecs | P1 | L | R3.3 | B | S, U, P, E, R | Passive/active equivalence fixtures, prompt/stream goldens, bridge tests | Same default | `core/interceptor/*`, content DeepSeek adapters | Passive and active paths stop duplicating route/stream parsing; unknown legal patches and released prompt/stream bytes remain compatible; migrated old parsers are deleted. |
+| R3.5 | Version Project, Saved Items, and Scenario codecs/repositories | P0 | L | T2.5 | C | S, U, P, R | Raw historical/future/corrupt migration and concurrent mutation tests | Record migration rules only if newly clarified | Project, Saved Items, Scenario stores and narrow storage adapters | Keys and legal schemas remain unchanged; Project v1 migrates without loss; future/corrupt values fail visibly without overwrite; each narrow port has a current production store consumer. |
+| R3.6 | Converge Memory/Artifact IndexedDB migration and truth ownership | P0 | L | T2.5 | C | S, U, P, R | Real/fake IndexedDB reopen, legacy, import-fault, restart, identity tests | Same default | Memory and Artifact contracts/stores/importer | DB/table identity remains fixed; legacy Artifact input migrates idempotently to one truth source; Memory JSON import is atomic across validation and writes; raw legal rows survive; future/corrupt state is preserved and rejected. |
+| R3.7 | Serialize sync config/actions and fence confirmed targets | P0 | L | T2.4, T2.5 | D | U, P, R | UI→background→store concurrent config/action and fault-injection tests | Record confirmed-target rules if durable | Sync config, Side Panel action request, background sync composition | A user-confirmed target cannot be replaced by newer UI state mid-operation; older snapshots cannot publish last; recovery/journal and generation contracts are reused rather than duplicated. |
+| R3.8 | Version Automation state and own Usage/Tool History mutations | P1 | M | T2.5, T2.6 | C | U, P, R | Automation future/corrupt version plus concurrent whole-key mutation, stale writer, restart, exact-final-state tests | Same default | Automation top-level codec; Usage and Tool History stores | Future/corrupt Automation state fails read-only without downgrade while reusing the Phase 2 queue; Usage and Tool History each gain one mutation authority so stale writers cannot lose newer updates. |
+| R3.9 | Remove dead broad platform facade and preserve PC capability truth | P1 | M | T1.5, T2.3A | E | U, P, E, R | Adapter/capability tests and Chrome/Edge/Firefox builds | Reinforce the no-dead-port rule only if needed | `core/platform/*`, browser composition helpers | Unused broad `PlatformServices` paths are removed; Chrome/Edge/Firefox and explicit all-false unknown degradation remain authoritative; new ports appear only with real consumers in other tasks. |
+| R3.10 | Version remaining Skill/Preset/History local state and cross-key mutations | P0 | L | R3.5 | C | S, U, P, R | Historical/future/corrupt, cross-key fault, restart, and sync-parity tests | Record a cross-key mutation invariant only if newly clarified | Skill, Skill Sources, Preset/active ID, History Organizer codecs and stores | `LS-006`–`LS-008`, `LS-012`, and the active preset key have one codec per concept; future/corrupt raw state is preserved and rejected; multi-key mutations cannot strand divergent Skills/Sources or Preset/active-ID state. |
+
+### Replanned Phase 3 Lanes
+
+| Lane | Tasks | Merge Risk | Notes |
+|:--|:--|:--|:--|
+| A | R3.1 → R3.2 | High | Owns root command/tool contracts; strictly serial. |
+| B | R3.3 → R3.4 | Medium | Owns DeepSeek protocol/interceptor codecs without editing the content root. |
+| C | R3.5 → R3.10; R3.6; R3.8 | Medium | Related local-state codecs are serial where they share adapters; independent stores still rebase before merge. |
+| D | R3.7 | Medium | Sync vertical slice; no concurrent background editor. |
+| E | R3.9 | Low | Deletes dead facade and freezes PC capability behavior. |
+
+## Replanned Phase 4: Runtime Hotspot Vertical Cutover
+
+**Goal**: Reduce Background, Content, Side Panel, floating chat, and Shell Host to composition/lifecycle owners through serial per-hotspot slices.
+
+**Prerequisite**: Replanned Phase 3 complete for each dependent lane.
+
+**S.U.P.E.R Focus**: S, U, P, E, R — each migrated capability owns state, resources, failure, and teardown; the old path leaves in the same PR.
+
+| ID | Task | Priority | Effort | Depends On | Lane | S.U.P.E.R | Test Expectation | Governance Impact | Primary Surfaces | Acceptance Criteria |
+|:--|:--|:--:|:--:|:--|:--:|:--:|:--|:--|:--|:--|
+| R4.1 | Extract Background persistence and library handlers | P0 | L | R3.1, R3.5, R3.6, R3.10 | A | S, U, P, R | CRUD, raw-history, migration, error projection tests | Record handler ownership if stable | The 57 commands assigned to R4.1 in the runtime command inventory | Only its 57 named commands migrate; each gains one typed handler and loses its old case; historical data and released responses/errors remain intact. |
+| R4.2 | Extract Background MCP/tool/browser-control handlers | P0 | L | R4.1, R3.2 | A | S, U, P, R | Authorization, replay, provider, permission, cancel tests | Same default | The 29 commands assigned to R4.2 in the runtime command inventory | Only its 29 named commands migrate; authorization and reservation precede I/O; provider/permission/ambiguous errors remain observable; no alternate dispatch path appears. |
+| R4.3 | Extract Background DeepSeek/chat/multimodal/export handlers | P1 | L | R4.2, R3.3 | A | S, U, P, R | Chat/export/network/cancel fault tests | Same default | The 16 commands assigned to R4.3 in the runtime command inventory | Only its 16 named commands migrate; network and cancellation policy comes only from R3.3; external ambiguity is not replayed; old cases and duplicate policy leave immediately. |
+| R4.4 | Extract sync/automation/usage/scenario and close Background root | P0 | L | R4.3, R3.7, R3.8, T2.5, T2.6 | A | S, U, P, R | MV3 startup/alarm/restart, journal, lease, stale-writer, exhaustive-owner tests | Record composition-root ownership if stable | The 17 commands assigned to R4.4 plus service-worker lifecycle | Only its 17 named commands migrate; the 121-name ownership ledger has no duplicate/missing entry; root retains only bootstrap, lifecycle, registration, and composition; total switch is deleted. |
+| R4.5 | Build Content lifecycle kernel and bridge/runtime-state controller | P0 | L | R3.1, R3.4, R3.9 | B | S, U, P, E, R | Idempotent start/stop, reinjection, BFCache, navigation, resource-ledger tests | Record controller resource ownership if stable | `entrypoints/content.ts`, MAIN bridge/session state | One kernel owns controller epochs; reinjection/navigation cannot duplicate listeners, ports, observers, or timers; bridge/session contracts remain frozen. |
+| R4.6 | Extract Content tool, inline-agent, and chat controllers | P1 | L | R4.5, R3.2 | B | S, U, P, R | Tool block/restore/continuation/finalization, trace-codec fault, resource tests, and prompt freeze | Same default | Content tool/inline/chat paths; `LS-013`/`LS-014` persistence | Controllers own their state/resources and teardown to zero; tool blocks and inline traces use explicit codecs and surface persistence failures; authorization, XML, continuation, history, and visible results stay compatible. |
+| R4.7 | Extract remaining Content DOM capability controllers | P1 | L | R4.6, R3.5, R3.9 | B | S, U, P, E, R | Export/multimodal/theme/pet/history/project/navigation/resource tests plus watcher baseline | Same default | Content export, multimodal, theme, pet, token, history, project, UX paths | Each capability owns a minimal DOM root and lifecycle; stop returns its owned resource ledger to zero. Migrated globals are deleted; while active, the two permanent 500ms route watchers move unchanged under explicit ownership with a recorded pre-change trace for R6.1. This task does not optimize or delete them. |
+| R4.8 | Model floating-chat permission and lifecycle state | P1 | M | R4.5, R3.9 | B | S, U, P, E, R | Disabled/missing-permission/ready/invalidated tests plus all-browser builds | No new rule unless state ownership generalizes | Floating chat launcher, browser API adapter | Four states agree across UI/runtime; start/stop is idempotent; before editing, preserve and resolve provenance of user-owned uncommitted launcher/platform/test changes. |
+| R4.9 | Extract Side Panel typed runtime client and async-state core | P1 | M | R3.1, R3.9 | C | S, U, P, E, R | Request/response/error/pending/navigation/i18n client tests | Record UI transport boundary if stable | Side Panel runtime helpers/hooks | Pages stop constructing untyped runtime traffic; one client owns transport and stable error projection; visible navigation/pending behavior remains unchanged. |
+| R4.10 | Move Side Panel MCP/Tools policy into controllers | P1 | L | R4.9, R3.2 | C | S, U, P, R | MCP/tools permission, pending, failure, regression tests | Same default | MCP and tool-related Side Panel pages | UI components no longer own transport, permission, or provider policy; old page-local flows are deleted; current interaction and i18n stay stable. |
+| R4.11 | Move Side Panel Chat/Settings/Library policy into controllers | P1 | L | R4.10, R3.5, R3.7 | C | S, U, P, R | Chat/settings/library state, sync-target, committed-warning, navigation, regression tests | Same default | Chat, settings, library pages/hooks | Domain policy and confirmed sync target leave components; committed remote sync with failed local bookkeeping surfaces an explicit non-retry warning; page behavior remains compatible and exposes lazy-route seams for R6.4. |
+| R4.12 | Split Shell Host framing/router and session/process providers | P1 | L | R3.2, T1.5 | D | S, U, P, E, R | Framing, malformed JSON-RPC, order, routing, session/process and Native smoke | Record Native host ownership if stable | Shell Host core and session/process | Native envelope/tool order/output remain fixed; framing/router/providers have one owner; migrated monolith branches are removed. |
+| R4.13 | Split Shell file/Skill/picker/OS adapters and installer | P1 | L | R4.12 | D | S, U, P, E, R | Provider, installer, path/env, cross-platform fixture and real host smoke | Same default | Remaining Shell Host providers/installers | Host root becomes composition-only; OS and installer behavior remains compatible; no secret/env leakage or hidden provider fallback is introduced. |
+
+### Replanned Phase 4 Lanes
+
+| Lane | Tasks | Merge Risk | Notes |
+|:--|:--|:--|:--|
+| A | R4.1 → R4.2 → R4.3 → R4.4 | High | Sole owner of `entrypoints/background.ts`; strictly serial. |
+| B | R4.5 → R4.6 → R4.7; R4.8 after R4.5 | High | Sole owner of content root; floating-chat files remain isolated after kernel merge. |
+| C | R4.9 → R4.10 → R4.11 | Medium | Sole owner of shared Side Panel runtime/state surfaces. |
+| D | R4.12 → R4.13 | Low | Sole owner of the Shell Host monolith. |
+
+## Replanned Phase 5: Compatibility Closure
+
+**Goal**: Prove changed-path failure semantics and remove any bounded migration remnant before the final PC-browser gate.
+
+| ID | Task | Priority | Effort | Depends On | Lane | S.U.P.E.R | Test Expectation | Governance Impact | Primary Surfaces | Acceptance Criteria |
+|:--|:--|:--:|:--:|:--|:--:|:--:|:--|:--|:--|:--|
+| R5.1 | Audit changed-path failure, legacy, cycle, and second-truth gaps | P0 | M | R4.4, R4.7, R4.8, R4.11, R4.13 | A | U, R | Static audits plus targeted fault matrix for any bounded gap | Update final durable invariants only | All migrated paths and compatibility registry | Prove no second router/validator/truth, empty catch, dead port, or migrated legacy path remains; do not expand a new defect here—open a narrow issue if it exceeds this audit. |
+| R5.2 | Close PC Chrome/Edge/Firefox compatibility | P0 | M | R5.1 | A | P, E, R | Targeted tests → compile → prompt freeze → all-browser builds/packages → manifest/UTF-8 → Native/smoke → full `ci:quality` | Synchronize final invariants and tracker | Compatibility registry, docs, repository gates | Every Phase 1 contract row points to current executable evidence; all supported browser artifacts and external runtimes pass; no Android/mobile surface or unmentioned behavior change returns. |
+
+## Replanned Phase 6: Measured Performance Optimization
+
+**Goal**: Improve owned lifecycle, package, lazy resource, UI chunk, and burst-write costs against task-local reproducible baselines.
+
+| ID | Task | Priority | Effort | Depends On | Lane | S.U.P.E.R | Test Expectation | Governance Impact | Primary Surfaces | Acceptance Criteria |
+|:--|:--|:--:|:--:|:--|:--:|:--:|:--|:--|:--|:--|
+| R6.1 | Optimize Content observers, polling, and callback work | P1 | L | R4.7, R5.2 | A | S, U, E | Fixed mutation/navigation trace, resource ledger, narrow real-Chrome smoke | Record stable lifecycle budgets | Content controllers/interceptor adapters | Record the pre-change trace; remove permanent full-page 500ms polling; teardown owns zero resources; callback/startup work improves without behavior drift. |
+| R6.2 | Audit packaged Pyodide cost and eliminate proven duplication | P2 | M | R5.2 | B | S, E, R | Per-browser asset path/hash/count/zip-size assertions, first-Python-use and offline all-browser smoke | Record package budget if stable | WXT asset plugin, sandbox/Python worker | Preserve the already-lazy first-use runtime. First prove the built/zip asset truth; if duplicate or preventable bytes exist, remove them and record the reduction; otherwise establish an exact-once/non-regression budget without manufacturing a rewrite. |
+| R6.3 | Load bundled Skill resources on demand | P2 | M | R5.2 | C | S, E, R | Loader/cache/import/official-Skill and bundle assertions | Record resource budget if stable | Skill registry/resource loaders/build graph | Record initial-path baseline; initial startup stops parsing/loading the full bundle; imports and official Skills remain byte/behavior compatible. |
+| R6.4 | Split heavy Side Panel pages/chunks on demand | P2 | M | R4.11, R5.2 | D | S, R | Raw/gzip chunk baseline, lazy navigation and UI regression tests | Record initial chunk budget if stable | Side Panel routing/pages/build chunks | Define initial-entry truth and threshold before edits; initial chunk does not regress and targeted page chunks shrink/load only on navigation across all browsers. |
+| R6.5 | Coalesce persistence burst writes without weakening correctness | P1 | L | R3.7, R3.8, R5.2 | E | U, P, R | Per-store 100-mutation physical-write/bytes/latency trace plus concurrency/final-state tests | Record write budgets if stable | Usage, Tool History, sync status/config burst paths | Baselines identify eligible stores; writes/bytes fall by an explicit reviewed threshold; exact final state, confirmed target, journal, and restart semantics remain unchanged. |
+
+### Replanned Phase 6 Lanes
+
+| Lane | Tasks | Merge Risk | Notes |
+|:--|:--|:--|:--|
+| A | R6.1 | Medium | Content performance only after controller ownership closes. |
+| B | R6.2 | Low | Build asset/worker path. |
+| C | R6.3 | Low | Skill resource path. |
+| D | R6.4 | Medium | Side Panel lazy boundaries after controllers. |
+| E | R6.5 | Low | Persistence burst paths with correctness already established. |
+
+## Superseded Pre-Replan Phase 3: Authoritative Contracts and Real Ports
 
 **Goal**: Make typed commands, narrow environment ports, persistence codecs, the DeepSeek protocol adapter, and the tool registry authoritative through real consumers.
 
@@ -118,7 +245,7 @@ On 2026-07-13, T2.3A / [#345](https://github.com/zhu1090093659/deepseek-pp/issue
 | B | T3.2 → T3.3 | Medium | Platform consumers precede persistence convergence. |
 | C | T3.4 | Medium | May touch shared root types; rebase before final phase merge. |
 
-## Phase 4: Strangler Cutover of Runtime Hotspots
+## Superseded Pre-Replan Phase 4: Strangler Cutover of Runtime Hotspots
 
 **Goal**: Reduce the background, content, Side Panel, floating-chat, and Shell Host monoliths to composition roots while deleting migrated legacy paths.
 
@@ -143,7 +270,7 @@ On 2026-07-13, T2.3A / [#345](https://github.com/zhu1090093659/deepseek-pp/issue
 | C | T4.4 | Medium | Shares messaging/platform contracts; integrate after rebasing on Lane A. |
 | D | T4.5 | Low | Native Host is largely isolated. |
 
-## Phase 5: Stability and Compatibility Closure
+## Superseded Pre-Replan Phase 5: Stability and Compatibility Closure
 
 **Goal**: Standardize failure semantics on migrated paths, delete all strangler remnants, and prove the frozen compatibility registry end to end.
 
@@ -162,7 +289,7 @@ On 2026-07-13, T2.3A / [#345](https://github.com/zhu1090093659/deepseek-pp/issue
 |:--|:--|:--|:--|
 | A | T5.1 → T5.2 | High | Deliberately serial integration and deletion phase. |
 
-## Phase 6: Measured Performance Optimization
+## Superseded Pre-Replan Phase 6: Measured Performance Optimization
 
 **Goal**: Improve steady-state DOM cost, startup loading, bundle behavior, and persistence write efficiency using before/after evidence while keeping the compatibility closure green.
 
@@ -189,5 +316,5 @@ On 2026-07-13, T2.3A / [#345](https://github.com/zhu1090093659/deepseek-pp/issue
 1. Implement one Issue per branch/worktree and PR. Do not mix unrelated cleanup into a task.
 2. A task may create a port only if the same diff wires a production consumer and removes the superseded direct dependency.
 3. A central hotspot (`entrypoints/background.ts`, `entrypoints/content.ts`, root contracts) has a single integration owner; parallel lanes submit isolated modules and tests before central wiring.
-4. Before starting T4.3, re-check the working tree and preserve the current user-owned floating-chat changes byte-for-byte unless the user explicitly folds them into that task.
+4. Before starting R4.8, re-check the original working tree and preserve the current user-owned floating-chat changes byte-for-byte unless the user explicitly folds them into that task.
 5. After every task, record adaptive-control telemetry on its Issue and update the Milestone state before starting another task.

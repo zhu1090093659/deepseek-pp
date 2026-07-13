@@ -1,6 +1,6 @@
 # Runtime Command Name Inventory
 
-Baseline: v1.10.0, commit `165ec46`. This annex is the name-level authority for `RT-001`. It freezes the command names that current callers can send while documenting, rather than accepting, the split between the live background router and the `MessageAction` union.
+Compatibility-run baseline: v1.10.0, commit `165ec46`, with 119 live-router names and 89 `MessageAction` names. Current authority: `main@1b933d1` after T2.2 added the released `CREATE_TOOL_AUTHORIZATION` / `CLOSE_TOOL_AUTHORIZATION` lifecycle, with 121 live names and 91 declared names. This annex is the name-level authority for `RT-001`; it freezes what current callers can send while documenting, rather than accepting, the router/union split.
 
 ## Invariants
 
@@ -9,7 +9,158 @@ Baseline: v1.10.0, commit `165ec46`. This annex is the name-level authority for 
 - Eighty-nine names are shared, 32 are live-router-only, and two are declared-only.
 - A live name and its legal behavior remain compatible until an explicit migration changes the contract.
 - `TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` have no live background case. This registry does not invent a response for them.
-- T1.3 adds request/response/error fixtures. T3.1 replaces this split with one exhaustive command map and one registration path.
+- T1.3 adds request/response/error fixtures. R3.1 / #351 establishes the typed handler seam; R4.1–R4.4 replace the split with one exhaustive registration path.
+- The ownership ledger below is authoritative for cutover scope. A live command appears exactly once; a task must not absorb a command assigned to another Issue.
+
+## Replanned Cutover Ownership — 121 Live Commands
+
+### R3.1 / #351 — Typed seam bootstrap (2)
+
+```text
+GET_CONFIG
+WHATS_NEW_DISMISSED
+```
+
+### R4.1 / #360 — Persistence, library, and local preferences (57)
+
+```text
+GET_MEMORIES
+GET_MEMORY_BY_ID
+SAVE_MEMORY
+IMPORT_MEMORY_DRAFTS
+UPDATE_MEMORY
+DELETE_MEMORY
+TOUCH_MEMORIES
+GET_SKILLS
+GET_SKILL_LIBRARY
+GET_SKILL_SOURCES
+GET_GITHUB_SKILL_SOURCES
+SAVE_SKILL
+DELETE_SKILL
+SET_SKILL_ENABLED
+SET_SKILLS_ENABLED
+PREVIEW_GITHUB_SKILL_SOURCE
+IMPORT_GITHUB_SKILL_SOURCE
+PREVIEW_LOCAL_SKILL_SOURCE
+PICK_LOCAL_SKILL_FOLDER
+IMPORT_LOCAL_SKILL_SOURCE
+CHECK_GITHUB_SKILL_SOURCE_UPDATES
+UPDATE_GITHUB_SKILL_SOURCE
+DELETE_GITHUB_SKILL_SOURCE
+GET_PRESETS
+SAVE_PRESET
+DELETE_PRESET
+SET_ACTIVE_PRESET
+GET_ACTIVE_PRESET
+GET_PROMPT_INJECTION_SETTINGS
+SAVE_PROMPT_INJECTION_SETTINGS
+GET_SAVED_ITEMS
+SAVE_SAVED_ITEM
+DELETE_SAVED_ITEM
+INSERT_SAVED_PROMPT_INTO_CHAT
+GET_VOICE_SETTINGS
+SAVE_VOICE_SETTINGS
+GET_VOICE_CAPABILITIES
+GET_PROJECT_CONTEXT_STATE
+CREATE_PROJECT_CONTEXT
+UPDATE_PROJECT_CONTEXT
+DELETE_PROJECT_CONTEXT
+ADD_CONVERSATION_TO_PROJECT
+REMOVE_CONVERSATION_FROM_PROJECT
+SET_PENDING_PROJECT_CONTEXT
+GET_CURRENT_DEEPSEEK_CONVERSATION
+GET_PROJECT_CONTEXT_FOR_CONVERSATION
+GET_ARTIFACT
+GET_DEEPSEEK_THEME
+SET_DEEPSEEK_THEME
+GET_MODEL_TYPE
+SET_MODEL_TYPE
+GET_BACKGROUND
+SAVE_BACKGROUND
+CLEAR_BACKGROUND
+GET_PET
+SAVE_PET
+CLEAR_PET
+```
+
+### R4.2 / #361 — MCP, tool, browser control, and sandbox (29)
+
+```text
+GET_MCP_SERVERS
+GET_MCP_SERVER
+CREATE_MCP_SERVER
+UPDATE_MCP_SERVER
+DELETE_MCP_SERVER
+GET_MCP_TOOL_CACHE
+REFRESH_MCP_SERVER_TOOLS
+REQUEST_MCP_SERVER_PERMISSION
+TEST_MCP_SERVER_CONNECTION
+GET_WEB_TOOL_SETTINGS
+SET_WEB_TOOL_SETTING
+GET_BROWSER_CONTROL_SETTINGS
+SAVE_BROWSER_CONTROL_SETTINGS
+SET_BROWSER_CONTROL_ENABLED
+GET_BROWSER_CONTROL_STATE
+SET_BROWSER_CONTROL_TARGET
+DETACH_BROWSER_CONTROL
+DIAGNOSE_WEB_SEARCH
+REQUEST_HOST_PERMISSION
+GET_TOOL_DESCRIPTORS
+REFRESH_TOOL_DESCRIPTORS
+CREATE_TOOL_AUTHORIZATION
+CLOSE_TOOL_AUTHORIZATION
+APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK
+EXECUTE_TOOL_CALL
+RUN_ARTIFACT_CODE
+GET_TOOL_CALL_HISTORY
+CLEAR_TOOL_CALL_HISTORY
+GET_PLATFORM_CAPABILITIES
+```
+
+### R4.3 / #362 — DeepSeek, chat, multimodal, and export (16)
+
+```text
+GET_DEEPSEEK_API_KEY_STATUS
+SAVE_DEEPSEEK_API_KEY
+CLEAR_DEEPSEEK_API_KEY
+GET_MULTIMODAL_SETTINGS_STATUS
+SAVE_MULTIMODAL_SETTINGS
+CLEAR_MULTIMODAL_SETTINGS
+ANALYZE_MULTIMODAL_MEDIA
+CHAT_SUBMIT_PROMPT
+UPLOAD_DEEPSEEK_IMAGE
+CHAT_NEW_SESSION
+GET_AUTH_STATUS
+GET_OFFICIAL_API_CHAT_CONFIG
+SAVE_OFFICIAL_API_CHAT_CONFIG
+EXPORT_DEEPSEEK_CONVERSATIONS
+CANCEL_DEEPSEEK_EXPORT
+AUTH_STATUS_CHANGED
+```
+
+### R4.4 / #363 — Sync, automation, usage, scenario, and lifecycle closure (17)
+
+```text
+RECORD_USAGE_TURN
+GET_USAGE_SUMMARY
+CLEAR_USAGE_STATS
+GET_SYNC_CONFIG
+SAVE_SYNC_CONFIG
+WEBDAV_TEST
+SYNC_AUTHORIZE
+WEBDAV_UPLOAD_LOCAL
+WEBDAV_DOWNLOAD_REMOTE
+GET_AUTOMATIONS
+GET_AUTOMATION_RUNS
+CREATE_AUTOMATION
+UPDATE_AUTOMATION
+SET_AUTOMATION_STATUS
+DELETE_AUTOMATION
+RUN_AUTOMATION_NOW
+SCENARIOS_UPDATED
+```
+
+`TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` remain declared-only compatibility records. They are not counted in the 121 live command owners and R3.1 must classify them explicitly rather than invent handlers.
 
 ## Live Background Router — 121
 
@@ -279,4 +430,4 @@ MEMORIES_UPDATED
 
 ## Validation Method
 
-`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive literal `case` labels inside `handleMessage`, literal `type` fields and payload presence in `MessageAction`, payload reads, and direct payload casts. It compares those results with this inventory and the frozen `121/91/89/32/2` plus `77/44/71` topology. A 123-entry data-only registry records each name's live/declared surface, payload access/presence, observed response family, and listener-error family; representative serializable specimens cover each response family without creating a second production router. Exhaustive decoded request/response schemas remain T3.1 work.
+`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive literal `case` labels inside `handleMessage`, literal `type` fields and payload presence in `MessageAction`, payload reads, and direct payload casts. It compares those results with this inventory and the frozen `121/91/89/32/2` plus `77/44/71` topology. A 123-entry data-only registry records each name's live/declared surface, payload access/presence, observed response family, and listener-error family; representative serializable specimens cover each response family without creating a second production router. Exhaustive decoded request/response schemas remain R3.1 / #351 work, followed by R4.1–R4.4 handler cutover.

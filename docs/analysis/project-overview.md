@@ -151,8 +151,8 @@ flowchart LR
 
 - 全部 Vitest 都在 jsdom 中运行，没有真实加载 Chrome/Edge/Firefox 扩展的 E2E。
 - 没有 coverage gate、bundle budget、DOM performance budget 或 background cold-start budget。
-- 没有真实 Dexie/IndexedDB 历史 migration 测试；artifact tests 明确禁用了 IndexedDB。
-- Sync 已补齐远端 generation 和本地 apply/rollback 的逐写故障注入、重启恢复与幂等重试；一般并发用户写覆盖仍由 T6.3 处理。
+- 现有测试已通过 fake IndexedDB 执行生产 Dexie 的 Memory v1→v3/v2→v3 upgrade、v3 reopen、Artifact legacy migration，以及 T2.5 的 raw-row rollback/reopen；剩余缺口是 R3.6 负责的单一 Artifact truth、未来/损坏版本保护、Memory import 原子性和显式 ID 分配设计，而不是“没有迁移测试”。
+- Sync 已补齐远端 generation 和本地 apply/rollback 的逐写故障注入、重启恢复与幂等重试；confirmed-target 与并发覆盖正确性由 R3.7 / #357 前移处理，测量后的 burst-write 优化归 R6.5 / #379。
 - `ci:quality` 只在 Ubuntu/Node 22 执行，未做浏览器运行时矩阵。
 
 ## Project Governance Baseline and Resolution
