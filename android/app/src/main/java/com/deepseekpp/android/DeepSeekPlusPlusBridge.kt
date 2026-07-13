@@ -236,7 +236,7 @@ class DeepSeekPlusPlusBridge internal constructor(
             return failure(id, "android_storage_key_not_allowed")
         }
 
-        val serialized = keys.associateWith { key -> JSONObject.valueToString(values.opt(key)) }
+        val serialized = keys.associateWith { key -> serializeJsonValue(values.opt(key)) }
         if (serialized.values.any { it.length > AndroidBridgeContract.MAX_STORAGE_VALUE_CHARS }) {
             return failure(id, "android_storage_value_too_large")
         }
@@ -295,8 +295,13 @@ class DeepSeekPlusPlusBridge internal constructor(
 
     private fun readTheme(): String {
         val raw = preferences.read(AndroidBridgeContract.THEME_STORAGE_KEY) ?: return "light"
-        val parsed = parseStoredJson(raw)
+        val parsed = parseStoredJson(raw) as? String ?: return "light"
         return if (parsed == "dark" || parsed == "light") parsed else "light"
+    }
+
+    private fun serializeJsonValue(value: Any?): String {
+        val wrapped = JSONArray().put(value).toString()
+        return wrapped.substring(1, wrapped.length - 1)
     }
 
     private fun parseStoredJson(raw: String): Any? = try {
