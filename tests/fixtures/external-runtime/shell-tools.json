@@ -1,0 +1,165 @@
+[
+  {
+    "name": "shell_exec",
+    "title": "Execute Shell Command",
+    "description": "Execute a command in the shell reported by shell_status. Returns stdout, stderr, and exit code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "The shell command to execute." },
+        "cwd": { "type": "string", "description": "Working directory. Defaults to user home." },
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Additional environment variables to set." },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds. Default 120000." }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "write", "risk": "high" }
+  },
+  {
+    "name": "shell_status",
+    "title": "Shell Host Status",
+    "description": "Report host health, platform, shell, current working directory, and Node.js version.",
+    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    "annotations": { "operation": "read", "risk": "low" }
+  },
+  {
+    "name": "python_status",
+    "title": "Python Interpreter Status",
+    "description": "Report whether a local Python interpreter is available and which quick-validation packages can be imported.",
+    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    "annotations": { "operation": "read", "risk": "low" }
+  },
+  {
+    "name": "python_exec",
+    "title": "Execute Python Code",
+    "description": "Run short Python code for calculation, reasoning checks, and small data transformations. Do not install packages, access sensitive local files, or use network access.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "Short Python code to execute. Keep it focused on computation or validation." },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 30000, "description": "Timeout in milliseconds. Default 10000." }
+      },
+      "required": ["code"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "execute", "risk": "high" }
+  },
+  {
+    "name": "local_skill_preview",
+    "title": "Preview Local Skill Folder",
+    "description": "Read SKILL.md files, nearby text resources, and script file manifests from a local Skill folder. Does not execute local code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "rootPath": { "type": "string", "description": "Absolute local folder path that contains one or more SKILL.md files." },
+        "selectedPaths": { "type": "array", "items": { "type": "string" }, "description": "Optional SKILL.md paths relative to rootPath. When omitted, previews all detected Skills up to the limit." }
+      },
+      "required": ["rootPath"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "read", "risk": "medium" }
+  },
+  {
+    "name": "local_folder_pick",
+    "title": "Pick Local Folder",
+    "description": "Open the operating system folder picker and return the absolute path selected by the user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Optional prompt shown in the native folder picker." },
+        "defaultPath": { "type": "string", "description": "Optional local folder path to use as the initial picker location." }
+      },
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "read", "risk": "low" }
+  },
+  {
+    "name": "local_file_stat",
+    "title": "Inspect Local File",
+    "description": "Return whether a local path exists, whether it is a file or directory, its size, and its last modified timestamp.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "path": { "type": "string", "description": "Absolute or home-relative local path to inspect." } },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "read", "risk": "medium" }
+  },
+  {
+    "name": "local_file_read",
+    "title": "Read Local Text File",
+    "description": "Read a UTF-8 local text file in character windows so large files can be fetched in chunks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or home-relative local file path to read." },
+        "start": { "type": "integer", "minimum": 0, "description": "Starting character offset. Default 0." },
+        "max_chars": { "type": "integer", "minimum": 1, "maximum": 100000, "description": "Maximum characters to return. Default 16000." }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "read", "risk": "medium" }
+  },
+  {
+    "name": "local_file_write",
+    "title": "Write Local Text File",
+    "description": "Write UTF-8 text to a local file without shell quoting. Supports overwrite or append and can create parent directories.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or home-relative local file path to write." },
+        "content": { "type": "string", "description": "UTF-8 text content to write exactly as provided." },
+        "append": { "type": "boolean", "description": "When true, append to the file instead of overwriting it." },
+        "create_directories": { "type": "boolean", "description": "When true, create missing parent directories. Default true." }
+      },
+      "required": ["path", "content"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "write", "risk": "high" }
+  },
+  {
+    "name": "shell_session_begin",
+    "title": "Open Persistent Shell Session",
+    "description": "Start a long-lived shell session whose working directory, environment, and resident child processes (e.g. OfficeCLI resident mode) survive across later shell_session_exec calls. Use it for multi-step workflows where separate shell_exec calls would lose state. Returns a session_id to pass to subsequent calls.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cwd": { "type": "string", "description": "Initial working directory. Defaults to user home." },
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Additional environment variables to set on the session shell." },
+        "shell": { "type": "string", "description": "Shell binary to use. Defaults to the shell reported by shell_status." }
+      },
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "write", "risk": "high" }
+  },
+  {
+    "name": "shell_session_exec",
+    "title": "Run Command in Persistent Shell Session",
+    "description": "Run a command inside a previously opened shell session (shell_session_begin). State (cwd, exports, resident processes) carries over between calls. Returns stdout, stderr, and exit code like shell_exec. Sessions auto-close after an idle timeout.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "session_id": { "type": "string", "description": "Session id returned by shell_session_begin." },
+        "command": { "type": "string", "description": "The shell command to execute in the session." },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds. Default 120000." }
+      },
+      "required": ["session_id", "command"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "write", "risk": "high" }
+  },
+  {
+    "name": "shell_session_end",
+    "title": "Close Persistent Shell Session",
+    "description": "Close a persistent shell session opened by shell_session_begin and release its child process. After this, the session_id is no longer valid.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "session_id": { "type": "string", "description": "Session id returned by shell_session_begin." } },
+      "required": ["session_id"],
+      "additionalProperties": false
+    },
+    "annotations": { "operation": "write", "risk": "medium" }
+  }
+]

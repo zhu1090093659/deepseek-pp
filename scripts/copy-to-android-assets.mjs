@@ -8,12 +8,21 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const chromeBuildDir = resolve(root, 'dist/chrome-mv3');
 const androidAssetDir = resolve(root, 'android/app/src/main/assets/dpp');
 const shimSource = resolve(root, 'android/web/android-bridge-shim.js');
+const requiredBuildFiles = [
+  'content-scripts/main-world.js',
+  'content-scripts/content.js',
+];
 
 if (!existsSync(chromeBuildDir)) {
   fail('Missing dist/chrome-mv3. Run npm run build:chrome before staging Android assets.');
 }
 if (!existsSync(shimSource)) {
   fail('Missing android/web/android-bridge-shim.js.');
+}
+for (const file of requiredBuildFiles) {
+  if (!existsSync(resolve(chromeBuildDir, file))) {
+    fail(`Missing required Android bundle file: ${file}.`);
+  }
 }
 
 await rm(androidAssetDir, { recursive: true, force: true });

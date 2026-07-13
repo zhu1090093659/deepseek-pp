@@ -3,6 +3,15 @@ export {
 } from './constants';
 
 export {
+  MCP_NATIVE_ENVELOPE_PROTOCOL,
+  MCP_NATIVE_ENVELOPE_VERSION,
+} from './native-contract';
+
+export type {
+  McpNativeEnvelope,
+} from './native-contract';
+
+export {
   McpProtocolError,
   callMcpTool,
   createMcpDescriptorId,

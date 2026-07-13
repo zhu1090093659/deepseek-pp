@@ -1,4 +1,5 @@
 import { DEEPSEEK_API_URL } from '../constants';
+import { DEEPSEEK_WEB_ROUTES } from './contracts';
 import { BYPASS_HOOK_HEADER } from './adapter';
 import {
   extractBizData,
@@ -7,9 +8,9 @@ import {
 } from '../export/normalize';
 
 const DEFAULT_BASE_URL = new URL(DEEPSEEK_API_URL).origin;
-const SESSION_FETCH_PATH = '/api/v0/chat_session/fetch_page';
-const HISTORY_PATH = '/api/v0/chat/history_messages';
-const FILE_FETCH_PATH = '/api/v0/file/fetch_files';
+const SESSION_FETCH_PATH = DEEPSEEK_WEB_ROUTES.fetchSessions;
+const HISTORY_PATH = DEEPSEEK_WEB_ROUTES.history;
+const FILE_FETCH_PATH = DEEPSEEK_WEB_ROUTES.fetchFiles;
 
 export interface DeepSeekConversationExportTransportOptions {
   baseUrl?: string;

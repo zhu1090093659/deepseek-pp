@@ -43,11 +43,24 @@ const expectedLocalizedManifest = {
   description: '__MSG_extension_description__',
   actionTitle: '__MSG_extension_action_title__',
 };
+const expectedExtensionCsp = "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'";
+const expectedSandboxCsp = [
+  'sandbox allow-scripts',
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
+  'worker-src blob:',
+  "child-src 'self' blob: data:",
+  "frame-src 'self' blob: data:",
+  "connect-src 'self' blob:",
+  "object-src 'none'",
+].join('; ');
+const expectedFirefoxId = 'deepseek-pp@zhu1090093659.github';
+const expectedFirefoxDataCategories = ['websiteContent', 'personalCommunications'];
 
 for (const target of targets) {
   const manifest = readJson(target.manifestPath, `Run npm run build:all before npm run verify:manifest-policy.`);
   if (!manifest) continue;
 
+  assertEqual(manifest.manifest_version, 3, `${target.browser}: manifest_version`);
   assertEqual(manifest.version, packageJson.version, `${target.browser}: manifest version must match package.json`);
   assertEqual(manifest.default_locale, expectedLocalizedManifest.default_locale, `${target.browser}: default_locale`);
   assertEqual(manifest.name, expectedLocalizedManifest.name, `${target.browser}: localized name`);
@@ -61,25 +74,53 @@ for (const target of targets) {
   );
 
   if (target.permissions.includes('sidePanel')) {
-    assert(Boolean(manifest.side_panel?.default_path), `${target.browser}: side_panel.default_path is required`);
+    assertEqual(manifest.side_panel?.default_path, 'sidepanel.html', `${target.browser}: side_panel.default_path`);
     assertEqual(manifest.action?.default_title, expectedLocalizedManifest.actionTitle, `${target.browser}: action.default_title`);
+    assert(!manifest.browser_specific_settings, `${target.browser}: browser_specific_settings must be omitted`);
   } else {
     assert(!manifest.side_panel, `${target.browser}: side_panel must be omitted`);
+    assert(!manifest.action, `${target.browser}: action must be omitted`);
+    assertEqual(
+      manifest.browser_specific_settings?.gecko?.id,
+      expectedFirefoxId,
+      `${target.browser}: stable Firefox extension id`,
+    );
+    assertSetEqual(
+      manifest.browser_specific_settings?.gecko?.data_collection_permissions?.required,
+      expectedFirefoxDataCategories,
+      `${target.browser}: Firefox data collection categories`,
+    );
   }
 
-  const webResources = manifest.web_accessible_resources?.flatMap((entry) => entry.resources ?? []) ?? [];
-  assert(webResources.includes('pet/*.png'), `${target.browser}: pet assets must be web accessible`);
-  assert(webResources.includes('deepseek/*.wasm'), `${target.browser}: DeepSeek wasm must be web accessible`);
-  assert(manifest.sandbox?.pages?.includes('sandbox-runner.html'), `${target.browser}: sandbox runner page must be declared`);
-  assertIncludes(
-    manifest.content_security_policy?.sandbox ?? '',
-    "'unsafe-inline'",
-    `${target.browser}: sandbox CSP must allow inline scripts for srcdoc HTML execution`,
+  const webResources = manifest.web_accessible_resources ?? [];
+  assertEqual(webResources.length, 2, `${target.browser}: web-accessible resource group count`);
+  const deepSeekResources = webResources.find((entry) =>
+    Array.isArray(entry.resources) && entry.resources.includes('deepseek/*.wasm'));
+  const globalResources = webResources.find((entry) =>
+    Array.isArray(entry.resources) && entry.resources.includes('sidepanel.html'));
+  assertSetEqual(
+    deepSeekResources?.resources,
+    ['pet/*.png', 'deepseek/*.wasm'],
+    `${target.browser}: DeepSeek-scoped web resources`,
   );
-  assert(
-    !(manifest.content_security_policy?.extension_pages ?? '').includes("'unsafe-inline'"),
-    `${target.browser}: extension_pages CSP must not allow inline scripts`,
+  assertSetEqual(
+    deepSeekResources?.matches,
+    ['*://chat.deepseek.com/*'],
+    `${target.browser}: DeepSeek-scoped resource matches`,
   );
+  assertSetEqual(
+    globalResources?.resources,
+    ['sidepanel.html', 'pet/deepseek-whale-pet-states.png'],
+    `${target.browser}: global floating-chat resources`,
+  );
+  assertSetEqual(
+    globalResources?.matches,
+    ['<all_urls>'],
+    `${target.browser}: global floating-chat resource matches`,
+  );
+  assertSetEqual(manifest.sandbox?.pages, ['sandbox-runner.html'], `${target.browser}: sandbox pages`);
+  assertEqual(manifest.content_security_policy?.extension_pages, expectedExtensionCsp, `${target.browser}: extension CSP`);
+  assertEqual(manifest.content_security_policy?.sandbox, expectedSandboxCsp, `${target.browser}: sandbox CSP`);
   assertFileExists(target.manifestPath.replace('manifest.json', 'pyodide/pyodide.mjs'), `${target.browser}: Pyodide module asset must be bundled`);
   assertFileExists(target.manifestPath.replace('manifest.json', 'pyodide/pyodide.asm.wasm'), `${target.browser}: Pyodide wasm asset must be bundled`);
   assertFileExists(target.manifestPath.replace('manifest.json', 'pyodide/python_stdlib.zip'), `${target.browser}: Pyodide stdlib asset must be bundled`);

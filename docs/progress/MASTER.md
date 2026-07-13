@@ -30,7 +30,7 @@
 
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
-| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 2 | 3 | 5 |
+| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 1 | 4 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 6 | 0 | 6 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
@@ -44,7 +44,7 @@
 | T1.1 | [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) | Establish compatibility contract registry | closed |
 | T1.2 | [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312) | Freeze prompt, tool XML, and inline-agent output | closed |
 | T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | closed |
-| T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | open |
+| T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | closed |
 | T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | open |
 | T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | open |
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | open |
@@ -91,7 +91,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Phase Checklist
 
-- [ ] Phase 1: Compatibility Firewall (3/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
+- [ ] Phase 1: Compatibility Firewall (4/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [ ] Phase 2: Critical Boundaries and Failure Safety (0/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
@@ -102,9 +102,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 1 — Compatibility Firewall (in progress)
 
-**Active Task**: T1.4 / [Issue #314](https://github.com/zhu1090093659/deepseek-pp/issues/314) — Freeze persistence and sync compatibility fixtures.
+**Active Task**: T1.5 / [Issue #315](https://github.com/zhu1090093659/deepseek-pp/issues/315) — Freeze external runtime capability contracts.
 
-**Execution Branch**: `codex/314-persistence-sync-freeze`
+**Execution Branch**: `codex/315-external-runtime-freeze`
 
 **Blockers**: None for Phase 1. The current working tree contains user-owned floating-chat compatibility changes; they are an overlap guard for T4.3, not a blocker for earlier phases.
 
@@ -140,6 +140,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Executed Memory v1→v3 and v2→v3 upgrades, v3 project-scope reopen, and Artifact legacy migration through the production Dexie stores with fake IndexedDB. Project v1 reset, malformed Artifact filtering, Saved Items future-version downgrade, Scenario read fallback, and sync partial commits remain labeled gaps owned by T2.4, T2.5, or T3.3.
 - Targeted validation passed 11 files / 49 tests; the full suite passed 69 files / 441 tests, TypeScript compile and prompt freeze passed, Chrome/Edge/Firefox builds passed, and no Vitest/WXT/TypeScript child process remained. Builds emitted only the existing Pyodide `node:*` externalization warnings.
 
+**T1.5 Evidence**:
+
+- Centralized all released DeepSeek Web/Official API route identities and the Native Messaging envelope identity in contract modules consumed by production adapters and transports; existing aliases remain available.
+- Added executable DeepSeek/body/SSE, 15-key capability, MCP negotiation/transport/output, exact 12-tool Shell catalog/framing/installer, and Android-minimum fixtures. Unsafe substring matching, malformed/CRLF SSE, unknown MCP transport/version, shallow JSON-RPC, UTF-16 truncation, tool-count overshoot, installer partial state, and Android origin/bridge behavior remain labeled with T2-T5 owners.
+- Strengthened generated Chrome/Edge/Firefox manifest assertions and made Android asset staging verify required inputs before replacing output. Existing unavailable/context-invalidated browser API degradation is now executable.
+- Targeted validation passed 5 files / 34 tests; the full suite passed 74 files / 475 tests. Compile, prompt freeze, three browser builds, exact manifest and 84-file UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and 35-file Android asset staging passed. Android APK/runtime validation remains unavailable because no usable JDK, Gradle, or wrapper is installed.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
@@ -161,9 +168,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete T1.4 closure validation and review the final compatibility diff for behavior drift or duplicated contract truth.
-2. Open the Issue #314 PR and wait for all required checks.
-3. Record T1.4 telemetry, merge the PR, and advance Milestone #43 after the checks pass.
+1. Run the full compatibility quality gate and review the T1.5 diff for behavior drift or duplicated contract truth.
+2. Open the Issue #315 PR and wait for all required checks.
+3. Record T1.5 telemetry, merge the PR, complete Milestone #43, and advance to T2.1.
 
 ## Session Log
 
@@ -181,3 +188,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T1.3 closure | Merged PR #339 at `59e431c`, closed Issue #313, recorded task telemetry, and advanced Milestone #43 to 3/5 completed with zero cumulative drift. |
 | 2026-07-13 | T1.4 execution start | Opened isolated branch `codex/314-persistence-sync-freeze` from `59e431c` and started historical persistence and sync compatibility characterization for Issue #314. |
 | 2026-07-13 | T1.4 implementation | Centralized persistence identities used by production stores, added raw Memory/Artifact/Project/Saved Items/Scenario/sync fixtures, executed historical IndexedDB upgrades through production code, and kept known loss and partial-commit behavior classified as owned migration gaps. |
+| 2026-07-13 | T1.4 closure | Merged PR #340 at `d461c6a`, closed Issue #314, recorded task telemetry, and advanced Milestone #43 to 4/5 completed with zero cumulative drift. |
+| 2026-07-13 | T1.5 execution start | Opened isolated branch `codex/315-external-runtime-freeze` from `d461c6a` and started browser, DeepSeek, MCP/Native, Shell, installer, and Android-minimum contract characterization. |
+| 2026-07-13 | T1.5 implementation | Centralized route and Native envelope identities, added executable external-runtime fixtures, strengthened manifest and Android staging checks, and passed targeted/full test, compile, prompt, browser build, manifest, audit, protocol, Native Host, and asset-staging validation. |

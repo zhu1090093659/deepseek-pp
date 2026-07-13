@@ -4,7 +4,7 @@ import {
   createXmlToolCallRegex,
 } from './tool/invocation';
 
-export const DEEPSEEK_API_URL = 'https://chat.deepseek.com/api/v0/chat/completion';
+export { DEEPSEEK_API_URL } from './deepseek/contracts';
 
 export const MEMORY_TOKEN_BUDGET = 1500;
 

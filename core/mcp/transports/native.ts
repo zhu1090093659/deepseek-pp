@@ -9,19 +9,11 @@ import { McpTransportError, normalizeJsonRpcResponse } from './common';
 import { MULTIMODAL_MCP_NATIVE_HOST } from '../../multimodal';
 import { getMultimodalNativeEnv } from '../../multimodal/settings';
 import { SHELL_MCP_NATIVE_HOST } from '../../shell';
-
-interface McpNativeEnvelope {
-  protocol: 'deepseek-pp-mcp-native';
-  version: 1;
-  server: {
-    id: string;
-    command?: string;
-    args?: string[];
-    cwd?: string;
-    env?: Record<string, string>;
-  };
-  message: McpJsonRpcRequest<any> | McpJsonRpcNotification;
-}
+import {
+  MCP_NATIVE_ENVELOPE_PROTOCOL,
+  MCP_NATIVE_ENVELOPE_VERSION,
+  type McpNativeEnvelope,
+} from '../native-contract';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -171,8 +163,8 @@ async function createNativeEnvelope(
 ): Promise<McpNativeEnvelope> {
   const env = await createNativeEnv(server);
   return {
-    protocol: 'deepseek-pp-mcp-native',
-    version: 1,
+    protocol: MCP_NATIVE_ENVELOPE_PROTOCOL,
+    version: MCP_NATIVE_ENVELOPE_VERSION,
     server: {
       id: server.id,
       command: server.transport.command,

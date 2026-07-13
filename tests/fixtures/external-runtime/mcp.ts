@@ -1,0 +1,68 @@
+export const MCP_PROTOCOL_CONTRACT = {
+  requestVersion: '2025-06-18',
+  nativeEnvelopeProtocol: 'deepseek-pp-mcp-native',
+  nativeEnvelopeVersion: 1,
+  transportKinds: ['http', 'sse', 'streamable_http', 'stdio_bridge', 'native_messaging'],
+  handshakeMethods: ['initialize', 'notifications/initialized', 'tools/list'],
+} as const;
+
+export const MCP_PROTOCOL_NEGOTIATION_FIXTURES = [
+  {
+    name: 'known protocol version',
+    serverVersion: MCP_PROTOCOL_CONTRACT.requestVersion,
+    currentOutput: MCP_PROTOCOL_CONTRACT.requestVersion,
+    classification: 'legal',
+  },
+  {
+    name: 'missing server protocol version',
+    serverVersion: undefined,
+    currentOutput: MCP_PROTOCOL_CONTRACT.requestVersion,
+    classification: 'legacy-fallback',
+  },
+  {
+    name: 'arbitrary future server protocol version',
+    serverVersion: '2099-12-31',
+    currentOutput: '2099-12-31',
+    classification: 'current-gap',
+    target: 'supported-version-negotiation-after-T3.5',
+  },
+] as const;
+
+export const MCP_NATIVE_ENVELOPE_FIXTURE = {
+  protocol: 'deepseek-pp-mcp-native',
+  version: 1,
+  server: {
+    id: 'native-contract',
+    command: 'node',
+    args: ['server.mjs'],
+    cwd: '/tmp/native-contract',
+    env: { CONTRACT_ENV: 'visible' },
+  },
+  message: {
+    jsonrpc: '2.0',
+    method: 'notifications/initialized',
+  },
+} as const;
+
+export const MCP_CURRENT_GAPS = [
+  {
+    name: 'unknown transport falls through to Streamable HTTP and may make a network request',
+    currentBehavior: 'streamable-http-fallback',
+    target: 'reject-unknown-transport-before-network-after-T3.5',
+  },
+  {
+    name: 'response normalization accepts a wrong id and result plus error while rewriting jsonrpc',
+    currentBehavior: 'shallow-normalization',
+    target: 'strict-json-rpc-response-codec-after-T3.5',
+  },
+  {
+    name: 'tool output budget counts JavaScript characters rather than UTF-8 bytes',
+    currentBehavior: 'utf16-slice-can-split-surrogate-pairs',
+    target: 'byte-accurate-output-budget-after-T5.1',
+  },
+  {
+    name: 'tool pagination can append a full page beyond maxToolCount',
+    currentBehavior: 'page-level-limit-check',
+    target: 'explicit-shell-catalog-limit-after-T4.5',
+  },
+] as const;

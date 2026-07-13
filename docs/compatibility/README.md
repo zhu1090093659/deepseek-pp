@@ -51,4 +51,4 @@ npm run smoke:mcp
 npm run smoke:shell
 ```
 
-T1.2 supplies executable prompt/tool/inline-agent byte evidence. T1.3-T1.5 add exhaustive message fixtures, historical persistence fixtures, cross-browser manifest assertions, and protocol/native smoke evidence. Until the owning task closes, rows marked `Current-only` are inventory, not proof of compatibility.
+T1.2-T1.5 supply executable prompt bytes, cross-runtime messages, historical persistence, cross-browser manifests/capabilities, DeepSeek/MCP protocols, Native Host framing, Shell installer/catalog, and Android-minimum staging evidence. Rows marked `Current-only` remain inventory rather than proof until replaced by an executable fixture.

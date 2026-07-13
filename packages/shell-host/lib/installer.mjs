@@ -11,17 +11,18 @@ import {
 } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { dirname, resolve } from 'node:path';
+import { dirname, posix, resolve, win32 } from 'node:path';
 import { arch, homedir, platform, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export const HOST_NAME = 'com.deepseek_pp.shell';
+export const FIREFOX_EXTENSION_ID = 'deepseek-pp@zhu1090093659.github';
+export const SUPPORTED_BROWSER_NAMES = ['chrome', 'chromium', 'edge', 'firefox'];
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(__dirname, '..');
 const HOST_SOURCE = resolve(PACKAGE_ROOT, 'native', 'shell-mcp-host.mjs');
-const FIREFOX_EXTENSION_ID = 'deepseek-pp@zhu1090093659.github';
-const SUPPORTED_BROWSERS = new Set(['chrome', 'chromium', 'edge', 'firefox']);
+const SUPPORTED_BROWSERS = new Set(SUPPORTED_BROWSER_NAMES);
 const COMMANDS = new Set(['install', 'status', 'uninstall']);
 const OFFICECLI_REPO = 'iOfficeAI/OfficeCLI';
 const OFFICECLI_BINARY = platform() === 'win32' ? 'officecli.exe' : 'officecli';
@@ -103,58 +104,80 @@ Examples:
 `);
 }
 
-function getAppDataRoot() {
-  const home = homedir();
-  if (platform() === 'darwin') return `${home}/Library/Application Support/DeepSeek++`;
-  if (platform() === 'linux') return `${home}/.local/share/deepseek-pp`;
-  if (platform() === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || resolve(home, 'AppData', 'Local');
-    return resolve(localAppData, 'DeepSeek++');
+export function resolveNativeHostLocations({ os, browser, home, localAppData }) {
+  if (!SUPPORTED_BROWSERS.has(browser)) {
+    throw new Error(`Unsupported browser: ${browser}`);
   }
-  throw new Error(`Unsupported platform: ${platform()}`);
+
+  const path = os === 'win32' ? win32 : posix;
+  let appDataRoot;
+  let manifestDir;
+
+  if (os === 'darwin') {
+    appDataRoot = path.resolve(home, 'Library', 'Application Support', 'DeepSeek++');
+    const manifestSegments = {
+      chrome: ['Google', 'Chrome', 'NativeMessagingHosts'],
+      chromium: ['Chromium', 'NativeMessagingHosts'],
+      edge: ['Microsoft Edge', 'NativeMessagingHosts'],
+      firefox: ['Mozilla', 'NativeMessagingHosts'],
+    }[browser];
+    manifestDir = path.resolve(home, 'Library', 'Application Support', ...manifestSegments);
+  } else if (os === 'linux') {
+    appDataRoot = path.resolve(home, '.local', 'share', 'deepseek-pp');
+    const manifestSegments = {
+      chrome: ['.config', 'google-chrome', 'NativeMessagingHosts'],
+      chromium: ['.config', 'chromium', 'NativeMessagingHosts'],
+      edge: ['.config', 'microsoft-edge', 'NativeMessagingHosts'],
+      firefox: ['.mozilla', 'native-messaging-hosts'],
+    }[browser];
+    manifestDir = path.resolve(home, ...manifestSegments);
+  } else if (os === 'win32') {
+    const appData = localAppData || path.resolve(home, 'AppData', 'Local');
+    appDataRoot = path.resolve(appData, 'DeepSeek++');
+    manifestDir = path.resolve(appDataRoot, 'NativeMessagingHosts');
+  } else {
+    throw new Error(`Unsupported platform: ${os}`);
+  }
+
+  const hostInstallDir = path.resolve(
+    appDataRoot,
+    os === 'linux' ? 'native-host' : 'NativeHost',
+  );
+  return {
+    appDataRoot,
+    hostInstallDir,
+    manifestDir,
+    manifestPath: path.resolve(manifestDir, `${HOST_NAME}.json`),
+    registryKey: os === 'win32' ? getWindowsRegistryKey(browser) : null,
+  };
+}
+
+function getCurrentNativeHostLocations(browser = 'chrome') {
+  return resolveNativeHostLocations({
+    os: platform(),
+    browser,
+    home: homedir(),
+    localAppData: process.env.LOCALAPPDATA,
+  });
+}
+
+function getAppDataRoot() {
+  return getCurrentNativeHostLocations().appDataRoot;
 }
 
 function getHostInstallDir() {
-  const root = getAppDataRoot();
-  return platform() === 'linux' ? resolve(root, 'native-host') : resolve(root, 'NativeHost');
+  return getCurrentNativeHostLocations().hostInstallDir;
 }
 
 function getManifestDir(browser) {
-  const os = platform();
-  const home = homedir();
-
-  if (os === 'darwin') {
-    switch (browser) {
-      case 'chrome': return `${home}/Library/Application Support/Google/Chrome/NativeMessagingHosts`;
-      case 'chromium': return `${home}/Library/Application Support/Chromium/NativeMessagingHosts`;
-      case 'edge': return `${home}/Library/Application Support/Microsoft Edge/NativeMessagingHosts`;
-      case 'firefox': return `${home}/Library/Application Support/Mozilla/NativeMessagingHosts`;
-      default: return `${home}/Library/Application Support/Google/Chrome/NativeMessagingHosts`;
-    }
-  }
-
-  if (os === 'linux') {
-    switch (browser) {
-      case 'chrome': return `${home}/.config/google-chrome/NativeMessagingHosts`;
-      case 'chromium': return `${home}/.config/chromium/NativeMessagingHosts`;
-      case 'edge': return `${home}/.config/microsoft-edge/NativeMessagingHosts`;
-      case 'firefox': return `${home}/.mozilla/native-messaging-hosts`;
-      default: return `${home}/.config/google-chrome/NativeMessagingHosts`;
-    }
-  }
-
-  if (os === 'win32') {
-    return resolve(getAppDataRoot(), 'NativeMessagingHosts');
-  }
-
-  throw new Error(`Unsupported platform: ${os}`);
+  return getCurrentNativeHostLocations(browser).manifestDir;
 }
 
 function getManifestPath(browser) {
-  return resolve(getManifestDir(browser), `${HOST_NAME}.json`);
+  return getCurrentNativeHostLocations(browser).manifestPath;
 }
 
-function getRegistryKey(browser) {
+function getWindowsRegistryKey(browser) {
   switch (browser) {
     case 'chrome': return `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`;
     case 'edge': return `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${HOST_NAME}`;
@@ -163,7 +186,11 @@ function getRegistryKey(browser) {
   }
 }
 
-function buildManifest(args, wrapperPath) {
+function getRegistryKey(browser) {
+  return getCurrentNativeHostLocations(browser).registryKey;
+}
+
+export function createNativeHostManifest(args, wrapperPath) {
   const manifest = {
     name: HOST_NAME,
     description: 'DeepSeek++ Shell MCP - General purpose shell execution via Native Messaging',
@@ -479,7 +506,7 @@ function install(args) {
   const manifestDir = dirname(manifestPath);
   const hostPath = copyHostScript(getHostInstallDir());
   const wrapperPath = createWrapper(hostPath, args.logFile);
-  const manifest = buildManifest(args, wrapperPath);
+  const manifest = createNativeHostManifest(args, wrapperPath);
 
   mkdirSync(manifestDir, { recursive: true });
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');

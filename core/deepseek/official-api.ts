@@ -4,8 +4,9 @@ import {
   type OfficialApiChatConfig,
 } from '../chat/official-api-config';
 import { parseSSEChunk, parseSSEData } from '../interceptor/sse-parser';
+import { DEEPSEEK_OFFICIAL_API_URL } from './contracts';
 
-export const DEEPSEEK_OFFICIAL_API_URL = 'https://api.deepseek.com/chat/completions';
+export { DEEPSEEK_OFFICIAL_API_URL } from './contracts';
 
 export interface OfficialDeepSeekMessage {
   role: 'user' | 'assistant';

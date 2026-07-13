@@ -17,13 +17,18 @@ import {
   type PowChallenge,
 } from './pow';
 import { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from './upload-limits';
+import {
+  DEEPSEEK_BYPASS_HOOK_HEADER,
+  DEEPSEEK_FILE_FETCH_PATH,
+  DEEPSEEK_FILE_UPLOAD_PATH,
+  DEEPSEEK_WEB_ROUTES,
+} from './contracts';
 
 const COMPLETION_PATH = new URL(DEEPSEEK_API_URL).pathname;
-const POW_CHALLENGE_PATH = '/api/v0/chat/create_pow_challenge';
-const CHAT_SESSION_CREATE_PATH = '/api/v0/chat_session/create';
-const HISTORY_PATH = '/api/v0/chat/history_messages';
-export const DEEPSEEK_FILE_UPLOAD_PATH = '/api/v0/file/upload_file';
-export const DEEPSEEK_FILE_FETCH_PATH = '/api/v0/file/fetch_files';
+const POW_CHALLENGE_PATH = DEEPSEEK_WEB_ROUTES.powChallenge;
+const CHAT_SESSION_CREATE_PATH = DEEPSEEK_WEB_ROUTES.createSession;
+const HISTORY_PATH = DEEPSEEK_WEB_ROUTES.history;
+export { DEEPSEEK_FILE_FETCH_PATH, DEEPSEEK_FILE_UPLOAD_PATH } from './contracts';
 export { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from './upload-limits';
 const DEFAULT_MODEL_TYPE = 'default';
 const DEFAULT_APP_VERSION = '2.0.0';
@@ -36,7 +41,7 @@ const FILE_READY_TIMEOUT_MS = 15_000;
 // DeepSeek can return audit_result=unknown together with status=SUCCESS for usable image uploads.
 const ACCEPTED_FILE_AUDIT_RESULTS = new Set(['PASS', 'PASSED', 'SUCCESS', 'OK', 'UNKNOWN']);
 const REJECTED_FILE_AUDIT_RESULTS = new Set(['REJECT', 'REJECTED', 'FAIL', 'FAILED', 'ERROR', 'BLOCK', 'BLOCKED', 'DENY', 'DENIED']);
-export const BYPASS_HOOK_HEADER = 'X-DPP-Bypass-Hook';
+export const BYPASS_HOOK_HEADER = DEEPSEEK_BYPASS_HOOK_HEADER;
 
 let rememberedClientHeaders: Record<string, string> | null = null;
 

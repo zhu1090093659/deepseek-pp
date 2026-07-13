@@ -1,4 +1,8 @@
-import { DEEPSEEK_API_URL } from '../constants';
+import {
+  DEEPSEEK_BYPASS_HOOK_HEADER,
+  isDeepSeekChatStreamUrl,
+  isDeepSeekHistoryUrl,
+} from '../deepseek/contracts';
 import type { ToolCall, ToolCallRestoreRecord, ToolCallSource, ToolDescriptor } from '../types';
 import { isInlineAgentContinuationRequest } from '../inline-agent/prompt';
 import { sanitizeInternalPromptText } from '../prompt';
@@ -25,11 +29,7 @@ import { createStreamingToolTextAccumulator } from './streaming-tool-text';
 import { createStreamingToolCallParser, type ToolCallPayloadChunk } from './streaming-tool-call-parser';
 import { extractToolCalls } from './tool-parser';
 
-const COMPLETION_PATH = new URL(DEEPSEEK_API_URL).pathname;
-const REGENERATE_PATH = '/api/v0/chat/regenerate';
-const CHAT_STREAM_PATHS = [COMPLETION_PATH, REGENERATE_PATH];
-const HISTORY_PATH = '/api/v0/chat/history_messages';
-const BYPASS_HOOK_HEADER = 'X-DPP-Bypass-Hook';
+const BYPASS_HOOK_HEADER = DEEPSEEK_BYPASS_HOOK_HEADER;
 const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 const INITIAL_HOOK_STATE_WAIT_MS = 1_500;
 const DEFAULT_APP_VERSION = '2.0.0';
@@ -128,7 +128,7 @@ function hookFetch() {
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 
-    if (url.includes(HISTORY_PATH)) {
+    if (isDeepSeekHistoryUrl(url)) {
       return interceptHistoryResponse(originalFetch.call(this, input, init));
     }
 
@@ -197,7 +197,7 @@ function hookXHR() {
       void waitForInitialHookState().then(sendChatRequest);
       return;
     }
-    if (url && url.includes(HISTORY_PATH)) {
+    if (url && isDeepSeekHistoryUrl(url)) {
       setupXHRHistoryInterceptor(this);
     }
     return origSend.call(this, body);
@@ -299,7 +299,7 @@ function createRequestContext(bodyStr: string, overrides: RequestContextOverride
 }
 
 function isChatStreamURL(url: string): boolean {
-  return CHAT_STREAM_PATHS.some((path) => url.includes(path));
+  return isDeepSeekChatStreamUrl(url);
 }
 
 function hasBypassHookHeader(headers: HeadersInit | undefined): boolean {
