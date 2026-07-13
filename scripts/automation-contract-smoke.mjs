@@ -16,6 +16,7 @@ const requiredFiles = [
   'core/inline-agent/prompt.ts',
   'core/inline-agent/renderer.ts',
   'core/deepseek/adapter.ts',
+  'core/messaging/schema.ts',
   'core/shell/index.ts',
   'core/shell/contracts.ts',
   'core/shell/policy.ts',
@@ -59,11 +60,13 @@ assertContains('entrypoints/background.ts', 'scanDueAutomations');
 assertContains('entrypoints/background.ts', "case 'CREATE_AUTOMATION'");
 assertContains('entrypoints/background.ts', "case 'RUN_AUTOMATION_NOW'");
 assertContains('entrypoints/content.ts', 'runInlineAgentLoop');
-assertContains('entrypoints/content.ts', 'DPP_BRIDGE_INIT');
+assertContains('entrypoints/content.ts', 'const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
 assertContains('entrypoints/content.ts', 'restorePersistedInlineAgentTraces');
 assertContains('entrypoints/main-world.content.ts', 'requestAugmentedBody');
-assertContains('entrypoints/main-world.content.ts', 'DPP_BRIDGE_REQUEST');
+assertContains('entrypoints/main-world.content.ts', 'const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request');
 assertNotContains('entrypoints/main-world.content.ts', 'EXECUTE_TOOL_CALL');
+assertContains('core/messaging/schema.ts', "request: 'DPP_BRIDGE_REQUEST'");
+assertContains('core/messaging/schema.ts', "init: 'DPP_BRIDGE_INIT'");
 assertContains('core/inline-agent/loop.ts', 'INLINE_AGENT_MAX_STEPS');
 assertContains('core/inline-agent/prompt.ts', 'buildContinuationPrompt');
 assertContains('core/inline-agent/renderer.ts', 'createAgentStepElement');
