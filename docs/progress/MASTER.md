@@ -31,7 +31,7 @@
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
-| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 4 | 3 | 7 |
+| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 3 | 4 | 7 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 |
@@ -49,7 +49,7 @@
 | T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | closed |
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | closed |
 | T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | closed; superseded by T2.3A |
-| T2.3A | [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) | Remove Android template and support surface | open |
+| T2.3A | [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) | Remove Android template and support surface | closed |
 | T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | open |
 | T2.5 | [#320](https://github.com/zhu1090093659/deepseek-pp/issues/320) | Add staged sync download, journal, and rollback | open |
 | T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | open |
@@ -93,7 +93,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 ## Phase Checklist
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
-- [ ] Phase 2: Critical Boundaries and Failure Safety (3/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
+- [ ] Phase 2: Critical Boundaries and Failure Safety (4/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
@@ -103,13 +103,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
 
-**Active Task**: T2.3A / [Issue #345](https://github.com/zhu1090093659/deepseek-pp/issues/345) — Remove Android template and support surface.
+**Active Task**: T2.4 / [Issue #319](https://github.com/zhu1090093659/deepseek-pp/issues/319) — Make sync uploads generation-atomic.
 
-**Execution Branch**: `codex/345-remove-android-template`
+**Execution Branch**: `codex/319-sync-generation-atomic`
 
-**Blockers**: None. Work is isolated from the original repository's user-owned changes. T2.4 remains paused in its clean worktree until this scope-change task closes.
+**Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, and PoW/MCP/mock/Shell smoke passing. Its former Android evidence is historical and retired by #345; current validation is PC-browser-only.
+**Baseline Evidence**: PC-only main is `c3e68bd` after T2.3A closed with 83 test files / 580 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, and hosted run `29257208567` passing. Android project/build/runtime/test support is retired.
 
 **T1.1 Evidence**:
 
@@ -177,11 +177,20 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Local `testDebugUnitTest` fails explicitly because no JDK is installed. Hosted run `29254928324` compiled the Android app with aligned Java/Kotlin 17 targets and passed all 15 JVM tests; its repository quality job also passed. Two earlier Android runs exposed and drove removal of the JVM-target mismatch and platform-`org.json` assumptions rather than being bypassed.
 - PR #344 merged at `6daa2a2946dd7aec9192e888d8b6323aca21ad55`; Issue #318 closed after telemetry was recorded, and Milestone #44 advanced to 3/6 with zero cumulative drift before the user changed the supported-platform scope.
 
-**T2.3A Evidence (in progress)**:
+**T2.3A Evidence (closed)**:
 
 - User scope changed to PC Chrome/Edge/Firefox only. Issue #345 and isolated branch `codex/345-remove-android-template` were created; Milestone #44 was rescaled to seven tasks with one recorded scope drift.
 - Android project, bridge/shim, build scripts, package commands, JVM CI job, and Android-specific tests/fixtures are removed. Platform detection now has one supported browser-extension kind and an explicit all-false `unknown` degradation path.
 - `AGENTS.md`, public README files, compatibility registries, analysis, plan, and this tracker now state one PC-only product boundary while retaining historical release/progress evidence as superseded rather than rewriting history.
+- Full `ci:quality` passed with 83 files / 580 tests, Chrome/Edge/Firefox builds and packages, source archive inspection, and no orphan test/Gradle process. PR #346 merged at `c3e68bd66681003b683f95888d5455f3033e81e2`; Issue #345 closed and hosted run `29257208567` passed.
+
+**T2.4 Evidence (in progress)**:
+
+- Split the provider-agnostic `StorageBackend` port from the concrete composition factory, removing the sync provider dependency cycle while retaining the same WebDAV, Google Drive, and OneDrive implementations.
+- New uploads serialize all six logical files, precompute SHA-256/UTF-8 byte metadata, stage generation-scoped payloads, write a schema-v1 manifest, and replace `sync-current.json` last. They never dual-write legacy fixed files.
+- Readers use legacy fixed files only when the pointer is absent. A present pointer requires a valid manifest, exact six-file allowlist, generation identity, byte lengths, and checksums; corrupt/future/incomplete generations fail visibly before local mutation.
+- Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 still owns staged local apply and rollback; config-operation serialization/concurrent overwrite remains assigned to T6.3, and committed-with-local-bookkeeping warning UX remains assigned to T5.1.
+- Current validation passes 6 targeted files / 73 tests and the 60-second full suite at 84 files / 613 tests, plus TypeScript compile, prompt freeze, i18n, manifest/UTF-8 policy, Chrome/Edge/Firefox builds, `git diff --check`, and orphan-process checks. Three independent final reviews report no remaining merge blocker after provider error-detail, raw-fixture, lost-response, manifest-integrity, and GDrive duplicate-object corrections.
 
 ## Governance Status
 
@@ -197,16 +206,16 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Adaptive Control
 
-- Strategy: `compatibility-firewall + risk-first vertical slices + strangler cutover`.
+- Strategy: `PC-browser-only compatibility firewall + risk-first vertical slices + strangler cutover`.
 - Milestone descriptions contain `drift_score`, thresholds, total/completed tasks, and last update time.
 - Each completed Issue receives execution telemetry before the PR closes it.
 - Threshold actions follow the spec-driven adaptive-control protocol: annotate, halt and replan, or halt and return for scope confirmation.
 
 ## Next Steps
 
-1. Complete targeted/full validation and diff review for T2.3A / Issue #345.
-2. Record telemetry, merge the T2.3A PR, close #345, and advance Milestone #44 to 4/7.
-3. Resume T2.4 / Issue #319 from its clean isolated worktree.
+1. Complete targeted/full validation and diff review for T2.4 / Issue #319.
+2. Record telemetry, merge the T2.4 PR, close #319, and advance Milestone #44 to 5/7.
+3. Continue with T2.5 / Issue #320 for staged local sync apply, journal, and rollback.
 
 ## Session Log
 
@@ -239,3 +248,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T2.3 closure | Merged PR #344 at `6daa2a2`, closed Issue #318 after telemetry, and advanced Milestone #44 to 3/6 completed with zero cumulative drift. |
 | 2026-07-13 | Platform scope change | User ended Android support and limited the product to PC Chrome/Edge/Firefox; opened T2.3A / Issue #345 and rescaled Milestone #44 to 7 tasks with drift score 1. |
 | 2026-07-13 | T2.3A execution start | Paused T2.4 in a clean worktree, opened `codex/345-remove-android-template` from `6daa2a2`, and removed the Android product/build/runtime/test surface while preserving explicit unknown-environment degradation. |
+| 2026-07-13 | T2.3A closure | Merged PR #346 at `c3e68bd`, closed Issue #345 after telemetry, passed local/hosted PC-browser-only quality gates, and advanced Milestone #44 to 4/7 with cumulative drift score 1. |
+| 2026-07-13 | T2.4 execution start | Rebased `codex/319-sync-generation-atomic` onto PC-only main `c3e68bd`; audited remote persistence, provider, prompt/runtime, and compatibility boundaries before implementing the generation contract. |
+| 2026-07-13 | T2.4 implementation | Added generation-scoped payloads, schema-v1 manifest/checksums, last-write current pointer, strict generation reads, legacy pointer-absence fallback, provider port/factory separation, and exhaustive remote-write fault injection. |

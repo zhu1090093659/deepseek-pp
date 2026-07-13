@@ -53,9 +53,19 @@ import {
   OPTIONAL_SYNC_FILE_KEYS,
   REQUIRED_SYNC_FILE_KEYS,
   SYNC_FILE_KEYS,
+  type SyncFileKey,
 } from '../core/sync/contracts';
+import {
+  readCurrentSyncGeneration,
+  uploadSyncGeneration,
+} from '../core/sync/generation';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
-import { createStorageBackend, type StorageBackend } from '../core/sync/storage-backend';
+import { createStorageBackend } from '../core/sync/backend-factory';
+import type { StorageBackend } from '../core/sync/storage-backend';
+import {
+  serializeSyncDataSnapshot,
+  type SyncDataSnapshot,
+} from '../core/sync/snapshot';
 import { authorizeGDrive } from '../core/sync/gdrive-client';
 import { authorizeOneDrive } from '../core/sync/onedrive-client';
 import {
@@ -270,7 +280,7 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
+import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
 import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
@@ -309,15 +319,6 @@ type SidePanelApi = {
 type ActionApi = {
   setBadgeText?: (details: { text: string }) => Promise<void> | void;
   setBadgeBackgroundColor?: (details: { color: string }) => Promise<void> | void;
-};
-
-type SyncDataSnapshot = {
-  memories: Omit<Memory, 'id'>[];
-  skills: Skill[];
-  skillSources: SkillImportSource[];
-  presets: SystemPromptPreset[];
-  projectContext: ProjectContextState | null;
-  savedItems: Awaited<ReturnType<typeof getSavedItemsState>> | null;
 };
 
 export default defineBackground(() => {
@@ -2269,27 +2270,37 @@ async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
 }
 
 async function uploadSyncDataSnapshot(backend: StorageBackend, snapshot: SyncDataSnapshot): Promise<void> {
-  await Promise.all([
-    backend.put(SYNC_FILE_KEYS.memories, JSON.stringify(snapshot.memories)),
-    backend.put(SYNC_FILE_KEYS.skills, JSON.stringify(snapshot.skills)),
-    backend.put(SYNC_FILE_KEYS.skillSources, JSON.stringify(snapshot.skillSources)),
-    backend.put(SYNC_FILE_KEYS.presets, JSON.stringify(snapshot.presets)),
-    snapshot.projectContext
-      ? backend.put(SYNC_FILE_KEYS.projectContext, JSON.stringify(snapshot.projectContext))
-      : Promise.resolve(),
-    snapshot.savedItems
-      ? backend.put(SYNC_FILE_KEYS.savedItems, JSON.stringify(snapshot.savedItems))
-      : Promise.resolve(),
-  ]);
+  await uploadSyncGeneration(backend, serializeSyncDataSnapshot(snapshot));
 }
 
 async function getRemoteSyncDataSnapshot(backend: StorageBackend): Promise<SyncDataSnapshot> {
+  const generationFiles = await readCurrentSyncGeneration(backend);
+  const remoteFiles = generationFiles ?? await getLegacyRemoteSyncFiles(backend);
+  return parseRemoteSyncDataSnapshot(remoteFiles);
+}
+
+async function getLegacyRemoteSyncFiles(backend: StorageBackend): Promise<ReadonlyMap<SyncFileKey, string>> {
   const [requiredFiles, optionalFiles] = await Promise.all([
     Promise.all(REQUIRED_SYNC_FILE_KEYS.map((file) => backendGetRequired(backend, file))),
     Promise.all(OPTIONAL_SYNC_FILE_KEYS.map((file) => backend.get(file))),
   ]);
-  const [remoteMemJson, remoteSkillJson, remotePresetJson] = requiredFiles;
-  const [remoteSkillSourceJson, remoteProjectContextJson, remoteSavedItemsJson] = optionalFiles;
+  const entries: [SyncFileKey, string][] = REQUIRED_SYNC_FILE_KEYS.map(
+    (file, index) => [file, requiredFiles[index]],
+  );
+  OPTIONAL_SYNC_FILE_KEYS.forEach((file, index) => {
+    const content = optionalFiles[index];
+    if (content !== null) entries.push([file, content]);
+  });
+  return new Map(entries);
+}
+
+function parseRemoteSyncDataSnapshot(remoteFiles: ReadonlyMap<SyncFileKey, string>): SyncDataSnapshot {
+  const remoteMemJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.memories);
+  const remoteSkillJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.skills);
+  const remotePresetJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.presets);
+  const remoteSkillSourceJson = remoteFiles.get(SYNC_FILE_KEYS.skillSources) ?? null;
+  const remoteProjectContextJson = remoteFiles.get(SYNC_FILE_KEYS.projectContext) ?? null;
+  const remoteSavedItemsJson = remoteFiles.get(SYNC_FILE_KEYS.savedItems) ?? null;
 
   const memories = parseValidatedArray(SYNC_FILE_KEYS.memories, remoteMemJson, validateSyncMemory);
 
@@ -2312,6 +2323,14 @@ async function getRemoteSyncDataSnapshot(backend: StorageBackend): Promise<SyncD
       ? null
       : parseValidatedJson(SYNC_FILE_KEYS.savedItems, remoteSavedItemsJson, validateSavedItemsState),
   };
+}
+
+function getRequiredSyncFile(files: ReadonlyMap<SyncFileKey, string>, file: SyncFileKey): string {
+  const content = files.get(file);
+  if (content === undefined) {
+    throw new Error(backgroundT('background.sync.missingRemoteFile', { file }));
+  }
+  return content;
 }
 
 function isSyncableSkill(skill: Skill): boolean {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GDriveSyncConfig, OneDriveSyncConfig, WebdavSyncConfig } from '../core/types';
-import { createStorageBackend } from '../core/sync/storage-backend';
+import { createStorageBackend } from '../core/sync/backend-factory';
 import {
   getAccessToken,
   invalidateToken,
@@ -135,6 +135,52 @@ describe('Google Drive backend', () => {
 
     const backend = createGDriveBackend(config);
     expect(await backend.get('memories.json')).toBeNull();
+  });
+
+  it('uses the newest live object as the canonical file when Drive contains duplicate names', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/oauth2.googleapis.com/token')) {
+        return jsonResponse({ access_token: 'atok', expires_in: 3600 });
+      }
+      if (url.includes('/drive/v3/files?')) {
+        return jsonResponse({
+          files: [
+            {
+              id: 'old-file',
+              name: 'sync-current.json',
+              createdTime: '2026-07-13T10:00:00.000Z',
+              modifiedTime: '2026-07-13T10:00:00.000Z',
+            },
+            {
+              id: 'new-file',
+              name: 'sync-current.json',
+              createdTime: '2026-07-13T10:01:00.000Z',
+              modifiedTime: '2026-07-13T10:02:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/drive/v3/files/new-file?alt=media')) return textResponse('{"canonical":true}');
+      if (url.includes('upload/drive/v3/files/new-file') && init?.method === 'PATCH') {
+        return new Response('{}', { status: 200 });
+      }
+      return new Response('unexpected', { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const backend = createGDriveBackend(config);
+    expect(await backend.get('sync-current.json')).toBe('{"canonical":true}');
+    await backend.put('sync-current.json', '{"candidate":true}');
+    const queryUrl = fetchImpl.mock.calls
+      .map(([input]) => typeof input === 'string' ? input : input.toString())
+      .find((url) => url.includes('/drive/v3/files?'));
+    expect(queryUrl).toContain('pageSize=1000');
+    expect(new URL(queryUrl!).searchParams.get('q')).toContain('trashed = false');
+    expect(fetchImpl.mock.calls.some(([input, init]) => (
+      (typeof input === 'string' ? input : input.toString()).includes('/new-file')
+      && init?.method === 'PATCH'
+    ))).toBe(true);
   });
 
   it('uses the injected translator when Google Drive is not authorized', async () => {

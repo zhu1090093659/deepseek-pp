@@ -243,7 +243,6 @@ describe('persistence and sync compatibility contract', () => {
     expect(SYNC_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
       'migrate-v1-without-overwrite-after-T3.3',
       'unify-future-version-rejection-after-T3.3',
-      'generation-atomic-upload-after-T2.4',
       'transactional-local-apply-after-T2.5',
     ]);
   });

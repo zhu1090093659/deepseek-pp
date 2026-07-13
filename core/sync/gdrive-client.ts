@@ -28,6 +28,8 @@ type GDriveAuthInput = Pick<GDriveSyncConfig, 'clientId' | 'clientSecret'>;
 interface DriveFileMeta {
   id: string;
   name: string;
+  createdTime?: string;
+  modifiedTime?: string;
 }
 
 function buildAuthUrl(config: GDriveAuthInput, t: SyncErrorTranslator): string {
@@ -87,9 +89,9 @@ async function findFileId(
 ): Promise<string | null> {
   const params = new URLSearchParams({
     spaces: 'appDataFolder',
-    fields: 'files(id,name)',
-    q: `name = '${escapeDriveQueryLiteral(name)}'`,
-    pageSize: '1',
+    fields: 'files(id,name,createdTime,modifiedTime)',
+    q: `name = '${escapeDriveQueryLiteral(name)}' and trashed = false`,
+    pageSize: '1000',
   });
   const res = await authedFetch(
     cacheKey(config),
@@ -102,8 +104,23 @@ async function findFileId(
   );
   if (!res.ok) throw new Error(t('background.sync.gdriveQueryFailed', { name, status: res.status }));
   const data = await res.json() as { files?: DriveFileMeta[] };
-  const match = (data.files ?? []).find((file) => file.name === name);
-  return match?.id ?? null;
+  const matches = (data.files ?? [])
+    .filter((file) => file.name === name)
+    .sort(compareDriveFilesNewestFirst);
+  return matches[0]?.id ?? null;
+}
+
+function compareDriveFilesNewestFirst(left: DriveFileMeta, right: DriveFileMeta): number {
+  const modifiedDelta = driveTimestamp(right.modifiedTime) - driveTimestamp(left.modifiedTime);
+  if (modifiedDelta !== 0) return modifiedDelta;
+  const createdDelta = driveTimestamp(right.createdTime) - driveTimestamp(left.createdTime);
+  if (createdDelta !== 0) return createdDelta;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+function driveTimestamp(value: string | undefined): number {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 async function createFile(

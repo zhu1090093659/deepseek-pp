@@ -71,6 +71,53 @@ export const SYNC_LEGACY_JSON_FIXTURES = {
   },
 } as const;
 
+export const SYNC_GENERATION_V1_FIXTURE = {
+  currentPointerKey: 'sync-current.json',
+  manifestKey: 'sync-generation-fixture-generation-v1--manifest.json',
+  files: [
+    {
+      logicalKey: 'memories.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--memories.json',
+      content: '[]',
+    },
+    {
+      logicalKey: 'skills.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--skills.json',
+      content: '[]',
+    },
+    {
+      logicalKey: 'skill-sources.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--skill-sources.json',
+      content: '[]',
+    },
+    {
+      logicalKey: 'presets.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--presets.json',
+      content: '[]',
+    },
+    {
+      logicalKey: 'project-context.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--project-context.json',
+      content: '{"schemaVersion":2,"projects":[],"conversations":[],"pendingProjectId":null}',
+    },
+    {
+      logicalKey: 'saved-items.json',
+      remoteKey: 'sync-generation-fixture-generation-v1--saved-items.json',
+      content: '{"schemaVersion":1,"items":[]}',
+    },
+  ],
+  manifest:
+    '{"kind":"deepseek-pp.sync-generation","schemaVersion":1,"generationId":"fixture-generation-v1","createdAt":1700000000000,"files":['
+    + '{"key":"memories.json","byteLength":2,"checksum":{"algorithm":"sha256","value":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}},'
+    + '{"key":"skills.json","byteLength":2,"checksum":{"algorithm":"sha256","value":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}},'
+    + '{"key":"skill-sources.json","byteLength":2,"checksum":{"algorithm":"sha256","value":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}},'
+    + '{"key":"presets.json","byteLength":2,"checksum":{"algorithm":"sha256","value":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}},'
+    + '{"key":"project-context.json","byteLength":76,"checksum":{"algorithm":"sha256","value":"b0715642d984a4f006b9eb18cc2b463419ad4122a63b8e42f694de5a44a2c276"}},'
+    + '{"key":"saved-items.json","byteLength":30,"checksum":{"algorithm":"sha256","value":"3fec395cc64c23628f3e5ed6765c32f77628cec39f588c470450dc3c81019a2c"}}]}',
+  pointer:
+    '{"kind":"deepseek-pp.sync-generation-pointer","schemaVersion":1,"generationId":"fixture-generation-v1","publishedAt":1700000000000,"manifestChecksum":{"algorithm":"sha256","value":"179fbfaa25be9585b73c1e93dbb104ca865d51250136cd4d6ab0b622bc845e37"}}',
+} as const;
+
 export const SYNC_CURRENT_GAPS = [
   {
     name: 'released project v1 sync state is rejected instead of migrated',
@@ -83,11 +130,6 @@ export const SYNC_CURRENT_GAPS = [
     file: 'saved-items.json',
     content: JSON.stringify({ schemaVersion: 2, items: SAVED_ITEMS_V1_STATE.items }),
     target: 'unify-future-version-rejection-after-T3.3',
-  },
-  {
-    name: 'parallel upload can publish a mixed remote snapshot without a generation marker',
-    currentBehavior: 'parallel-fixed-file-overwrite',
-    target: 'generation-atomic-upload-after-T2.4',
   },
   {
     name: 'parallel local replacement can partially apply a parsed remote snapshot',

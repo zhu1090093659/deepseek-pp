@@ -1,15 +1,8 @@
-import type { SyncConfig } from '../types';
-import type { WebdavSyncConfig } from '../types';
-import { defaultSyncErrorTranslator, type SyncErrorTranslator } from './oauth-client';
-import { webdavGet, webdavMkcol, webdavPut, webdavTest } from './webdav-client';
-import { createGDriveBackend } from './gdrive-client';
-import { createOneDriveBackend } from './onedrive-client';
-
 /**
  * Provider-agnostic key/value storage used by the sync pipeline.
  *
- * Each logical sync file (memories.json, skills.json, ...) is addressed by a
- * fixed string key. Every backend maps that key to its own physical location
+ * Each remote sync object is addressed by an opaque string key. Every backend
+ * maps that key to its own physical location
  * (WebDAV path / Drive appDataFolder file id / OneDrive app-root item) and
  * owns auth concerns. The sync flow only sees get/put/test/ensureStore.
  */
@@ -28,38 +21,4 @@ export interface StorageBackend {
 
   /** Write a key, overwriting if present. */
   put(key: string, content: string): Promise<void>;
-}
-
-export function createStorageBackend(
-  config: SyncConfig,
-  t: SyncErrorTranslator = defaultSyncErrorTranslator,
-): StorageBackend {
-  switch (config.provider) {
-    case 'webdav':
-      return new WebdavBackend(config);
-    case 'gdrive':
-      return createGDriveBackend(config, t);
-    case 'onedrive':
-      return createOneDriveBackend(config, t);
-  }
-}
-
-class WebdavBackend implements StorageBackend {
-  constructor(private readonly config: WebdavSyncConfig) {}
-
-  async test(): Promise<void> {
-    await webdavTest(this.config);
-  }
-
-  async ensureStore(): Promise<void> {
-    await webdavMkcol(this.config);
-  }
-
-  async get(key: string): Promise<string | null> {
-    return webdavGet(this.config, key);
-  }
-
-  async put(key: string, content: string): Promise<void> {
-    await webdavPut(this.config, key, content);
-  }
 }
