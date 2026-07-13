@@ -15,3 +15,9 @@ android {
         versionName = "0.6.5"
     }
 }
+
+dependencies {
+    implementation("androidx.webkit:webkit:1.16.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
+}

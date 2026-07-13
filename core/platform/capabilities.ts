@@ -146,9 +146,9 @@ export function getCurrentPlatformEnvironment(): PlatformEnvironment {
       capabilities: createCapabilityMap({
         storage: true,
         runtimeMessaging: true,
-        downloads: true,
+        downloads: false,
         filePicker: true,
-        folderPicker: true,
+        folderPicker: false,
         assetUrl: true,
         sidePanel: false,
         nativeMessaging: false,

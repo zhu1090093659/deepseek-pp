@@ -13,11 +13,28 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var bridge: DeepSeekPlusPlusBridge
+    private var bridgeInstalled = false
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
+    private val bridgeExecutor = ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue<Runnable>(BRIDGE_QUEUE_CAPACITY),
+        ThreadFactory { runnable -> Thread(runnable, "DeepSeekPP-AndroidBridge") },
+    )
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,20 +52,20 @@ class MainActivity : Activity() {
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            addJavascriptInterface(bridge, "AndroidBridge")
             webChromeClient = deepSeekChromeClient()
             webViewClient = deepSeekWebViewClient()
         }
+        bridgeInstalled = installBridge()
 
         setContentView(webView)
-        webView.loadUrl(intent?.data?.toString()?.takeIf { it.startsWith(DEEPSEEK_ORIGIN) }
+        webView.loadUrl(intent?.data?.toString()?.takeIf(DeepSeekNavigationPolicy::isTrustedOrigin)
             ?: getString(R.string.deepseek_url))
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val url = intent.data?.toString() ?: return
-        if (url.startsWith(DEEPSEEK_ORIGIN)) webView.loadUrl(url)
+        if (DeepSeekNavigationPolicy.isTrustedOrigin(url)) webView.loadUrl(url)
     }
 
     override fun onBackPressed() {
@@ -63,7 +80,11 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         pendingFileChooser?.onReceiveValue(null)
         pendingFileChooser = null
-        webView.removeJavascriptInterface("AndroidBridge")
+        if (bridgeInstalled) {
+            WebViewCompat.removeWebMessageListener(webView, AndroidBridgeContract.BRIDGE_NAME)
+        }
+        bridgeInstalled = false
+        bridgeExecutor.shutdownNow()
         webView.destroy()
         super.onDestroy()
     }
@@ -103,21 +124,67 @@ class MainActivity : Activity() {
 
     private fun deepSeekWebViewClient() = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-            val url = request?.url?.toString() ?: return false
-            if (url.startsWith(DEEPSEEK_ORIGIN)) return false
-            return try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                true
-            } catch (error: Throwable) {
-                Log.w(TAG, "external navigation failed: $url", error)
-                false
+            val url = request?.url?.toString() ?: return true
+            return when (DeepSeekNavigationPolicy.classify(url)) {
+                DeepSeekNavigationPolicy.Destination.INTERNAL -> false
+                DeepSeekNavigationPolicy.Destination.REJECT -> true
+                DeepSeekNavigationPolicy.Destination.EXTERNAL -> {
+                    if (request.isForMainFrame) openExternal(url)
+                    true
+                }
             }
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
-            if (url?.startsWith(DEEPSEEK_ORIGIN) != true) return
+            if (!bridgeInstalled || !DeepSeekNavigationPolicy.isTrustedOrigin(url)) return
             injectDeepSeekPlusPlusBundle()
+        }
+    }
+
+    private fun installBridge(): Boolean {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            Log.e(TAG, "Android bridge disabled: WEB_MESSAGE_LISTENER is unavailable")
+            return false
+        }
+        WebViewCompat.addWebMessageListener(
+            webView,
+            AndroidBridgeContract.BRIDGE_NAME,
+            setOf(DeepSeekNavigationPolicy.TRUSTED_ORIGIN),
+        ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+            if (!isMainFrame || !DeepSeekNavigationPolicy.isTrustedOrigin(sourceOrigin.toString())) {
+                Log.w(TAG, "Rejected Android bridge message from $sourceOrigin")
+                return@addWebMessageListener
+            }
+            if (message.type != WebMessageCompat.TYPE_STRING || message.data == null) {
+                Log.w(TAG, "Rejected non-string Android bridge message")
+                return@addWebMessageListener
+            }
+            val data = message.data!!
+            try {
+                bridgeExecutor.execute {
+                    val response = bridge.dispatch(data)
+                    webView.post {
+                        if (!bridgeInstalled) return@post
+                        try {
+                            replyProxy.postMessage(response)
+                        } catch (error: Throwable) {
+                            Log.w(TAG, "Android bridge response failed", error)
+                        }
+                    }
+                }
+            } catch (_: RejectedExecutionException) {
+                replyProxy.postMessage(bridge.reject(data, "android_bridge_busy"))
+            }
+        }
+        return true
+    }
+
+    private fun openExternal(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (error: Throwable) {
+            Log.w(TAG, "external navigation blocked after launch failure: $url", error)
         }
     }
 
@@ -139,6 +206,6 @@ class MainActivity : Activity() {
     companion object {
         private const val TAG = "DeepSeekPP"
         private const val REQUEST_FILE_CHOOSER = 4201
-        private const val DEEPSEEK_ORIGIN = "https://chat.deepseek.com"
+        private const val BRIDGE_QUEUE_CAPACITY = 32
     }
 }

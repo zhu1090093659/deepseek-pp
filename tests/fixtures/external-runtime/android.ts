@@ -8,8 +8,21 @@ export const ANDROID_MINIMUM_CONTRACT = {
   trustedScheme: 'https',
   trustedHost: 'chat.deepseek.com',
   bridgeName: 'AndroidBridge',
+  bridgeProtocol: 'deepseek-pp-android-bridge',
+  bridgeVersion: 1,
   sharedPreferences: 'deepseek_pp_android',
   shimRuntimeId: 'deepseek-pp-android',
+  bridgeCommands: [
+    'runtime.sendMessage',
+    'storage.get',
+    'storage.set',
+    'storage.remove',
+  ],
+  storageKeys: [
+    'deepseek_pp_locale_preference',
+    'deepseek_pp_floating_chat_enabled',
+    'deepseek_pp_history_organizer',
+  ],
   requiredBundleFiles: [
     'android-bridge-shim.js',
     'content-scripts/main-world.js',
@@ -20,18 +33,8 @@ export const ANDROID_MINIMUM_CONTRACT = {
 
 export const ANDROID_CURRENT_GAPS = [
   {
-    name: 'DeepSeek navigation uses string prefix matching and accepts lookalike hosts',
-    currentBehavior: 'startsWith-trusted-origin-string',
-    target: 'parsed-scheme-host-port-policy-after-T2.3',
-  },
-  {
-    name: 'JavascriptInterface is attached before navigation and exposes arbitrary storage keys',
-    currentBehavior: 'global-bridge-with-generic-storage',
-    target: 'structured-allowlisted-bridge-after-T2.3',
-  },
-  {
-    name: 'TypeScript and Kotlin capability producers disagree on picker support',
-    currentBehavior: 'typescript-true-kotlin-false',
+    name: 'TypeScript and Kotlin capability producers remain duplicated',
+    currentBehavior: 'matching-but-separate-capability-maps',
     target: 'single-shared-capability-contract-after-T3.2',
   },
   {

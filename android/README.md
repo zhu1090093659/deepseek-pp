@@ -1,6 +1,6 @@
 # DeepSeek++ Android
 
-This is the Android WebView baseline for DeepSeek++. It loads `chat.deepseek.com`, exposes a native `AndroidBridge`, and injects the staged DeepSeek++ web bundle.
+This is the Android WebView baseline for DeepSeek++. It loads `chat.deepseek.com` and injects the staged DeepSeek++ web bundle only when the WebView can expose an exact-origin WebMessage bridge.
 
 ## Build
 
@@ -29,6 +29,7 @@ Supported validation target:
 
 - Web bundle staging.
 - Native bridge capability wiring.
+- Parsed origin and structured bridge contract tests.
 - Login/session smoke after an APK can be built.
 - Clear unsupported-status messaging for gated features.
 
@@ -44,9 +45,9 @@ Unsupported browser-extension features are intentionally capability-gated on And
 
 ## Current Local Evidence
 
-As of 2026-06-11:
+As of 2026-07-13:
 
-- `npm run build:android` passes and stages Android assets.
+- JavaScript/static Android contract tests cover the exact origin, versioned bridge, allowlists, response correlation, and unsupported paths.
 - `java -version` fails on this machine because no Java Runtime is installed.
 - `npm run android:assemble:debug` and `npm run test:android` stop at the explicit JDK check.
 
