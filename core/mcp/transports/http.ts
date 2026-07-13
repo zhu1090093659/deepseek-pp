@@ -37,6 +37,7 @@ function createHttpTransport(
       return sendHttpMessage(server, request, {
         timeoutMs: options?.timeoutMs,
         maxResponseBytes: options?.maxResponseBytes,
+        signal: options?.signal,
         session: state,
         streamableSession: transportOptions.session,
       });
@@ -45,6 +46,7 @@ function createHttpTransport(
       await sendHttpMessage(server, notification, {
         timeoutMs: options?.timeoutMs,
         maxResponseBytes: options?.maxResponseBytes,
+        signal: options?.signal,
         session: state,
         streamableSession: transportOptions.session,
       });
@@ -60,6 +62,7 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
     maxResponseBytes?: number;
     session?: McpHttpTransportState;
     streamableSession?: boolean;
+    signal?: AbortSignal;
   } = {},
 ): Promise<McpJsonRpcResponse<TResult>> {
   const timeoutMs = options.timeoutMs ?? server.timeouts.requestMs;
@@ -71,6 +74,7 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
     credentials: 'omit',
     headers: createRequestHeaders(server, options.session, options.streamableSession ?? false),
     body: JSON.stringify(message),
+    signal: options.signal,
   }, timeoutMs);
   if (options.streamableSession) updateStreamableSession(options.session, response);
 

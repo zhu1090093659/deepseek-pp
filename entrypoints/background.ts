@@ -229,6 +229,7 @@ import { createAutomationRunnerFailure } from '../core/automation/messages';
 import {
   AUTOMATION_WAKE_ALARM_NAME,
   AUTOMATION_WAKE_INTERVAL_MINUTES,
+  cancelActiveAutomationRun,
   refreshAutomationNextRunAt,
   runAutomation,
   scanDueAutomations,
@@ -281,6 +282,7 @@ import type { WebSearchToolName } from '../core/tool/web-search';
 import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
 import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
+import type { AutomationExecutionContext } from '../core/automation/execution';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
@@ -1460,6 +1462,7 @@ async function handleMessage(
 
     case 'DELETE_AUTOMATION': {
       const { id } = message.payload as { id: string };
+      cancelActiveAutomationRun(id);
       await deleteAutomation(id);
       await broadcastAutomationUpdate(context.tabId);
       await broadcastAutomationRunsUpdate(context.tabId);
@@ -2194,7 +2197,9 @@ async function runAutomationNow(id: string, excludeTabId?: number) {
 
 async function executeAutomationWithContext(
   request: AutomationRunnerRequest,
+  execution: AutomationExecutionContext,
 ): Promise<AutomationRunnerResult> {
+  execution.assertActive();
   const [memories, activePreset, toolDescriptors] = await Promise.all([
     getAllMemories(),
     getActivePreset(),
@@ -2207,8 +2212,10 @@ async function executeAutomationWithContext(
       getProjectPromptContextForConversation(request.chatSessionId),
     ])
     : [null, null];
+  execution.assertActive();
 
   const clientHeaders = await loadOrRefreshClientHeaders();
+  execution.assertActive();
   if (!clientHeaders) {
     return createAutomationRunnerFailure(
       { ...request },
@@ -2216,6 +2223,8 @@ async function executeAutomationWithContext(
       AUTOMATION_AUTH_TOKEN_MISSING_MESSAGE,
       'auth',
       true,
+      Date.now(),
+      { externalOutcome: 'not_started', retrySafe: true },
     );
   }
 
@@ -2229,8 +2238,17 @@ async function executeAutomationWithContext(
       toolDescriptors: enabledDescriptors,
     },
   }, {
-    executeToolCall: (call) => executeBackgroundRuntimeToolCall(call, 'automation'),
+    executeToolCall: (call, toolExecution) => executeBackgroundRuntimeToolCall(
+      call,
+      'automation',
+      {
+        signal: toolExecution.signal,
+        idempotencyKey: toolExecution.idempotencyKey,
+        assertActive: () => execution.assertActive(),
+      },
+    ),
     clientHeaders,
+    execution,
   });
 }
 

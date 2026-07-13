@@ -128,6 +128,7 @@ function createRequest(): AutomationRunnerRequest {
   return {
     runId: 'run-1',
     automationId: 'automation-1',
+    deadlineAt: Number.MAX_SAFE_INTEGER,
     prompt: 'Use the mock tool, then finish.',
     trigger: 'manual',
     chatSessionId: null,

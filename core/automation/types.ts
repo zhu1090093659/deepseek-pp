@@ -92,6 +92,7 @@ export type AutomationRuntimeUpdate = Partial<
 export interface AutomationRunnerRequest {
   runId: AutomationRunId;
   automationId: AutomationId;
+  deadlineAt: number;
   prompt: string;
   trigger: AutomationTrigger;
   chatSessionId: string | null;

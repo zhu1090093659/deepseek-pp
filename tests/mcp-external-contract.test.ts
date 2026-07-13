@@ -7,6 +7,7 @@ import {
   createMcpNativeMessagingTransport,
   createMcpRequest,
   createMcpTransport,
+  fetchWithTimeout,
   initializeMcpServer,
   listMcpTools,
   normalizeJsonRpcResponse,
@@ -74,6 +75,76 @@ describe('MCP and Native external contract', () => {
     }
     expect(MCP_PROTOCOL_NEGOTIATION_FIXTURES[2].target)
       .toBe('supported-version-negotiation-after-T3.5');
+  });
+
+  it('propagates a caller cancellation signal through MCP initialization and tool calls', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: { getManifest: () => ({ version: '1.10.0' }) },
+    });
+    const controller = new AbortController();
+    const receivedSignals: Array<AbortSignal | undefined> = [];
+    const transport: McpProtocolTransport = {
+      async request(request, options) {
+        receivedSignals.push(options?.signal);
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          result: request.method === 'initialize'
+            ? { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} }
+            : { content: [{ type: 'text', text: 'done' }] },
+        } as McpJsonRpcResponse<any>;
+      },
+      async notify(_notification, options) {
+        receivedSignals.push(options?.signal);
+      },
+    };
+
+    await initializeMcpServer(mcpServer(), transport, { signal: controller.signal });
+    await callMcpTool(mcpServer(), transport, {
+      call: toolCall(),
+      signal: controller.signal,
+    });
+
+    expect(receivedSignals).toEqual([
+      controller.signal,
+      controller.signal,
+      controller.signal,
+    ]);
+  });
+
+  it('preserves the caller abort reason when cancelling an MCP HTTP request', async () => {
+    vi.stubGlobal('fetch', vi.fn((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    })));
+    const controller = new AbortController();
+    const reason = new Error('automation cancelled');
+    const request = fetchWithTimeout('https://mcp.example.test/rpc', {
+      signal: controller.signal,
+    }, 10_000);
+
+    controller.abort(reason);
+
+    await expect(request).rejects.toBe(reason);
+  });
+
+  it('keeps caller cancellation connected after response headers arrive', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => new Response(new ReadableStream({
+      start(streamController) {
+        init?.signal?.addEventListener('abort', () => {
+          streamController.error(init.signal?.reason);
+        }, { once: true });
+      },
+    }))));
+    const controller = new AbortController();
+    const reason = new Error('cancel while reading');
+    const response = await fetchWithTimeout('https://mcp.example.test/rpc', {
+      signal: controller.signal,
+    }, 10_000);
+    const body = response.text();
+
+    controller.abort(reason);
+
+    await expect(body).rejects.toBe(reason);
   });
 
   it('emits the released Native v1 envelope from the production transport', async () => {

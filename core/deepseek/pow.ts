@@ -38,22 +38,32 @@ interface WasmStringAllocation {
   len: number;
 }
 
-let powWasmPromise: Promise<DeepSeekPowWasmExports> | null = null;
+let powWasm: DeepSeekPowWasmExports | null = null;
+interface PowWasmLoad {
+  controller: AbortController;
+  promise: Promise<DeepSeekPowWasmExports>;
+  waiters: number;
+}
+
+let powWasmLoad: PowWasmLoad | null = null;
 const textEncoder = new TextEncoder();
 
 export async function solvePowChallengeLocally(
   challenge: PowChallenge,
   wasmUrl?: string,
+  signal?: AbortSignal,
 ): Promise<PowAnswer> {
   validatePowChallenge(challenge);
+  throwIfPowAborted(signal);
 
   const prefix = `${challenge.salt}_${challenge.expireAt}_`;
   const answer = solvePowWithWasm(
-    await loadDeepSeekPowWasm(wasmUrl),
+    await loadDeepSeekPowWasm(wasmUrl, signal),
     challenge.challenge.toLowerCase(),
     prefix,
     challenge.difficulty,
   );
+  throwIfPowAborted(signal);
 
   return {
     algorithm: challenge.algorithm,
@@ -116,18 +126,121 @@ function solvePowWithWasm(
   }
 }
 
-async function loadDeepSeekPowWasm(wasmUrl?: string): Promise<DeepSeekPowWasmExports> {
-  powWasmPromise ??= (async () => {
-    const response = await fetch(getDeepSeekPowWasmUrl(wasmUrl));
-    if (!response.ok) {
-      throw new Error(`Failed to load DeepSeek PoW WASM: ${response.status} ${response.statusText}`);
+async function loadDeepSeekPowWasm(
+  wasmUrl?: string,
+  signal?: AbortSignal,
+): Promise<DeepSeekPowWasmExports> {
+  if (powWasm) return powWasm;
+  throwIfPowAborted(signal);
+
+  const currentLoad = powWasmLoad;
+  const load = !currentLoad || currentLoad.controller.signal.aborted
+    ? startDeepSeekPowWasmLoad(wasmUrl)
+    : currentLoad;
+  return waitForDeepSeekPowWasm(load, signal);
+}
+
+function startDeepSeekPowWasmLoad(wasmUrl?: string): PowWasmLoad {
+  const load: PowWasmLoad = {
+    controller: new AbortController(),
+    promise: Promise.resolve(null as unknown as DeepSeekPowWasmExports),
+    waiters: 0,
+  };
+  load.promise = instantiateDeepSeekPowWasm(wasmUrl, load.controller.signal)
+    .then((loaded) => {
+      powWasm = loaded;
+      return loaded;
+    })
+    .finally(() => {
+      if (powWasmLoad === load) powWasmLoad = null;
+    });
+  powWasmLoad = load;
+  return load;
+}
+
+async function waitForDeepSeekPowWasm(
+  load: PowWasmLoad,
+  signal?: AbortSignal,
+): Promise<DeepSeekPowWasmExports> {
+  load.waiters += 1;
+  if (!signal) {
+    try {
+      return await load.promise;
+    } finally {
+      load.waiters -= 1;
+    }
+  }
+
+  return new Promise<DeepSeekPowWasmExports>((resolve, reject) => {
+    let settled = false;
+    const release = () => {
+      load.waiters -= 1;
+      return load.waiters === 0;
+    };
+    const rejectForAbort = async () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      if (release() && !powWasm) {
+        load.controller.abort(signal.reason);
+        try {
+          await load.promise;
+        } catch {
+          // The caller receives its own cancellation reason after the shared load has stopped.
+        }
+      }
+      reject(getPowAbortReason(signal));
+    };
+    const onAbort = () => {
+      void rejectForAbort();
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) {
+      void rejectForAbort();
+      return;
     }
 
-    const { instance } = await WebAssembly.instantiate(await response.arrayBuffer(), {});
-    return instance.exports as unknown as DeepSeekPowWasmExports;
-  })();
+    load.promise.then(
+      (loaded) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        release();
+        resolve(loaded);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        release();
+        reject(error);
+      },
+    );
+  });
+}
 
-  return powWasmPromise;
+async function instantiateDeepSeekPowWasm(
+  wasmUrl?: string,
+  signal?: AbortSignal,
+): Promise<DeepSeekPowWasmExports> {
+  const response = await fetch(getDeepSeekPowWasmUrl(wasmUrl), { signal });
+  if (!response.ok) {
+    throw new Error(`Failed to load DeepSeek PoW WASM: ${response.status} ${response.statusText}`);
+  }
+
+  const { instance } = await WebAssembly.instantiate(await response.arrayBuffer(), {});
+  return instance.exports as unknown as DeepSeekPowWasmExports;
+}
+
+function throwIfPowAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw getPowAbortReason(signal);
+}
+
+function getPowAbortReason(signal: AbortSignal): unknown {
+  if (signal.reason !== undefined) return signal.reason;
+  return new DOMException('DeepSeek PoW was aborted.', 'AbortError');
 }
 
 function getDeepSeekPowWasmUrl(wasmUrl?: string): string {

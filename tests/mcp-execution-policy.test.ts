@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCP_PROTOCOL_VERSION } from '../core/mcp';
 import { executeMcpToolCall, getMcpToolDescriptors, refreshMcpServerDiscovery } from '../core/mcp/discovery';
-import { createMcpServer, saveMcpToolCache, updateMcpServer } from '../core/mcp/store';
+import {
+  createMcpServer,
+  getMcpServerById,
+  getMcpToolCache,
+  saveMcpToolCache,
+  updateMcpServer,
+} from '../core/mcp/store';
 import { renderToolSchemas } from '../core/prompt/augmentation';
 import type { McpServerConfig, ToolCall, ToolDescriptor } from '../core/types';
 
@@ -124,6 +130,37 @@ describe('MCP execution policy', () => {
     expect(requests[0].headers.get('MCP-Protocol-Version')).toBeNull();
     expect(requests[1].headers.get('MCP-Protocol-Version')).toBe(MCP_PROTOCOL_VERSION);
     expect(requests[2].headers.get('MCP-Protocol-Version')).toBe(MCP_PROTOCOL_VERSION);
+  });
+
+  it('does not persist an error cache when stale discovery is cancelled', async () => {
+    let observedSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_input, init) => new Promise<Response>((_resolve, reject) => {
+      observedSignal = init?.signal ?? undefined;
+      observedSignal?.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+    })));
+    const server = await createMcpServer({
+      displayName: 'Cancelled Discovery MCP',
+      enabled: true,
+      transport: {
+        kind: 'streamable_http',
+        url: 'http://127.0.0.1:48126/mcp',
+      },
+    });
+    const before = await getMcpServerById(server.id);
+    const controller = new AbortController();
+    const reason = new Error('automation cancelled during discovery');
+    const pending = refreshMcpServerDiscovery(server.id, { signal: controller.signal });
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(await getMcpToolCache(server.id)).toBeNull();
+    expect(await getMcpServerById(server.id)).toMatchObject({
+      status: before?.status,
+      lastError: before?.lastError,
+      lastConnectedAt: before?.lastConnectedAt,
+    });
   });
 
   it('initializes Streamable HTTP sessions before executing cached tools', async () => {

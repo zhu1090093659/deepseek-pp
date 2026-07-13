@@ -6,6 +6,9 @@ import type {
   AutomationRunCreateInput,
   AutomationRunId,
   AutomationRunListOptions,
+  AutomationRunnerRequest,
+  AutomationRunnerResult,
+  AutomationRunStatus,
   AutomationRunUpdateInput,
   AutomationRuntimeUpdate,
   AutomationStatus,
@@ -15,6 +18,7 @@ import type {
 const STORAGE_KEY = 'deepseek_pp_automations';
 const STORAGE_VERSION = 1;
 const DEFAULT_RUN_HISTORY_LIMIT = 100;
+const LEGACY_AUTOMATION_RUN_TIMEOUT_MS = 180_000;
 
 interface AutomationStorageState {
   version: number;
@@ -28,6 +32,36 @@ const EMPTY_STATE: AutomationStorageState = {
   runs: [],
 };
 
+export type AutomationRunClaimResult =
+  | { kind: 'claimed'; automation: Automation; run: AutomationRun }
+  | { kind: 'automation_missing'; run: null }
+  | { kind: 'active_run'; automation: Automation; run: AutomationRun }
+  | { kind: 'occurrence_exists'; automation: Automation; run: AutomationRun };
+
+interface ClaimAutomationRunInput {
+  runId: AutomationRunId;
+  automationId: AutomationId;
+  trigger: AutomationRun['trigger'];
+  scheduledFor: number | null;
+  startedAt: number;
+  createRequest: (automation: Automation) => AutomationRunnerRequest;
+}
+
+interface FinalizeAutomationRunInput {
+  runId: AutomationRunId;
+  automationId: AutomationId;
+  status: AutomationRunStatus;
+  result: AutomationRunnerResult;
+  runtimePatch: (automation: Automation) => AutomationRuntimeUpdate;
+}
+
+interface ReconcileStaleRunsOptions {
+  protectedRunIds?: ReadonlySet<AutomationRunId>;
+  runtimePatch?: (automation: Automation, run: AutomationRun) => AutomationRuntimeUpdate;
+}
+
+let stateMutation = Promise.resolve();
+
 export async function getAllAutomations(): Promise<Automation[]> {
   const state = await readState();
   return [...state.automations].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -39,7 +73,6 @@ export async function getAutomationById(id: AutomationId): Promise<Automation | 
 }
 
 export async function createAutomation(input: AutomationCreateInput): Promise<Automation> {
-  const state = await readState();
   const now = Date.now();
   const automation: Automation = {
     ...input,
@@ -59,11 +92,16 @@ export async function createAutomation(input: AutomationCreateInput): Promise<Au
     version: 1,
   };
 
-  await writeState({
-    ...state,
-    automations: [automation, ...state.automations],
+  return mutateState((state) => {
+    return {
+      nextState: {
+        ...state,
+        automations: [automation, ...state.automations],
+      },
+      result: automation,
+      changed: true,
+    };
   });
-  return automation;
 }
 
 export async function updateAutomation(
@@ -88,11 +126,14 @@ export async function setAutomationStatus(
 }
 
 export async function deleteAutomation(id: AutomationId): Promise<void> {
-  const state = await readState();
-  await writeState({
-    ...state,
-    automations: state.automations.filter((automation) => automation.id !== id),
-    runs: state.runs.filter((run) => run.automationId !== id),
+  await mutateState((state) => {
+    const nextAutomations = state.automations.filter((automation) => automation.id !== id);
+    const nextRuns = state.runs.filter((run) => run.automationId !== id);
+    return {
+      nextState: { ...state, automations: nextAutomations, runs: nextRuns },
+      result: undefined,
+      changed: nextAutomations.length !== state.automations.length || nextRuns.length !== state.runs.length,
+    };
   });
 }
 
@@ -118,34 +159,147 @@ export async function createAutomationRun(input: AutomationRunCreateInput): Prom
   return run;
 }
 
+export async function claimAutomationRun(
+  input: ClaimAutomationRunInput,
+): Promise<AutomationRunClaimResult> {
+  return mutateState<AutomationRunClaimResult>((state) => {
+    const automation = state.automations.find((item) => item.id === input.automationId);
+    if (!automation) {
+      return { nextState: state, result: { kind: 'automation_missing', run: null }, changed: false };
+    }
+
+    const activeRun = state.runs.find((run) =>
+      run.automationId === input.automationId &&
+      (run.status === 'queued' || run.status === 'running')
+    );
+    if (activeRun) {
+      return {
+        nextState: state,
+        result: { kind: 'active_run', automation, run: activeRun },
+        changed: false,
+      };
+    }
+
+    if (input.trigger === 'schedule' && input.scheduledFor !== null) {
+      const existingOccurrence = state.runs.find((run) =>
+        run.automationId === input.automationId &&
+        run.scheduledFor === input.scheduledFor
+      );
+      if (existingOccurrence) {
+        return {
+          nextState: state,
+          result: { kind: 'occurrence_exists', automation, run: existingOccurrence },
+          changed: false,
+        };
+      }
+    }
+
+    const request = input.createRequest(automation);
+    const run: AutomationRun = {
+      id: input.runId,
+      automationId: automation.id,
+      trigger: input.trigger,
+      status: 'running',
+      scheduledFor: input.scheduledFor,
+      attempt: 1,
+      request,
+      result: null,
+      error: null,
+      createdAt: input.startedAt,
+      startedAt: input.startedAt,
+      completedAt: null,
+      updatedAt: input.startedAt,
+    };
+    return {
+      nextState: {
+        ...state,
+        runs: pruneRunHistory([run, ...state.runs]),
+      },
+      result: { kind: 'claimed', automation, run },
+      changed: true,
+    };
+  });
+}
+
+export async function finalizeAutomationRun(
+  input: FinalizeAutomationRunInput,
+): Promise<AutomationRun | null> {
+  return mutateState((state) => {
+    const runIndex = state.runs.findIndex((run) =>
+      run.id === input.runId &&
+      run.automationId === input.automationId &&
+      run.status === 'running'
+    );
+    if (runIndex === -1) {
+      return { nextState: state, result: null, changed: false };
+    }
+
+    const automationIndex = state.automations.findIndex((automation) => automation.id === input.automationId);
+    if (automationIndex === -1) {
+      return { nextState: state, result: null, changed: false };
+    }
+
+    const now = Date.now();
+    const runs = [...state.runs];
+    const updatedRun: AutomationRun = {
+      ...runs[runIndex],
+      status: input.status,
+      result: input.result,
+      error: input.result.ok ? null : input.result.error,
+      completedAt: input.result.completedAt,
+      updatedAt: now,
+    };
+    runs[runIndex] = updatedRun;
+
+    const automations = [...state.automations];
+    const currentAutomation = automations[automationIndex];
+    automations[automationIndex] = {
+      ...currentAutomation,
+      ...input.runtimePatch(currentAutomation),
+      updatedAt: now,
+    };
+    return {
+      nextState: { ...state, automations, runs },
+      result: updatedRun,
+      changed: true,
+    };
+  });
+}
+
 export async function appendAutomationRun(run: AutomationRun): Promise<void> {
-  const state = await readState();
-  const runs = [run, ...state.runs.filter((stored) => stored.id !== run.id)];
-  await writeState({
-    ...state,
-    runs: pruneRunHistory(runs),
+  await mutateState((state) => {
+    const runs = [run, ...state.runs.filter((stored) => stored.id !== run.id)];
+    return {
+      nextState: { ...state, runs: pruneRunHistory(runs) },
+      result: undefined,
+      changed: true,
+    };
   });
 }
 
 export async function updateAutomationRun(
   id: AutomationRunId,
   patch: AutomationRunUpdateInput,
+  options?: { expectedStatus?: AutomationRunStatus },
 ): Promise<AutomationRun | null> {
-  const state = await readState();
-  let updatedRun: AutomationRun | null = null;
-  const runs = state.runs.map((run) => {
-    if (run.id !== id) return run;
-    updatedRun = {
-      ...run,
-      ...patch,
-      updatedAt: Date.now(),
+  return mutateState((state) => {
+    let updatedRun: AutomationRun | null = null;
+    const runs = state.runs.map((run) => {
+      if (run.id !== id) return run;
+      if (options?.expectedStatus !== undefined && run.status !== options.expectedStatus) return run;
+      updatedRun = {
+        ...run,
+        ...patch,
+        updatedAt: Date.now(),
+      };
+      return updatedRun;
+    });
+    return {
+      nextState: { ...state, runs },
+      result: updatedRun,
+      changed: updatedRun !== null,
     };
-    return updatedRun;
   });
-
-  if (!updatedRun) return null;
-  await writeState({ ...state, runs });
-  return updatedRun;
 }
 
 export async function getAutomationRuns(
@@ -165,10 +319,9 @@ export async function getAutomationRunById(id: AutomationRunId): Promise<Automat
 }
 
 /**
- * Marks `running` automation runs whose `startedAt` predates `thresholdMs` as
- * failed. This recovers from a service-worker termination mid-run, which would
- * otherwise leave orphaned `running` rows that never complete and would let the
- * next scan re-run the same automation. Returns the count of runs reconciled.
+ * Marks stale `queued` or `running` automation runs as failed. This recovers
+ * service-worker termination without replaying an occurrence. Callers that
+ * still own in-process execution must protect those run IDs until settlement.
  *
  * Safe to call repeatedly — only stale `running` rows are touched.
  */
@@ -176,57 +329,111 @@ export async function reconcileStaleRuns(
   thresholdMs: number,
   now: number = Date.now(),
 ): Promise<number> {
-  const state = await readState();
-  let reconciled = 0;
-  let changed = false;
-  const runs = state.runs.map((run) => {
-    if (run.status !== 'running' || run.startedAt == null) return run;
-    if (now - run.startedAt < thresholdMs) return run;
+  return (await reconcileStaleRunsDetailed(thresholdMs, now)).length;
+}
 
-    changed = true;
-    reconciled += 1;
-    const completedAt = run.startedAt + thresholdMs;
-    return {
-      ...run,
-      status: 'failed' as const,
-      completedAt,
-      error: {
+export async function reconcileStaleRunsDetailed(
+  thresholdMs: number,
+  now: number = Date.now(),
+  options: ReconcileStaleRunsOptions = {},
+): Promise<AutomationRun[]> {
+  return mutateState((state) => {
+    const reconciled: AutomationRun[] = [];
+    const runs = state.runs.map((run) => {
+      if (run.status !== 'queued' && run.status !== 'running') return run;
+      if (options.protectedRunIds?.has(run.id)) return run;
+      const executionStartedAt = run.startedAt ?? run.createdAt;
+      const deadlineAt = run.request?.deadlineAt ?? executionStartedAt + thresholdMs;
+      if (now < deadlineAt) return run;
+
+      const completedAt = deadlineAt;
+      const error: AutomationRun['error'] = {
         code: 'automation_run_interrupted',
-        message: 'Service worker was terminated while the run was in progress.',
-        phase: 'runner' as const,
-        retryable: true,
+        message: 'Service worker was terminated before the automation outcome was confirmed.',
+        phase: 'runner',
+        retryable: false,
         at: now,
-        details: { startedAt: run.startedAt, completedAt },
-      },
-      updatedAt: now,
+        details: {
+          startedAt: executionStartedAt,
+          completedAt,
+          externalOutcome: 'ambiguous',
+          retrySafe: false,
+        },
+      };
+      const updated: AutomationRun = {
+        ...run,
+        status: 'failed' as const,
+        completedAt,
+        result: {
+          ok: false,
+          chatSessionId: run.request?.chatSessionId ?? null,
+          parentMessageId: run.request?.parentMessageId ?? null,
+          completedAt,
+          error,
+        },
+        error,
+        updatedAt: now,
+      };
+      reconciled.push(updated);
+      return updated;
+    });
+    const automations = options.runtimePatch && reconciled.length > 0
+      ? applyReconciledRuntimePatches(state.automations, reconciled, options.runtimePatch, now)
+      : state.automations;
+    return {
+      nextState: { ...state, automations, runs },
+      result: reconciled,
+      changed: reconciled.length > 0,
     };
   });
+}
 
-  if (changed) {
-    await writeState({ ...state, runs });
+function applyReconciledRuntimePatches(
+  automations: Automation[],
+  runs: AutomationRun[],
+  createPatch: (automation: Automation, run: AutomationRun) => AutomationRuntimeUpdate,
+  updatedAt: number,
+): Automation[] {
+  const newestRunByAutomation = new Map<AutomationId, AutomationRun>();
+  for (const run of runs) {
+    const existing = newestRunByAutomation.get(run.automationId);
+    if (!existing || (run.completedAt ?? 0) > (existing.completedAt ?? 0)) {
+      newestRunByAutomation.set(run.automationId, run);
+    }
   }
-  return reconciled;
+
+  return automations.map((automation) => {
+    const run = newestRunByAutomation.get(automation.id);
+    if (!run) return automation;
+    return {
+      ...automation,
+      ...createPatch(automation, run),
+      updatedAt,
+    };
+  });
 }
 
 async function patchAutomation(
   id: AutomationId,
   patch: AutomationUpdateInput | AutomationRuntimeUpdate,
 ): Promise<Automation | null> {
-  const state = await readState();
-  let updatedAutomation: Automation | null = null;
-  const automations = state.automations.map((automation) => {
-    if (automation.id !== id) return automation;
-    updatedAutomation = {
-      ...automation,
-      ...patch,
-      updatedAt: Date.now(),
+  return mutateState((state) => {
+    let updatedAutomation: Automation | null = null;
+    const automations = state.automations.map((automation) => {
+      if (automation.id !== id) return automation;
+      updatedAutomation = {
+        ...automation,
+        ...patch,
+        updatedAt: Date.now(),
+      };
+      return updatedAutomation;
+    });
+    return {
+      nextState: { ...state, automations },
+      result: updatedAutomation,
+      changed: updatedAutomation !== null,
     };
-    return updatedAutomation;
   });
-
-  if (!updatedAutomation) return null;
-  await writeState({ ...state, automations });
-  return updatedAutomation;
 }
 
 async function readState(): Promise<AutomationStorageState> {
@@ -242,6 +449,23 @@ async function writeState(state: AutomationStorageState): Promise<void> {
       runs: state.runs,
     },
   });
+}
+
+async function mutateState<TResult>(
+  mutation: (state: AutomationStorageState) => {
+    nextState: AutomationStorageState;
+    result: TResult;
+    changed: boolean;
+  },
+): Promise<TResult> {
+  const operation = stateMutation.then(async () => {
+    const state = await readState();
+    const outcome = mutation(state);
+    if (outcome.changed) await writeState(outcome.nextState);
+    return outcome.result;
+  });
+  stateMutation = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 
 function normalizeState(raw: unknown): AutomationStorageState {
@@ -288,11 +512,24 @@ function normalizeAutomationRun(raw: unknown): AutomationRun | null {
     request: run.request
       ? {
         ...run.request,
+        deadlineAt: normalizeStoredDeadline(
+          run.request.deadlineAt,
+          run.request.requestedAt,
+          run.startedAt ?? run.createdAt,
+        ),
         parentMessageId: normalizeStoredMessageId(run.request.parentMessageId),
       }
       : null,
     result: normalizeRunResult(run.result),
   };
+}
+
+function normalizeStoredDeadline(value: unknown, requestedAt: unknown, fallbackAt: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  const normalizedRequestedAt = typeof requestedAt === 'number' && Number.isFinite(requestedAt)
+    ? requestedAt
+    : fallbackAt;
+  return normalizedRequestedAt + LEGACY_AUTOMATION_RUN_TIMEOUT_MS;
 }
 
 function normalizeRunResult(result: AutomationRun['result']): AutomationRun['result'] {

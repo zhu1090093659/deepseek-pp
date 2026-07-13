@@ -64,7 +64,11 @@ import {
   ToolAuthorizationError,
 } from './authorization';
 
-export interface RuntimeToolCallOptions extends McpToolExecutionOptions {}
+export interface RuntimeToolCallOptions extends McpToolExecutionOptions {
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  assertActive?: () => void;
+}
 
 const memoryRuntime: MemoryToolRuntime = {
   async saveMemory(input: NewMemory) {
@@ -134,12 +138,16 @@ export async function executeRuntimeToolCall(
   locale: SupportedLocale = DEFAULT_LOCALE,
   options: RuntimeToolCallOptions = {},
 ): Promise<ToolResult> {
-  if (!isToolCallRecord(call)) {
+  assertRuntimeExecutionActive(options);
+  const identifiedCall = !call.id && options.idempotencyKey
+    ? { ...call, id: options.idempotencyKey }
+    : call;
+  if (!isToolCallRecord(identifiedCall)) {
     return {
       ok: false,
       summary: translate(locale, 'tool.runtime.invalidFormat'),
       detail: 'Runtime tool call does not match the released contract.',
-      name: typeof (call as { name?: unknown })?.name === 'string' ? call.name : undefined,
+      name: typeof (identifiedCall as { name?: unknown })?.name === 'string' ? identifiedCall.name : undefined,
       error: {
         code: 'tool_call_payload_invalid',
         message: 'Runtime tool call does not match the released contract.',
@@ -148,30 +156,31 @@ export async function executeRuntimeToolCall(
     };
   }
   const context = typeof authorization === 'string'
-    ? createTrustedExecutionContext(call, authorization)
+    ? createTrustedExecutionContext(identifiedCall, authorization)
     : authorization;
-  if (call.parseError) {
-    const result = createParseErrorToolResult(call, locale);
-    await appendAuthorizedFailureHistory(call, result, context);
+  if (identifiedCall.parseError) {
+    const result = createParseErrorToolResult(identifiedCall, locale);
+    await appendAuthorizedFailureHistory(identifiedCall, result, context);
     return result;
   }
   let authorized: Awaited<ReturnType<typeof authorizeToolExecution>>;
   try {
     authorized = await authorizeToolExecution(
-      call,
+      identifiedCall,
       context,
       await getRuntimeAuthorizationDescriptors(locale),
     );
+    assertRuntimeExecutionActive(options);
   } catch (error) {
     if (!(error instanceof ToolAuthorizationError)) throw error;
     const result = error.code === 'tool_unsupported'
-      ? createUnsupportedToolResult(call, locale)
+      ? createUnsupportedToolResult(identifiedCall, locale)
       : createToolAuthorizationResult(
         error,
-        call,
+        identifiedCall,
         translate(locale, 'tool.runtime.authorizationRejected'),
       );
-    await appendAuthorizedFailureHistory(call, result, context);
+    await appendAuthorizedFailureHistory(identifiedCall, result, context);
     return result;
   }
 
@@ -182,19 +191,30 @@ export async function executeRuntimeToolCall(
       authorized.call,
       authorized.externalPayloadNamespace,
     );
+    assertRuntimeExecutionActive(options);
     result = await executeToolCallWithoutHistory(
       resolvedCall,
       authorized.descriptor,
       locale,
       options,
     );
+    assertRuntimeExecutionActive(options);
   } catch (error) {
     await completeAuthorizationAfterProvider(authorized.reservation);
     throw error;
   }
   await completeAuthorizationAfterProvider(authorized.reservation, result);
   await appendRuntimeToolHistory(resolvedCall, result, authorized.trigger);
+  assertRuntimeExecutionActive(options);
   return result;
+}
+
+function assertRuntimeExecutionActive(options: RuntimeToolCallOptions): void {
+  options.assertActive?.();
+  if (!options.signal?.aborted) return;
+  const reason = options.signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new DOMException('Tool execution was aborted.', 'AbortError');
 }
 
 async function appendAuthorizedFailureHistory(
@@ -301,7 +321,7 @@ async function executeToolCallWithoutHistory(
   }
 
   if (isWebSearchToolName(call.name)) {
-    return executeWebSearchToolCall(call, locale);
+    return executeWebSearchToolCall(call, locale, { signal: options.signal });
   }
 
   if (isArtifactToolName(call.name)) {

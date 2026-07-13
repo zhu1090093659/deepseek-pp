@@ -1,12 +1,21 @@
 import {
-  createAutomationRun,
+  claimAutomationRun,
+  finalizeAutomationRun,
   getAllAutomations,
   getAutomationById,
-  reconcileStaleRuns,
+  getAutomationRunById,
+  reconcileStaleRunsDetailed,
   updateAutomationRun,
   updateAutomationRuntime,
 } from './store';
 import { calculateNextRunAt } from './schedule';
+import {
+  AutomationExecutionStoppedError,
+  createAutomationExecutionContext,
+  readAutomationStopKind,
+  throwIfAutomationAborted,
+  type AutomationExecutionContext,
+} from './execution';
 import type {
   Automation,
   AutomationErrorState,
@@ -14,6 +23,7 @@ import type {
   AutomationRun,
   AutomationRunnerRequest,
   AutomationRunnerResult,
+  AutomationRuntimeUpdate,
   AutomationTrigger,
 } from './types';
 
@@ -23,13 +33,17 @@ export const AUTOMATION_RUN_TIMEOUT_MS = 180_000;
 export const AUTOMATION_MAX_ATTEMPTS = 2;
 export const AUTOMATION_RETRY_DELAY_MS = 10_000;
 
-type AutomationRunExecutor = (request: AutomationRunnerRequest) => Promise<AutomationRunnerResult>;
+export type AutomationRunExecutor = (
+  request: AutomationRunnerRequest,
+  execution: AutomationExecutionContext,
+) => Promise<AutomationRunnerResult>;
 
-interface RunAutomationOptions {
+export interface RunAutomationOptions {
   automationId: AutomationId;
   trigger: AutomationTrigger;
   scheduledFor: number | null;
   now?: number;
+  timeoutMs?: number;
   executor: AutomationRunExecutor;
 }
 
@@ -43,7 +57,14 @@ export interface ScanDueAutomationsResult {
   failed: number;
 }
 
-const activeRunLocks = new Set<AutomationId>();
+interface ActiveAutomationLease {
+  runId: string;
+  automationId: AutomationId;
+  deadlineAt: number;
+  controller: AbortController;
+}
+
+const activeRunLeases = new Map<AutomationId, ActiveAutomationLease>();
 
 export async function scanDueAutomations(
   executor: AutomationRunExecutor,
@@ -52,7 +73,10 @@ export async function scanDueAutomations(
   // Recover any `running` rows orphaned by a service-worker termination before
   // scanning, so the in-memory lock (which is lost on restart) doesn't allow a
   // duplicate run and so the orphaned row is finalized.
-  await reconcileStaleRuns(AUTOMATION_RUN_TIMEOUT_MS, now);
+  await reconcileStaleRunsDetailed(AUTOMATION_RUN_TIMEOUT_MS, now, {
+    protectedRunIds: new Set([...activeRunLeases.values()].map((lease) => lease.runId)),
+    runtimePatch: (automation, run) => createInterruptedRuntimePatch(automation, run, now),
+  });
 
   const automations = await getAllAutomations();
   const result: ScanDueAutomationsResult = {
@@ -124,77 +148,118 @@ export async function refreshAutomationNextRunAt(
 }
 
 export async function runAutomation(options: RunAutomationOptions): Promise<AutomationRun | null> {
-  const automation = await getAutomationById(options.automationId);
-  if (!automation) return null;
+  if (activeRunLeases.has(options.automationId)) return null;
 
-  if (activeRunLocks.has(automation.id)) return null;
-
-  activeRunLocks.add(automation.id);
   const now = options.now ?? Date.now();
-  const runId = crypto.randomUUID();
-  const request: AutomationRunnerRequest = {
+  const runId = createAutomationRunId(options.automationId, options.trigger, options.scheduledFor);
+  const timeoutMs = normalizeRunTimeout(options.timeoutMs);
+  const lease: ActiveAutomationLease = {
     runId,
-    automationId: automation.id,
-    prompt: automation.prompt,
-    trigger: options.trigger,
-    chatSessionId: automation.deepseek.chatSessionId,
-    parentMessageId: automation.deepseek.parentMessageId,
-    promptOptions: automation.promptOptions,
-    requestedAt: now,
+    automationId: options.automationId,
+    deadlineAt: Date.now() + timeoutMs,
+    controller: new AbortController(),
   };
+  activeRunLeases.set(options.automationId, lease);
+  const timeout = setTimeout(() => {
+    lease.controller.abort(new AutomationExecutionStoppedError(
+      'timeout',
+      `Automation run ${runId} exceeded ${Math.round(timeoutMs / 1000)} seconds.`,
+    ));
+  }, timeoutMs);
 
   try {
-    const run = await createAutomationRun({
-      id: runId,
-      automationId: automation.id,
+    const claim = await claimAutomationRun({
+      runId,
+      automationId: options.automationId,
       trigger: options.trigger,
       scheduledFor: options.scheduledFor,
-      request,
-    });
-
-    await updateAutomationRun(run.id, {
-      status: 'running',
       startedAt: Date.now(),
+      createRequest: (automation) => ({
+        runId,
+        automationId: automation.id,
+        deadlineAt: lease.deadlineAt,
+        prompt: automation.prompt,
+        trigger: options.trigger,
+        chatSessionId: automation.deepseek.chatSessionId,
+        parentMessageId: automation.deepseek.parentMessageId,
+        promptOptions: automation.promptOptions,
+        requestedAt: now,
+      }),
     });
+    if (claim.kind === 'automation_missing' || claim.kind === 'active_run') return null;
+    if (claim.kind === 'occurrence_exists') {
+      if (isTerminalRun(claim.run)) {
+        await refreshAutomationFromExistingRun(claim.automation, claim.run);
+        return claim.run;
+      }
+      return null;
+    }
 
-    const runnerResult = await executeWithRetry(run, request, options.executor);
-    const completedRun = await completeRun(automation, run, runnerResult);
-    await refreshAutomationAfterRun(automation, runnerResult, options.trigger);
-    return completedRun;
+    const { automation, run } = claim;
+    const request = run.request!;
+    const runnerResult = await executeWithRetry(run, request, options.executor, lease, timeoutMs);
+    return completeRun(automation, run, runnerResult, options.trigger);
   } finally {
-    activeRunLocks.delete(automation.id);
+    clearTimeout(timeout);
+    if (activeRunLeases.get(options.automationId) === lease) {
+      activeRunLeases.delete(options.automationId);
+    }
   }
 }
 
 export function hasActiveAutomationRun(automationId: AutomationId): boolean {
-  return activeRunLocks.has(automationId);
+  return activeRunLeases.has(automationId);
+}
+
+export function cancelActiveAutomationRun(
+  automationId: AutomationId,
+  runId?: string,
+): boolean {
+  const lease = activeRunLeases.get(automationId);
+  if (!lease || (runId !== undefined && lease.runId !== runId)) return false;
+  lease.controller.abort(new AutomationExecutionStoppedError(
+    'cancelled',
+    `Automation run ${lease.runId} was cancelled.`,
+  ));
+  return true;
 }
 
 async function completeRun(
   automation: Automation,
   run: AutomationRun,
   result: AutomationRunnerResult,
-): Promise<AutomationRun> {
+  trigger: AutomationTrigger,
+): Promise<AutomationRun | null> {
   const status = result.ok
     ? 'succeeded'
     : result.error.code === 'automation_run_timeout'
       ? 'timeout'
-      : 'failed';
-  const updated = await updateAutomationRun(run.id, {
-    status,
-    result,
-    error: result.ok ? null : result.error,
-    completedAt: result.completedAt,
-  });
-
-  return updated ?? {
-    ...run,
+      : result.error.code === 'automation_run_cancelled'
+        ? 'cancelled'
+        : 'failed';
+  const finalized = await finalizeAutomationRun({
+    runId: run.id,
     automationId: automation.id,
     status,
     result,
+    runtimePatch: (latestAutomation) => createAutomationRuntimePatch(
+      latestAutomation,
+      result,
+      trigger,
+      run.scheduledFor,
+    ),
+  });
+  if (finalized) return finalized;
+
+  const persisted = await getAutomationRunById(run.id);
+  if (persisted && isTerminalRun(persisted)) return persisted;
+  return {
+    ...run,
+    status,
+    result,
     error: result.ok ? null : result.error,
     completedAt: result.completedAt,
-    updatedAt: Date.now(),
+    updatedAt: result.completedAt,
   };
 }
 
@@ -202,74 +267,103 @@ async function executeWithRetry(
   run: AutomationRun,
   request: AutomationRunnerRequest,
   executor: AutomationRunExecutor,
+  lease: ActiveAutomationLease,
+  timeoutMs: number,
 ): Promise<AutomationRunnerResult> {
   let lastResult: AutomationRunnerResult | null = null;
-  const deadline = Date.now() + AUTOMATION_RUN_TIMEOUT_MS;
 
   for (let attempt = 1; attempt <= AUTOMATION_MAX_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      await updateAutomationRun(run.id, {
-        attempt,
-        trigger: 'retry',
-      });
-      await delay(Math.min(AUTOMATION_RETRY_DELAY_MS, Math.max(0, deadline - Date.now())));
+    if (lease.controller.signal.aborted) {
+      return createStoppedRunFailure(request, lease.controller.signal, timeoutMs);
     }
 
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return createRunTimeoutFailure(request, AUTOMATION_RUN_TIMEOUT_MS, false);
+    if (attempt > 1) {
+      const updated = await updateAutomationRun(run.id, {
+        attempt,
+        trigger: 'retry',
+      }, { expectedStatus: 'running' });
+      if (!updated) {
+        abortLeaseForLoss(lease);
+        return createStoppedRunFailure(request, lease.controller.signal, timeoutMs);
+      }
+      try {
+        await delayWithSignal(
+          Math.min(AUTOMATION_RETRY_DELAY_MS, Math.max(0, lease.deadlineAt - Date.now())),
+          lease.controller.signal,
+        );
+      } catch {
+        return createStoppedRunFailure(request, lease.controller.signal, timeoutMs);
+      }
+    }
 
-    const result = await withRunTimeout(executor(request), request, remainingMs);
+    if (lease.deadlineAt - Date.now() <= 0) {
+      abortLeaseForTimeout(lease, timeoutMs);
+      return createStoppedRunFailure(request, lease.controller.signal, timeoutMs);
+    }
+
+    const execution = createAutomationExecutionContext({
+      runId: run.id,
+      automationId: run.automationId,
+      deadlineAt: lease.deadlineAt,
+      attempt,
+      signal: lease.controller.signal,
+      isLeaseCurrent: () => activeRunLeases.get(lease.automationId) === lease,
+    });
+    let result: AutomationRunnerResult;
+    try {
+      execution.assertActive();
+      result = await executor(request, execution);
+      execution.assertActive();
+    } catch (error) {
+      if (error instanceof AutomationExecutionStoppedError || lease.controller.signal.aborted) {
+        return createStoppedRunFailure(request, lease.controller.signal, timeoutMs, error);
+      }
+      const now = Date.now();
+      result = {
+        ok: false,
+        chatSessionId: request.chatSessionId,
+        parentMessageId: request.parentMessageId,
+        completedAt: now,
+        error: toAutomationError(
+          'automation_executor_failed',
+          error instanceof Error ? error.message : String(error),
+          'runner',
+          false,
+          now,
+          { externalOutcome: 'ambiguous', retrySafe: false },
+        ),
+      };
+    }
     lastResult = result;
 
-    if (result.ok || !result.error.retryable || attempt === AUTOMATION_MAX_ATTEMPTS) {
+    if (result.ok || !isExplicitlySafeToRetry(result) || attempt === AUTOMATION_MAX_ATTEMPTS) {
       return result;
     }
 
-    await updateAutomationRun(run.id, {
+    const updated = await updateAutomationRun(run.id, {
       attempt,
       error: result.error,
       result,
-    });
+    }, { expectedStatus: 'running' });
+    if (!updated) {
+      abortLeaseForLoss(lease);
+      return createStoppedRunFailure(request, lease.controller.signal, timeoutMs);
+    }
   }
 
-  return lastResult ?? createRunTimeoutFailure(request, AUTOMATION_RUN_TIMEOUT_MS, false);
+  return lastResult ?? createRunTimeoutFailure(request, timeoutMs);
 }
 
-function withRunTimeout(
-  task: Promise<AutomationRunnerResult>,
-  request: AutomationRunnerRequest,
-  timeoutMs: number,
-): Promise<AutomationRunnerResult> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve(createRunTimeoutFailure(request, timeoutMs, false));
-    }, timeoutMs);
-
-    task
-      .then(resolve)
-      .catch((err) => {
-        resolve({
-          ok: false,
-          chatSessionId: request.chatSessionId,
-          parentMessageId: request.parentMessageId,
-          completedAt: Date.now(),
-          error: toAutomationError(
-            'automation_executor_failed',
-            err instanceof Error ? err.message : String(err),
-            'runner',
-            true,
-            Date.now(),
-          ),
-        });
-      })
-      .finally(() => clearTimeout(timeout));
-  });
+function isExplicitlySafeToRetry(result: AutomationRunnerResult): boolean {
+  return !result.ok &&
+    result.error.retryable &&
+    result.error.details?.retrySafe === true &&
+    result.error.details?.externalOutcome === 'not_started';
 }
 
 function createRunTimeoutFailure(
   request: AutomationRunnerRequest,
   timeoutMs: number,
-  retryable: boolean,
 ): AutomationRunnerResult {
   const now = Date.now();
   return {
@@ -281,47 +375,185 @@ function createRunTimeoutFailure(
       'automation_run_timeout',
       `Automation run exceeded ${Math.round(timeoutMs / 1000)} seconds.`,
       'runner',
-      retryable,
+      false,
       now,
-      { timeoutMs },
+      { timeoutMs, externalOutcome: 'ambiguous', retrySafe: false },
     ),
   };
 }
 
-async function refreshAutomationAfterRun(
+function createStoppedRunFailure(
+  request: AutomationRunnerRequest,
+  signal: AbortSignal,
+  timeoutMs: number,
+  error?: unknown,
+): AutomationRunnerResult {
+  const kind = error instanceof AutomationExecutionStoppedError
+    ? error.kind
+    : readAutomationStopKind(signal) ?? 'lease_lost';
+  if (kind === 'timeout') return createRunTimeoutFailure(request, timeoutMs);
+
+  const now = Date.now();
+  const cancelled = kind === 'cancelled';
+  return {
+    ok: false,
+    chatSessionId: request.chatSessionId,
+    parentMessageId: request.parentMessageId,
+    completedAt: now,
+    error: toAutomationError(
+      cancelled ? 'automation_run_cancelled' : 'automation_run_lease_lost',
+      error instanceof Error
+        ? error.message
+        : cancelled
+          ? 'Automation run was cancelled.'
+          : 'Automation run lost its execution lease.',
+      'runner',
+      false,
+      now,
+      { externalOutcome: 'ambiguous', retrySafe: false },
+    ),
+  };
+}
+
+function abortLeaseForTimeout(lease: ActiveAutomationLease, timeoutMs: number): void {
+  lease.controller.abort(new AutomationExecutionStoppedError(
+    'timeout',
+    `Automation run ${lease.runId} exceeded ${Math.round(timeoutMs / 1000)} seconds.`,
+  ));
+}
+
+function abortLeaseForLoss(lease: ActiveAutomationLease): void {
+  lease.controller.abort(new AutomationExecutionStoppedError(
+    'lease_lost',
+    `Automation run ${lease.runId} lost its persisted execution lease.`,
+  ));
+}
+
+function normalizeRunTimeout(timeoutMs: number | undefined): number {
+  return typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : AUTOMATION_RUN_TIMEOUT_MS;
+}
+
+function createAutomationRunId(
+  automationId: AutomationId,
+  trigger: AutomationTrigger,
+  scheduledFor: number | null,
+): string {
+  return trigger === 'schedule' && scheduledFor !== null
+    ? `schedule:${automationId}:${scheduledFor}`
+    : crypto.randomUUID();
+}
+
+function isTerminalRun(run: AutomationRun): boolean {
+  return run.status !== 'queued' && run.status !== 'running';
+}
+
+async function refreshAutomationFromExistingRun(
+  automation: Automation,
+  run: AutomationRun,
+): Promise<void> {
+  const completedAt = run.result?.completedAt ?? run.completedAt;
+  if (
+    completedAt !== null &&
+    automation.lastRunAt !== null &&
+    completedAt <= automation.lastRunAt
+  ) {
+    await updateAutomationRuntime(automation.id, {
+      nextRunAt: createRecoveredNextRunAt(automation, run, automation.lastRunAt),
+    });
+    return;
+  }
+  if (run.result) {
+    await updateAutomationRuntime(
+      automation.id,
+      createAutomationRuntimePatch(automation, run.result, run.trigger, run.scheduledFor),
+    );
+    return;
+  }
+  if (!run.error || run.completedAt === null) return;
+  await updateAutomationRuntime(automation.id, {
+    lastRunAt: run.completedAt,
+    nextRunAt: isScheduledRun(run)
+      ? nextRunAfterCompletion(automation, run.completedAt)
+      : automation.nextRunAt,
+    lastError: run.error,
+  });
+}
+
+function createInterruptedRuntimePatch(
+  automation: Automation,
+  run: AutomationRun,
+  fallbackAt: number,
+): AutomationRuntimeUpdate {
+  const completedAt = run.completedAt ?? fallbackAt;
+  const nextRunAt = createRecoveredNextRunAt(
+    automation,
+    run,
+    Math.max(completedAt, automation.lastRunAt ?? completedAt),
+  );
+  if (automation.lastRunAt !== null && completedAt <= automation.lastRunAt) {
+    return { nextRunAt };
+  }
+  return {
+    lastRunAt: completedAt,
+    nextRunAt,
+    lastError: run.error,
+  };
+}
+
+function createRecoveredNextRunAt(
+  automation: Automation,
+  run: AutomationRun,
+  referenceAt: number,
+): number | null {
+  if (!isScheduledRun(run)) return automation.nextRunAt;
+  const candidate = nextRunAfterCompletion(automation, referenceAt);
+  if (candidate === null) return null;
+  if (
+    automation.nextRunAt !== null &&
+    automation.nextRunAt > (run.scheduledFor ?? Number.NEGATIVE_INFINITY)
+  ) {
+    return Math.max(automation.nextRunAt, candidate);
+  }
+  return candidate;
+}
+
+function createAutomationRuntimePatch(
   automation: Automation,
   result: AutomationRunnerResult,
   trigger: AutomationTrigger,
-): Promise<void> {
-  const latestAutomation = await getAutomationById(automation.id);
-  if (!latestAutomation) return;
-
+  scheduledFor: number | null = null,
+): AutomationRuntimeUpdate {
   const completedAt = result.completedAt;
-  const nextRunAt = trigger === 'schedule'
-    ? nextRunAfterCompletion(latestAutomation, completedAt)
-    : latestAutomation.nextRunAt;
+  const nextRunAt = trigger === 'schedule' || scheduledFor !== null
+    ? nextRunAfterCompletion(automation, completedAt)
+    : automation.nextRunAt;
 
   if (result.ok) {
-    await updateAutomationRuntime(latestAutomation.id, {
+    return {
       deepseek: {
-        ...latestAutomation.deepseek,
+        ...automation.deepseek,
         chatSessionId: result.chatSessionId,
         parentMessageId: result.parentMessageId,
         sessionUrl: result.sessionUrl,
-        lastHistorySyncedAt: result.history?.verifiedAt ?? latestAutomation.deepseek.lastHistorySyncedAt,
+        lastHistorySyncedAt: result.history?.verifiedAt ?? automation.deepseek.lastHistorySyncedAt,
       },
       lastRunAt: completedAt,
       nextRunAt,
       lastError: null,
-    });
-    return;
+    };
   }
 
-  await updateAutomationRuntime(latestAutomation.id, {
+  return {
     lastRunAt: completedAt,
     nextRunAt,
     lastError: result.error,
-  });
+  };
+}
+
+function isScheduledRun(run: AutomationRun): boolean {
+  return run.trigger === 'schedule' || run.scheduledFor !== null;
 }
 
 function nextRunAfterCompletion(automation: Automation, completedAt: number): number | null {
@@ -356,6 +588,21 @@ function toAutomationError(
   };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  throwIfAutomationAborted(signal);
+  if (ms <= 0) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    };
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }

@@ -198,12 +198,18 @@ export interface McpCallToolResult {
 export interface McpProtocolTransport {
   request<TParams extends Record<string, unknown> | undefined, TResult>(
     request: McpJsonRpcRequest<TParams>,
-    options?: { timeoutMs?: number; maxResponseBytes?: number },
+    options?: McpTransportRequestOptions,
   ): Promise<McpJsonRpcResponse<TResult>>;
   notify?(
     notification: McpJsonRpcNotification,
-    options?: { timeoutMs?: number; maxResponseBytes?: number },
+    options?: McpTransportRequestOptions,
   ): Promise<void>;
+}
+
+export interface McpTransportRequestOptions {
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  signal?: AbortSignal;
 }
 
 export interface McpToolDescriptorMapping {
@@ -216,6 +222,7 @@ export interface McpCallToolOptions {
   descriptor?: ToolDescriptor;
   timeoutMs?: number;
   maxResultBytes?: number;
+  signal?: AbortSignal;
 }
 
 export interface McpProtocolClient {

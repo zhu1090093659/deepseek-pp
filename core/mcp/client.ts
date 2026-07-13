@@ -60,6 +60,7 @@ export function createMcpProtocolClient(
 export async function initializeMcpServer(
   server: McpServerConfig,
   transport: McpProtocolTransport,
+  options?: { signal?: AbortSignal },
 ): Promise<McpInitializeResult> {
     const response = await transport.request<Record<string, unknown>, McpInitializeResult>(
     createMcpRequest('initialize', {
@@ -72,13 +73,18 @@ export async function initializeMcpServer(
         version: getExtensionVersion(),
       },
     }),
-    { timeoutMs: server.timeouts.connectMs, maxResponseBytes: server.limits.maxResultBytes },
+    {
+      timeoutMs: server.timeouts.connectMs,
+      maxResponseBytes: server.limits.maxResultBytes,
+      signal: options?.signal,
+    },
   );
   const result = unwrapMcpResponse(response, 'mcp_initialize_failed');
 
   if (transport.notify) {
     await transport.notify(createMcpNotification('notifications/initialized'), {
       timeoutMs: server.timeouts.requestMs,
+      signal: options?.signal,
     });
   }
 
@@ -94,6 +100,7 @@ export async function initializeMcpServer(
 export async function listMcpTools(
   server: McpServerConfig,
   transport: McpProtocolTransport,
+  options?: { signal?: AbortSignal },
 ): Promise<ToolDescriptor[]> {
   const tools: ToolDescriptor[] = [];
   let cursor: string | undefined;
@@ -101,7 +108,11 @@ export async function listMcpTools(
   do {
     const response = await transport.request<Record<string, unknown>, McpListToolsResult>(
       createMcpRequest('tools/list', cursor ? { cursor } : undefined),
-      { timeoutMs: server.timeouts.discoveryMs, maxResponseBytes: server.limits.maxResultBytes },
+      {
+        timeoutMs: server.timeouts.discoveryMs,
+        maxResponseBytes: server.limits.maxResultBytes,
+        signal: options?.signal,
+      },
     );
     const result = unwrapMcpResponse(response, 'mcp_tools_list_failed') as McpListToolsResult;
     const nextTools = Array.isArray(result.tools) ? result.tools : [];
@@ -129,6 +140,7 @@ export async function callMcpTool(
       {
         timeoutMs: options.timeoutMs ?? server.timeouts.requestMs,
         maxResponseBytes: options.maxResultBytes ?? server.limits.maxResultBytes,
+        signal: options.signal,
       },
     );
     const result = unwrapMcpResponse(response, 'mcp_tool_call_failed') as McpCallToolResult;
@@ -149,7 +161,13 @@ export async function callMcpTool(
         code: err instanceof McpProtocolError ? err.code : 'mcp_tool_call_failed',
         message: err instanceof Error ? err.message : String(err),
         retryable: err instanceof McpProtocolError ? err.retryable : true,
-        details: err instanceof McpProtocolError ? err.details : undefined,
+        details: err instanceof McpProtocolError && err.details?.externalOutcome === 'confirmed'
+          ? err.details
+          : {
+            ...(err instanceof McpProtocolError ? err.details : undefined),
+            externalOutcome: 'ambiguous',
+            retrySafe: false,
+          },
       },
     };
   }
@@ -246,11 +264,16 @@ export function unwrapMcpResponse<TResult>(
       details: {
         jsonRpcCode: response.error.code,
         data: response.error.data,
+        externalOutcome: 'confirmed',
+        retrySafe: false,
       },
     });
   }
   if (!('result' in response)) {
-    throw new McpProtocolError(errorCode, 'MCP response did not include a result.', { retryable: true });
+    throw new McpProtocolError(errorCode, 'MCP response did not include a result.', {
+      retryable: true,
+      details: { externalOutcome: 'ambiguous', retrySafe: false },
+    });
   }
   return response.result as TResult;
 }
@@ -300,6 +323,10 @@ function normalizeMcpToolResult(
         code: 'mcp_tool_result_error',
         message: errorMessage || detail || 'MCP tool returned isError=true.',
         retryable: false,
+        details: {
+          externalOutcome: 'confirmed',
+          retrySafe: false,
+        },
       }
       : undefined,
   };

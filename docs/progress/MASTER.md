@@ -105,11 +105,11 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Task**: T2.6 / [Issue #321](https://github.com/zhu1090093659/deepseek-pp/issues/321) — Propagate automation cancellation, lease, and idempotency.
 
-**Execution Branch**: Not started; the task worktree will branch from the closed T2.5 baseline.
+**Execution Branch**: `codex/321-automation-cancellation` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/321-automation-cancellation`, based on `origin/main@26ef8dc`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `737c91f` after T2.5 closed with 92 test files / 671 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, hosted quality run `29267498354`, and contribution-evidence run `29267706250` passing. Android project/build/runtime/test support is retired.
+**Baseline Evidence**: PC-only main is `26ef8dc` after T2.5 closed at `737c91f` and its progress closeout merged. T2.5 passed 92 test files / 671 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, hosted quality run `29267498354`, and contribution-evidence run `29267706250`. Android project/build/runtime/test support is retired.
 
 **T1.1 Evidence**:
 
@@ -203,6 +203,14 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted validation passes 14 files / 117 tests, including every target write's fail-before/commit-then-throw boundary, every recovery-write failure, queued mutation/download recovery ordering, all interrupted prefixes, corrupt/future/checksum journals, idempotent retry, executable raw journal fixture, raw missing-key restoration, occurrence-stable duplicate Memory IDs, and fake-IndexedDB reopen/generator evidence. The 60-second full suite passes 92 files / 671 tests; full `ci:quality` also passes prompt freeze, TypeScript, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release assets, and `git diff --check`.
 - PR #348 merged at `737c91f65d4a8f04c11cc55451748379ef903437`; Issue #320 closed after telemetry, hosted quality and contribution-evidence runs passed, and Milestone #44 advanced to 6/7 with cumulative drift score 2. The annotate threshold was reached, so Issue #321 carries the adaptive drift warning before T2.6 starts.
 
+**T2.6 Evidence (in progress)**:
+
+- Replaced the timeout `Promise.race`/in-memory-only lock with one atomic persisted `running` claim plus an in-process execution lease. The scheduler aborts at the deadline but awaits the real executor settlement before releasing authority; terminal writes are fenced to the same still-running row.
+- Added an execution context carrying run/automation IDs, persisted deadline, attempt, `AbortSignal`, current-lease assertion, and stable scoped idempotency keys. DeepSeek session/PoW/completion/history, automation continuation, runtime tools, web providers, MCP initialization/call, and cancellable transports receive the signal without changing released request bodies, headers, JSON-RPC IDs, commands, or UI. Concurrent PoW cold starts share one cancellable WASM load, while unconsumed web responses explicitly release their bodies.
+- Scheduled runs use stable occurrence identity and also deduplicate historical random run IDs by `(automationId,scheduledFor)`. Fresh persisted rows block restart execution; expired rows close as non-retryable ambiguous failures and advance without replay. Only explicit `retrySafe:true` plus `externalOutcome:not_started` results may retry; post-dispatch and thrown failures are terminal.
+- Store mutations are serialized in one authority; claim and finalization are atomic within the service worker. Historical runner requests without `deadlineAt` derive the released 180-second window from `requestedAt`. Deleting an automation first aborts the active context, while late executor output cannot recreate or overwrite deleted/terminal state.
+- Final local validation passes targeted cancellation/MCP slices, TypeScript compile, and the 60-second full suite at 97 files / 710 tests. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. Coverage includes timeout settlement, internal cancellation, stable retry keys, no ambiguous retry, scheduled occurrence dedupe, restart lease recovery, legacy deadline normalization, finalization fencing, shared cancellable PoW loading, web-response release, DeepSeek signal propagation, continuation cancellation, and MCP/Native cancellation. Independent final reviews report no P0/P1/P2 blocker.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
@@ -224,9 +232,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Audit T2.6 / Issue #321 from PC-only main `737c91f` and preserve the frozen automation/runtime contracts.
-2. Define cancellation, execution-authority lease, and idempotency invariants with timeout, abort, late-side-effect, lease, and retry tests.
-3. Implement and validate T2.6, record telemetry, and close Phase 2 through the adaptive-control protocol.
+1. Run the full 60-second suite and `ci:quality`, including prompt/contract checks, Chrome/Edge/Firefox builds/packages, protocol smokes, release assets, diff, and orphan-process checks.
+2. Complete independent final contract/diff reviews and correct any blocker without widening released automation commands or UI.
+3. Open and merge the T2.6 PR after hosted checks, record Issue telemetry, then close Phase 2 through the adaptive-control protocol before starting Phase 3.
 
 ## Session Log
 
@@ -266,3 +274,5 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T2.5 execution start | Opened `codex/320-sync-download-rollback` from `2928d85`; audited raw persistence, restart, background lifecycle, optional legacy-file, and commit-point boundaries before implementation. |
 | 2026-07-13 | T2.5 implementation | Added the versioned recovery DB, pure local apply coordinator, raw browser preimage adapter, deterministic Memory IDs, reverse rollback, startup recovery barrier, and exhaustive local fault/restart/idempotency tests. |
 | 2026-07-13 | T2.5 closure | Merged PR #348 at `737c91f`, closed Issue #320 after telemetry, passed local/hosted quality and contribution-evidence gates, advanced Milestone #44 to 6/7 with cumulative drift score 2, and annotated Issue #321 with the adaptive drift warning. |
+| 2026-07-13 | T2.6 execution start | Opened `codex/321-automation-cancellation` from `26ef8dc`; audited scheduler/store, active DeepSeek/MCP/tool execution, restart recovery, retry safety, runtime deletion, and frozen UI/command boundaries. |
+| 2026-07-13 | T2.6 implementation | Added atomic durable claims, deadline/AbortSignal execution context, settlement-held leases, occurrence dedupe, conservative retry, stale-run recovery, terminal fencing, historical deadline normalization, and targeted cancellation/restart/MCP contract coverage without adding a user-facing command or protocol field. |

@@ -88,10 +88,10 @@ function getPortState(nativeHost: string): NativePortState {
 export function createMcpNativeMessagingTransport(server: McpServerConfig): McpProtocolTransport {
   return {
     request(request, options) {
-      return sendNativeMessage(server, request, options?.timeoutMs);
+      return sendNativeMessage(server, request, options?.timeoutMs, options?.signal);
     },
     async notify(notification, options) {
-      await sendNativeMessage(server, notification, options?.timeoutMs);
+      await sendNativeMessage(server, notification, options?.timeoutMs, options?.signal);
     },
   };
 }
@@ -100,7 +100,9 @@ async function sendNativeMessage<TParams extends Record<string, unknown> | undef
   server: McpServerConfig,
   message: McpJsonRpcRequest<TParams> | McpJsonRpcNotification,
   timeoutMs: number = server.timeouts.requestMs,
+  signal?: AbortSignal,
 ): Promise<McpJsonRpcResponse<TResult>> {
+  throwIfNativeSignalAborted(signal);
   const nativeHost = server.transport.nativeHost;
   if (!nativeHost) {
     throw new McpTransportError('mcp_native_host_missing', 'Native messaging host is not configured.', {
@@ -116,14 +118,23 @@ async function sendNativeMessage<TParams extends Record<string, unknown> | undef
 
   let response: unknown;
   if (expectedRequest) {
+    throwIfNativeSignalAborted(signal);
     response = await sendAndWait(nativeHost, envelope, expectedRequest.id, timeoutMs);
+    throwIfNativeSignalAborted(signal);
   } else {
+    throwIfNativeSignalAborted(signal);
     const state = getPortState(nativeHost);
     state.port.postMessage(envelope);
     return undefined as any;
   }
 
   return normalizeJsonRpcResponse<TResult>(response, expectedRequest);
+}
+
+function throwIfNativeSignalAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException('Native MCP request was aborted.', 'AbortError');
 }
 
 function sendAndWait(

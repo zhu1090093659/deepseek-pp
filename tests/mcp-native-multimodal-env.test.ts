@@ -67,6 +67,38 @@ describe('multimodal native messaging env', () => {
       GEMINI_API_KEY: 'settings-gemini',
     });
   });
+
+  it('does not dispatch a request cancelled while its async envelope is being hydrated', async () => {
+    vi.resetModules();
+    let releaseSettings!: (value: Record<string, unknown>) => void;
+    const settings = new Promise<Record<string, unknown>>((resolve) => {
+      releaseSettings = resolve;
+    });
+    const connectNative = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: { connectNative },
+      storage: {
+        local: {
+          get: vi.fn(async () => settings),
+        },
+      },
+    });
+    const controller = new AbortController();
+    const reason = new Error('automation cancelled during env read');
+    const { createMcpNativeMessagingTransport } = await import('../core/mcp/transports/native');
+    const pending = createMcpNativeMessagingTransport(createServer({})).request({
+      jsonrpc: '2.0',
+      id: 'cancel-before-native-dispatch',
+      method: 'tools/call',
+      params: { name: 'vision_status', arguments: {} },
+    }, { signal: controller.signal });
+
+    controller.abort(reason);
+    releaseSettings({});
+
+    await expect(pending).rejects.toBe(reason);
+    expect(connectNative).not.toHaveBeenCalled();
+  });
 });
 
 describe('native messaging payload limits', () => {

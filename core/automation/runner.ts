@@ -19,6 +19,10 @@ import { DEFAULT_TOOL_DESCRIPTORS } from '../tool';
 import { clampText, createToolExecutionRecord, runToolContinuationLoop } from '../tool-loop/engine';
 import type { ToolCall, ToolExecutionRecord, ToolResult } from '../types';
 import { createAutomationRunnerFailure } from './messages';
+import {
+  AutomationExecutionStoppedError,
+  type AutomationExecutionContext,
+} from './execution';
 import type {
   AutomationRunnerRequest,
   AutomationRunnerResult,
@@ -29,9 +33,20 @@ const AUTOMATION_MCP_CONTINUATION_LIMIT = 3;
 const AUTOMATION_MISSING_TOKEN_MESSAGE =
   'DeepSeek login token is missing. Refresh chat.deepseek.com or sign in again, then retry the automation.';
 
+class AutomationToolOutcomeAmbiguousError extends Error {
+  constructor(toolName: string) {
+    super(`Automation tool ${toolName} finished without a confirmed external outcome.`);
+    this.name = 'AutomationToolOutcomeAmbiguousError';
+  }
+}
+
 export interface AutomationRunnerOptions {
-  executeToolCall?: (call: ToolCall) => Promise<ToolResult>;
+  executeToolCall?: (
+    call: ToolCall,
+    execution: { signal?: AbortSignal; idempotencyKey: string },
+  ) => Promise<ToolResult>;
   clientHeaders?: Record<string, string>;
+  execution?: AutomationExecutionContext;
 }
 
 export async function runDeepSeekAutomation(
@@ -41,11 +56,17 @@ export async function runDeepSeekAutomation(
   let chatSessionId = request.chatSessionId;
   let parentMessageId: number | null = null;
   const locale = request.locale ?? DEFAULT_LOCALE;
+  let externalOutcome: 'not_started' | 'ambiguous' = 'not_started';
 
   try {
+    options?.execution?.assertActive();
     parentMessageId = normalizeMessageId(request.parentMessageId, 'parent_message_id');
     const clientHeaders = options?.clientHeaders ?? createClientHeaders({ missingTokenMessage: AUTOMATION_MISSING_TOKEN_MESSAGE });
-    chatSessionId ??= await createChatSession(clientHeaders);
+    if (chatSessionId === null) {
+      externalOutcome = 'ambiguous';
+      chatSessionId = await createChatSession(clientHeaders, options?.execution?.signal);
+      options?.execution?.assertActive();
+    }
     const { augmented: prompt } = buildPromptAugmentation(request.prompt, {
       memories: request.promptContext?.memories ?? [],
       presetContent: request.promptContext?.presetContent ?? null,
@@ -60,7 +81,10 @@ export async function runDeepSeekAutomation(
       parentMessageId,
       prompt,
       clientHeaders,
+      options?.execution,
+      () => { externalOutcome = 'ambiguous'; },
     );
+    options?.execution?.assertActive();
     const assistantMessageId = stream.responseMessageId;
     if (assistantMessageId === null) {
       return createAutomationRunnerFailure(
@@ -68,7 +92,9 @@ export async function runDeepSeekAutomation(
         'deepseek_completion_missing_message_id',
         'DeepSeek completion finished without a response message id.',
         'completion',
-        true,
+        false,
+        Date.now(),
+        { externalOutcome: 'ambiguous', retrySafe: false },
       );
     }
 
@@ -82,10 +108,17 @@ export async function runDeepSeekAutomation(
       locale,
     );
     stream = toolLoop.stream;
+    options?.execution?.assertActive();
 
     const completedAt = Date.now();
     const finalAssistantMessageId = stream.responseMessageId ?? assistantMessageId;
-    const history = await readHistorySnapshot(chatSessionId, finalAssistantMessageId, clientHeaders).catch(() => null);
+    const history = await readAutomationHistorySnapshot(
+      chatSessionId,
+      finalAssistantMessageId,
+      clientHeaders,
+      options?.execution,
+    );
+    options?.execution?.assertActive();
     const nextParentMessageId = history?.parentMessageId ?? finalAssistantMessageId;
     const result: AutomationRunnerSuccess = {
       ok: true,
@@ -100,11 +133,15 @@ export async function runDeepSeekAutomation(
     };
     return result;
   } catch (err) {
+    if (options?.execution?.signal.aborted) options.execution.assertActive();
+    if (err instanceof AutomationExecutionStoppedError) throw err;
     const isAuthError = err instanceof DeepSeekAuthError;
     const isPowError = err instanceof DeepSeekPowError;
     const isSessionError = err instanceof DeepSeekSessionError;
     const isPayloadError = err instanceof DeepSeekPayloadError;
+    const isAmbiguousToolError = err instanceof AutomationToolOutcomeAmbiguousError;
     const isRetryablePayloadError = isPayloadError && err.retryable;
+    const retrySafe = isPowError && externalOutcome === 'not_started';
     return createAutomationRunnerFailure(
       { ...request, chatSessionId, parentMessageId },
       isAuthError
@@ -115,11 +152,34 @@ export async function runDeepSeekAutomation(
             ? 'deepseek_session_create_failed'
             : isPayloadError
               ? 'deepseek_payload_invalid'
+              : isAmbiguousToolError
+                ? 'automation_tool_outcome_ambiguous'
               : 'deepseek_runner_failed',
       err instanceof Error ? err.message : String(err),
       isAuthError ? 'auth' : isPowError ? 'pow' : isSessionError ? 'session' : isPayloadError ? 'completion' : 'runner',
-      !isAuthError && (!isPayloadError || isRetryablePayloadError),
+      retrySafe && !isAuthError && (!isPayloadError || isRetryablePayloadError),
+      Date.now(),
+      { externalOutcome, retrySafe },
     );
+  }
+}
+
+async function readAutomationHistorySnapshot(
+  chatSessionId: string,
+  assistantMessageId: number,
+  clientHeaders: Record<string, string>,
+  execution?: AutomationExecutionContext,
+) {
+  try {
+    return await readHistorySnapshot(
+      chatSessionId,
+      assistantMessageId,
+      clientHeaders,
+      execution?.signal,
+    );
+  } catch {
+    execution?.assertActive();
+    return null;
   }
 }
 
@@ -129,8 +189,13 @@ async function submitAutomationPrompt(
   parentMessageId: number | null,
   prompt: string,
   clientHeaders: Record<string, string>,
+  execution?: AutomationExecutionContext,
+  onDispatch?: () => void,
 ): Promise<ModelTurn> {
-  const powHeaders = await createPowHeaders(clientHeaders);
+  execution?.assertActive();
+  const powHeaders = await createPowHeaders(clientHeaders, undefined, execution?.signal);
+  execution?.assertActive();
+  onDispatch?.();
   return submitPrompt({
     chatSessionId,
     parentMessageId,
@@ -141,7 +206,7 @@ async function submitAutomationPrompt(
     searchEnabled: request.promptOptions.searchEnabled,
     clientHeaders,
     powHeaders,
-  });
+  }, execution?.signal);
 }
 
 async function runAutomationToolLoop(
@@ -170,9 +235,14 @@ async function runAutomationToolLoop(
     extractToolCalls: (text) => extractToolCalls(text, {
       descriptors: request.promptContext?.toolDescriptors ?? DEFAULT_TOOL_DESCRIPTORS,
     }).filter((call) => call.provider?.kind === 'mcp' || call.provider?.id === 'web'),
-    async executeToolCall(call, parentMessageId) {
-      const result = await options.executeToolCall!({
+    async executeToolCall(call, parentMessageId, position) {
+      const idempotencyKey = options.execution?.createIdempotencyKey(
+        `tool:${parentMessageId}:${position.depth}:${position.callIndex}`,
+      ) ?? `automation:${request.runId}:tool:${parentMessageId}:${position.depth}:${position.callIndex}`;
+      options.execution?.assertActive();
+      const executionCall: ToolCall = {
         ...call,
+        id: call.id ?? idempotencyKey,
         source: {
           trigger: 'automation',
           automationId: request.automationId,
@@ -180,8 +250,19 @@ async function runAutomationToolLoop(
           chatSessionId,
           messageId: parentMessageId,
         },
-      });
-      return createToolExecutionRecord(call, result, {
+      };
+      const result = await options.executeToolCall!(
+        executionCall,
+        { signal: options.execution?.signal, idempotencyKey },
+      );
+      options.execution?.assertActive();
+      if (
+        !result.ok &&
+        result.error?.details?.externalOutcome === 'ambiguous'
+      ) {
+        throw new AutomationToolOutcomeAmbiguousError(executionCall.name);
+      }
+      return createToolExecutionRecord(executionCall, result, {
         detailMaxLength: 4000,
         outputMaxLength: 8000,
       });
@@ -193,7 +274,10 @@ async function runAutomationToolLoop(
       parentMessageId,
       prompt,
       clientHeaders,
+      options.execution,
     ),
+    signal: options.execution?.signal,
+    assertActive: () => options.execution?.assertActive(),
   });
 
   return { stream: loop.turn, executions: loop.executions };

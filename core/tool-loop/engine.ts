@@ -25,9 +25,15 @@ export interface ToolContinuationLoopInput<TTurn> {
   getAssistantText: (turn: TTurn) => string;
   getParentMessageId: (turn: TTurn) => number | null;
   extractToolCalls: (assistantText: string) => ToolCall[];
-  executeToolCall: (call: ToolCall, parentMessageId: number) => Promise<ToolExecutionRecord>;
+  executeToolCall: (
+    call: ToolCall,
+    parentMessageId: number,
+    position: { depth: number; callIndex: number },
+  ) => Promise<ToolExecutionRecord>;
   buildContinuationPrompt: (executions: ToolExecutionRecord[]) => string;
   submitContinuation: (prompt: string, parentMessageId: number) => Promise<TTurn>;
+  signal?: AbortSignal;
+  assertActive?: () => void;
 }
 
 export async function runToolContinuationLoop<TTurn>(
@@ -38,26 +44,43 @@ export async function runToolContinuationLoop<TTurn>(
   const executions: ToolExecutionRecord[] = [];
 
   for (let depth = 0; depth < input.maxDepth; depth++) {
+    assertContinuationActive(input);
     if (parentMessageId === null) break;
 
     const calls = input.extractToolCalls(input.getAssistantText(turn));
     if (calls.length === 0) break;
 
     const stepExecutions: ToolExecutionRecord[] = [];
-    for (const call of calls) {
-      const execution = await input.executeToolCall(call, parentMessageId);
+    for (let callIndex = 0; callIndex < calls.length; callIndex++) {
+      assertContinuationActive(input);
+      const execution = await input.executeToolCall(
+        calls[callIndex],
+        parentMessageId,
+        { depth, callIndex },
+      );
+      assertContinuationActive(input);
       stepExecutions.push(execution);
       executions.push(execution);
     }
 
+    assertContinuationActive(input);
     turn = await input.submitContinuation(
       input.buildContinuationPrompt(stepExecutions),
       parentMessageId,
     );
+    assertContinuationActive(input);
     parentMessageId = input.getParentMessageId(turn);
   }
 
   return { turn, executions };
+}
+
+function assertContinuationActive<TTurn>(input: ToolContinuationLoopInput<TTurn>): void {
+  input.assertActive?.();
+  if (!input.signal?.aborted) return;
+  const reason = input.signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new DOMException('Automation continuation was aborted.', 'AbortError');
 }
 
 export function createToolExecutionRecord(

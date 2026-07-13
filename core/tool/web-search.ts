@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
+import { createAbortScope } from '../network/abort';
 import type {
   JsonValue,
   ToolCall,
@@ -86,12 +87,13 @@ export function isWebSearchToolName(name: string): name is WebSearchToolName {
 export async function executeWebSearchToolCall(
   call: ToolCall,
   locale: SupportedLocale = DEFAULT_LOCALE,
+  options?: { signal?: AbortSignal },
 ): Promise<ToolResult> {
   switch (call.name) {
     case 'web_search':
-      return performWebSearch(call, locale);
+      return performWebSearch(call, locale, options?.signal);
     case 'web_fetch':
-      return performWebFetch(call, locale);
+      return performWebFetch(call, locale, options?.signal);
     default:
       return {
         ok: false,
@@ -117,7 +119,11 @@ interface SearchResult {
   snippet: string;
 }
 
-async function performWebSearch(call: ToolCall, locale: SupportedLocale): Promise<ToolResult> {
+async function performWebSearch(
+  call: ToolCall,
+  locale: SupportedLocale,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
   const query = typeof call.payload.query === 'string' ? call.payload.query.trim() : '';
   if (!query) {
     return {
@@ -140,13 +146,14 @@ async function performWebSearch(call: ToolCall, locale: SupportedLocale): Promis
   const startTime = Date.now();
 
   for (let i = 0; i < domains.length; i++) {
+    throwIfWebToolAborted(signal);
     // Guard: if we've been searching for >18s, give up
     if (Date.now() - startTime > 18_000) {
       lastError = lastError || 'Search timed out (>18s)';
       break;
     }
     try {
-      const results = await bingSearch(domains[i], query, topK, locale);
+      const results = await bingSearch(domains[i], query, topK, locale, signal);
       if (results.length === 0) {
         lastError = `${domains[i]} returned no parseable search results`;
         continue;
@@ -162,6 +169,7 @@ async function performWebSearch(call: ToolCall, locale: SupportedLocale): Promis
           .join('\n'),
       };
     } catch (error) {
+      throwIfWebToolAborted(signal);
       lastError = error instanceof Error ? error.message : String(error);
       // On permission error don't retry — user needs to reload the extension
       if (lastError.includes('opaque') || lastError.includes('status 0')) break;
@@ -205,6 +213,7 @@ async function bingSearch(
   query: string,
   topK: number,
   locale: SupportedLocale,
+  signal?: AbortSignal,
 ): Promise<SearchResult[]> {
   let url: URL;
   try {
@@ -214,42 +223,39 @@ async function bingSearch(
     throw new Error(`Invalid search domain: ${domain}`);
   }
 
-  // Manual AbortController for timeout (more compatible than AbortSignal.timeout)
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8_000);
-
-  let response: Response;
+  const abortScope = createAbortScope(signal, 8_000);
   try {
-    response = await fetch(url.toString(), {
+    const response = await fetch(url.toString(), {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': locale === 'en' ? 'en-US,en;q=0.9,zh-CN;q=0.6' : 'zh-CN,zh;q=0.9,en;q=0.8',
         Accept: 'text/html,application/xhtml+xml',
       },
-      signal: controller.signal,
+      signal: abortScope.signal,
     });
-  } finally {
-    clearTimeout(timeoutId);
-  }
 
-  if (!response.ok) {
-    if (response.status === 0) {
-      throw new Error(`Host permission denied (opaque response) for ${domain}`);
+    if (!response.ok) {
+      if (response.status === 0) {
+        throw new Error(`Host permission denied (opaque response) for ${domain}`);
+      }
+      throw new Error(`${domain} returned status ${response.status}`);
     }
-    throw new Error(`${domain} returned status ${response.status}`);
-  }
 
-  let html: string;
-  try {
-    html = await response.text();
-  } catch {
-    throw new Error(`${domain} response body unreadable`);
+    let html: string;
+    try {
+      html = await response.text();
+    } catch {
+      throwIfWebToolAborted(signal);
+      throw new Error(`${domain} response body unreadable`);
+    }
+    if (html.length < 200) {
+      throw new Error(`${domain} returned an empty or blocked response (${html.length} bytes)`);
+    }
+    return parseBingResults(html, topK);
+  } finally {
+    abortScope.cleanup();
   }
-  if (html.length < 200) {
-    throw new Error(`${domain} returned an empty or blocked response (${html.length} bytes)`);
-  }
-  return parseBingResults(html, topK);
 }
 
 function parseBingResults(html: string, topK: number): SearchResult[] {
@@ -299,7 +305,11 @@ function parseBingResults(html: string, topK: number): SearchResult[] {
 // Web Fetch: download a URL and extract visible text
 // ---------------------------------------------------------------------------
 
-async function performWebFetch(call: ToolCall, locale: SupportedLocale): Promise<ToolResult> {
+async function performWebFetch(
+  call: ToolCall,
+  locale: SupportedLocale,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
   const url = typeof call.payload.url === 'string' ? call.payload.url.trim() : '';
   if (!url) {
     return {
@@ -326,53 +336,62 @@ async function performWebFetch(call: ToolCall, locale: SupportedLocale): Promise
   }
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: AbortSignal.timeout(15_000),
-    });
+    throwIfWebToolAborted(signal);
+    const abortScope = createAbortScope(signal, 15_000);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: abortScope.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+      if (!response.ok) {
+        await cancelUnusedWebResponseBody(response);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
-    const contentType = response.headers.get('content-type') || '';
-    let text: string;
+      const contentType = response.headers.get('content-type') || '';
+      let text: string;
 
-    if (contentType.includes('text/html') || contentType.includes('text/plain') || contentType.includes('application/json')) {
-      text = await response.text();
-    } else {
+      if (contentType.includes('text/html') || contentType.includes('text/plain') || contentType.includes('application/json')) {
+        text = await response.text();
+      } else {
+        await cancelUnusedWebResponseBody(response);
+        return {
+          ok: true,
+          name: call.name,
+          provider: call.provider ?? createWebSearchToolProviderIdentity(locale),
+          summary: translate(locale, 'tool.web.contentType', { contentType }),
+          detail: translate(locale, 'tool.web.contentTypeDetail', { contentType, url }),
+          output: { url, contentType } as unknown as JsonValue,
+        };
+      }
+
+      const extracted = contentType.includes('text/html') ? extractTextFromHtml(text) : text;
+      const maxLength = 50_000;
+      const truncated = extracted.length > maxLength;
+      const outputText = truncated
+        ? extracted.slice(0, maxLength) +
+          translate(locale, 'tool.web.truncated', { count: extracted.length })
+        : extracted;
+
       return {
         ok: true,
         name: call.name,
         provider: call.provider ?? createWebSearchToolProviderIdentity(locale),
-        summary: translate(locale, 'tool.web.contentType', { contentType }),
-        detail: translate(locale, 'tool.web.contentTypeDetail', { contentType, url }),
-        output: { url, contentType } as unknown as JsonValue,
+        summary: translate(locale, 'tool.web.fetchComplete', { url }),
+        detail: truncated
+          ? translate(locale, 'tool.web.fetchTruncatedDetail', { length: extracted.length, maxLength })
+          : translate(locale, 'tool.web.fetchLengthDetail', { length: extracted.length }),
+        output: { url, content: outputText, contentType, truncated } as unknown as JsonValue,
       };
+    } finally {
+      abortScope.cleanup();
     }
-
-    const extracted = contentType.includes('text/html') ? extractTextFromHtml(text) : text;
-    const maxLength = 50_000;
-    const truncated = extracted.length > maxLength;
-    const outputText = truncated
-      ? extracted.slice(0, maxLength) +
-        translate(locale, 'tool.web.truncated', { count: extracted.length })
-      : extracted;
-
-    return {
-      ok: true,
-      name: call.name,
-      provider: call.provider ?? createWebSearchToolProviderIdentity(locale),
-      summary: translate(locale, 'tool.web.fetchComplete', { url }),
-      detail: truncated
-        ? translate(locale, 'tool.web.fetchTruncatedDetail', { length: extracted.length, maxLength })
-        : translate(locale, 'tool.web.fetchLengthDetail', { length: extracted.length }),
-      output: { url, content: outputText, contentType, truncated } as unknown as JsonValue,
-    };
   } catch (error) {
+    throwIfWebToolAborted(signal);
     const message = error instanceof Error ? error.message : String(error);
     const isPermissionError =
       message.includes('Failed to fetch') ||
@@ -396,6 +415,21 @@ async function performWebFetch(call: ToolCall, locale: SupportedLocale): Promise
       },
     };
   }
+}
+
+async function cancelUnusedWebResponseBody(response: Response): Promise<void> {
+  if (!response.body) return;
+  try {
+    await response.body.cancel();
+  } catch (error) {
+    console.warn('[DeepSeek++] Failed to cancel an unused web response body:', error);
+  }
+}
+
+function throwIfWebToolAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException('Web tool execution was aborted.', 'AbortError');
 }
 
 function extractTextFromHtml(html: string): string {

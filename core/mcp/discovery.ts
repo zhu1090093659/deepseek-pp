@@ -1,6 +1,6 @@
 import type { ToolCall, ToolDescriptor, ToolResult } from '../tool';
 import { haveEquivalentToolDescriptorSecurity } from '../tool/authorization';
-import { applyMcpToolPolicy, callMcpTool, createMcpProtocolClient, initializeMcpServer } from './client';
+import { applyMcpToolPolicy, callMcpTool, initializeMcpServer, listMcpTools } from './client';
 import {
   getAllMcpServers,
   getAllMcpToolCaches,
@@ -21,7 +21,7 @@ const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 
 export async function refreshMcpServerDiscovery(
   serverId: McpServerId,
-  options?: { cacheTtlMs?: number },
+  options?: { cacheTtlMs?: number; signal?: AbortSignal },
 ): Promise<McpToolCacheEntry> {
   const server = await getMcpServerById(serverId, { includeSecrets: true });
   if (!server) throw new Error(`MCP server not found: ${serverId}`);
@@ -60,7 +60,7 @@ export async function getMcpToolDescriptors(options?: {
 
 export async function ensureMcpServerDiscovery(
   serverId: McpServerId,
-  options?: { maxAgeMs?: number; cacheTtlMs?: number },
+  options?: { maxAgeMs?: number; cacheTtlMs?: number; signal?: AbortSignal },
 ): Promise<McpToolCacheEntry> {
   const cache = await getMcpToolCache(serverId);
   const now = Date.now();
@@ -77,6 +77,7 @@ export async function ensureMcpServerDiscovery(
 export interface McpToolExecutionOptions {
   timeoutMs?: number;
   maxResultBytes?: number;
+  signal?: AbortSignal;
 }
 
 export async function executeMcpToolCall(
@@ -131,7 +132,7 @@ export async function executeMcpToolCall(
     };
   }
 
-  const cache = await ensureMcpServerDiscovery(server.id);
+  const cache = await ensureMcpServerDiscovery(server.id, { signal: options.signal });
   const descriptors = applyMcpToolPolicy(cache.descriptors, server);
   const descriptor = descriptors.find((item) => item.id === authorizedDescriptor.id);
   if (!descriptor) {
@@ -182,7 +183,7 @@ export async function executeMcpToolCall(
   const startedAt = Date.now();
   try {
     const transport = createMcpTransport(server);
-    await initializeMcpServer(server, transport);
+    await initializeMcpServer(server, transport, { signal: options.signal });
     return callMcpTool(server, transport, {
       call: {
         ...call,
@@ -192,8 +193,10 @@ export async function executeMcpToolCall(
       descriptor,
       timeoutMs: options.timeoutMs ?? descriptor?.execution.timeoutMs ?? server.timeouts.requestMs,
       maxResultBytes: options.maxResultBytes ?? descriptor?.execution.maxResultBytes ?? server.limits.maxResultBytes,
+      signal: options.signal,
     });
   } catch (err) {
+    throwIfMcpExecutionAborted(options.signal);
     const completedAt = Date.now();
     const message = err instanceof Error ? err.message : String(err);
     const error = err && typeof err === 'object'
@@ -223,13 +226,14 @@ export async function executeMcpToolCall(
 
 async function discoverServerTools(
   server: McpServerConfig,
-  options?: { cacheTtlMs?: number },
+  options?: { cacheTtlMs?: number; signal?: AbortSignal },
 ): Promise<McpToolCacheEntry> {
   const startedAt = Date.now();
   try {
-    const client = createMcpProtocolClient(server, createMcpTransport(server));
-    await client.initialize();
-    const descriptors = await client.listTools();
+    const transport = createMcpTransport(server);
+    await initializeMcpServer(server, transport, { signal: options?.signal });
+    const descriptors = await listMcpTools(server, transport, { signal: options?.signal });
+    throwIfMcpExecutionAborted(options?.signal);
     const completedAt = Date.now();
     const health: McpServerHealth = {
       serverId: server.id,
@@ -254,6 +258,7 @@ async function discoverServerTools(
     });
     return entry;
   } catch (err) {
+    throwIfMcpExecutionAborted(options?.signal);
     const completedAt = Date.now();
     const message = err instanceof Error ? err.message : String(err);
     const health: McpServerHealth = {
@@ -278,4 +283,10 @@ async function discoverServerTools(
     });
     return entry;
   }
+}
+
+function throwIfMcpExecutionAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException('MCP execution was aborted.', 'AbortError');
 }

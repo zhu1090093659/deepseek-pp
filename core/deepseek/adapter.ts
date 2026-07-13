@@ -137,10 +137,14 @@ export class DeepSeekPayloadError extends Error {
   }
 }
 
-export async function createChatSession(clientHeaders: Record<string, string>): Promise<string> {
+export async function createChatSession(
+  clientHeaders: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<string> {
   const response = await fetch(new URL(CHAT_SESSION_CREATE_PATH, DEEPSEEK_API_URL).href, {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: { 'content-type': 'application/json', ...clientHeaders },
     body: JSON.stringify({}),
   });
@@ -162,18 +166,22 @@ export async function createChatSession(clientHeaders: Record<string, string>): 
 export async function createPowHeaders(
   clientHeaders: Record<string, string>,
   wasmUrl?: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  return createPowHeadersForPath(clientHeaders, COMPLETION_PATH, wasmUrl);
+  return createPowHeadersForPath(clientHeaders, COMPLETION_PATH, wasmUrl, signal);
 }
 
 export async function createPowHeadersForPath(
   clientHeaders: Record<string, string>,
   targetPath: string,
   wasmUrl?: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   try {
-    const challenge = await createPowChallenge(clientHeaders, targetPath);
-    const answer = await solvePowChallenge(challenge, wasmUrl);
+    const challenge = await createPowChallenge(clientHeaders, targetPath, signal);
+    assertSignalActive(signal);
+    const answer = await solvePowChallenge(challenge, wasmUrl, signal);
+    assertSignalActive(signal);
     return {
       'X-DS-PoW-Response': base64EncodeUtf8(JSON.stringify({
         algorithm: answer.algorithm,
@@ -185,10 +193,17 @@ export async function createPowHeadersForPath(
       })),
     };
   } catch (err) {
+    if (signal?.aborted) assertSignalActive(signal);
     if (err instanceof DeepSeekPowError) throw err;
     if (err instanceof DeepSeekAuthError) throw err;
     throw new DeepSeekPowError(err instanceof Error ? err.message : String(err));
   }
+}
+
+function assertSignalActive(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException('DeepSeek request was aborted.', 'AbortError');
 }
 
 export function createClientHeaders(options?: { missingTokenMessage?: string }): Record<string, string> {
@@ -447,6 +462,7 @@ export async function readHistorySnapshot(
   chatSessionId: string,
   expectedAssistantMessageId: number,
   clientHeadersOverride?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<DeepSeekHistorySnapshot | null> {
   const clientHeaders = clientHeadersOverride ?? createClientHeaders();
   const url = new URL(HISTORY_PATH, DEEPSEEK_API_URL);
@@ -454,6 +470,7 @@ export async function readHistorySnapshot(
   const response = await fetch(url.href, {
     method: 'GET',
     credentials: 'include',
+    signal,
     headers: {
       accept: 'application/json',
       ...clientHeaders,
@@ -689,10 +706,15 @@ function normalizeModelType(modelType: string | null): string {
   return DEFAULT_MODEL_TYPE;
 }
 
-async function createPowChallenge(clientHeaders: Record<string, string>, targetPath: string): Promise<PowChallenge> {
+async function createPowChallenge(
+  clientHeaders: Record<string, string>,
+  targetPath: string,
+  signal?: AbortSignal,
+): Promise<PowChallenge> {
   const response = await fetch(new URL(POW_CHALLENGE_PATH, DEEPSEEK_API_URL).href, {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: { 'content-type': 'application/json', ...clientHeaders },
     body: JSON.stringify({ target_path: targetPath }),
   });
@@ -770,9 +792,13 @@ function isUploadedFileAuditRejected(file: DeepSeekUploadedFile): boolean {
   return auditResult ? REJECTED_FILE_AUDIT_RESULTS.has(auditResult) : false;
 }
 
-async function solvePowChallenge(challenge: PowChallenge, wasmUrl?: string): Promise<PowAnswer> {
+async function solvePowChallenge(
+  challenge: PowChallenge,
+  wasmUrl?: string,
+  signal?: AbortSignal,
+): Promise<PowAnswer> {
   try {
-    return await solvePowChallengeLocally(challenge, wasmUrl);
+    return await solvePowChallengeLocally(challenge, wasmUrl, signal);
   } catch (err) {
     const localMessage = err instanceof Error ? err.message : String(err);
     throw new DeepSeekPowError(`DeepSeek PoW challenge failed: ${localMessage}`);

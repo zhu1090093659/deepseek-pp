@@ -6,7 +6,7 @@ This directory is the compatibility firewall for the `core-refactor-2026-07` run
 
 | Surface | Registry | Follow-up executable freeze |
 |:--|:--|:--|
-| Prompt bytes, tool XML, inline agent, runtime messages, MAIN/content bridge, sandbox | [Prompt and Runtime](./prompt-and-runtime.md) and [Runtime Command Inventory](./runtime-command-inventory.md) | T1.2 / [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312), T1.3 / [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) |
+| Prompt bytes, tool XML, inline agent, automation execution, runtime messages, MAIN/content bridge, sandbox | [Prompt and Runtime](./prompt-and-runtime.md) and [Runtime Command Inventory](./runtime-command-inventory.md) | T1.2 / [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312), T1.3 / [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313), T2.6 / [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) |
 | Storage keys, IndexedDB identity, schemas, sync, export | [Persistence and Sync](./persistence-and-sync.md) | T1.4 / [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) |
 | PC Chrome, Edge, Firefox, DeepSeek, MCP, Native Host, Shell Host | [Platform and Integrations](./platform-and-integrations.md) | T1.5 / [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315); Android rows retired by [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) |
 

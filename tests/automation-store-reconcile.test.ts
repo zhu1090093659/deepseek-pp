@@ -77,7 +77,11 @@ describe('reconcileStaleRuns', () => {
     expect(run?.error).toMatchObject({
       code: 'automation_run_interrupted',
       phase: 'runner',
-      retryable: true,
+      retryable: false,
+      details: {
+        externalOutcome: 'ambiguous',
+        retrySafe: false,
+      },
     });
     expect(run?.completedAt).toBe(startedAt + thresholdMs);
   });
