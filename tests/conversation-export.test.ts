@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createDeepSeekConversationExportTransport,
+  fetchDeepSeekSessionHistory,
   listDeepSeekSessions,
 } from '../core/deepseek/conversation-export';
+import { DEEPSEEK_BODY_BUDGETS } from '../core/deepseek/contracts';
 import {
   buildConversationExportArtifactsCancellable,
   buildConversationExportArtifacts,
@@ -168,6 +170,28 @@ describe('DeepSeek conversation export adapter and service', () => {
     expect(sessions.map((session) => session.id)).toEqual(['session-alpha', 'session-beta']);
     expect(fetchImpl.calls.some((url) => url.includes('lte_cursor.updated_at=1760000000'))).toBe(true);
     expect(fetchImpl.calls.some((url) => url.includes('lte_cursor.pinned=false'))).toBe(true);
+  });
+
+  it('keeps large per-session history compatible with the export-specific body budget', async () => {
+    const largeText = 'x'.repeat(DEEPSEEK_BODY_BUDGETS.activeJson + 1);
+    const history = await fetchDeepSeekSessionHistory({
+      baseUrl: 'https://chat.deepseek.com',
+      clientHeaders: { Authorization: 'Bearer synthetic' },
+      fetchImpl: vi.fn(async () => jsonResponse({ data: { biz_data: { largeText } } })),
+      session: {
+        id: 'large-session',
+        title: 'Large session',
+        pinned: false,
+        titleType: null,
+        modelType: null,
+        createdAt: null,
+        updatedAt: null,
+      },
+      includeRaw: true,
+    });
+
+    expect((history as { data: { biz_data: { largeText: string } } }).data.biz_data.largeText)
+      .toHaveLength(largeText.length);
   });
 
   it('keeps official raw payloads only in raw mode', async () => {

@@ -173,19 +173,3 @@ export interface AutomationRunListOptions {
   automationId: AutomationId;
   limit?: number;
 }
-
-export interface AutomationBridgeRunMessage {
-  type: 'DPP_AUTOMATION_CONTENT_RUN';
-  payload: AutomationRunnerRequest;
-}
-
-export interface AutomationBridgeResultMessage {
-  type: 'DPP_AUTOMATION_WINDOW_RUN_RESULT';
-  payload: {
-    runId: AutomationRunId;
-    automationId: AutomationId;
-    result: AutomationRunnerResult;
-  };
-}
-
-export type AutomationBridgeMessage = AutomationBridgeRunMessage | AutomationBridgeResultMessage;

@@ -126,17 +126,23 @@ describe('DeepSeek external protocol contract', () => {
 
   it('passes official API cancellation through and fails explicitly on a missing stream body', async () => {
     const controller = new AbortController();
-    controller.abort();
+    const reason = new Error('cancelled');
     const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
-      expect(init?.signal).toBe(controller.signal);
-      throw new DOMException('cancelled', 'AbortError');
+      const signal = init?.signal;
+      expect(signal).toBe(controller.signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
     });
 
-    await expect(submitOfficialDeepSeekStreaming({
+    const pending = submitOfficialDeepSeekStreaming({
       apiKey: 'contract-key',
       messages: [{ role: 'user', content: 'cancel' }],
       fetchImpl,
-    }, {}, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    }, {}, controller.signal);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
 
     await expect(submitOfficialDeepSeekStreaming({
       apiKey: 'contract-key',

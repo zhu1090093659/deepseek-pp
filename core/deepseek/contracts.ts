@@ -21,6 +21,14 @@ export const DEEPSEEK_OFFICIAL_API_URL = 'https://api.deepseek.com/chat/completi
 export const DEEPSEEK_FILE_UPLOAD_PATH = DEEPSEEK_WEB_ROUTES.uploadFile;
 export const DEEPSEEK_FILE_FETCH_PATH = DEEPSEEK_WEB_ROUTES.fetchFiles;
 export const DEEPSEEK_BYPASS_HOOK_HEADER = 'X-DPP-Bypass-Hook';
+export const DEEPSEEK_BODY_BUDGETS = {
+  activeRequest: 4 * 1024 * 1024,
+  activeJson: 4 * 1024 * 1024,
+  activeCompletion: 4 * 1024 * 1024,
+  officialApi: 4 * 1024 * 1024,
+  // A per-session export can be much larger than one streaming turn, while still needing a hard memory bound.
+  conversationExport: 32 * 1024 * 1024,
+} as const;
 
 export function matchesReleasedDeepSeekRoute(url: string, path: string): boolean {
   return url.includes(path);

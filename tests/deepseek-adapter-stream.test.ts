@@ -67,6 +67,34 @@ describe('DeepSeek web adapter streaming', () => {
     expect(turn.assistantText).toBe('Hello world');
   });
 
+  it('cancels a stream after headers without emitting late callbacks', async () => {
+    const caller = new AbortController();
+    const reason = new Error('stop active completion');
+    const onTextChunk = vi.fn();
+    const onFinished = vi.fn();
+    const cancel = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(new ReadableStream({
+      pull() {
+        return new Promise<void>(() => undefined);
+      },
+      cancel,
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const completion = submitPromptStreaming(
+      createSubmitInput(),
+      { onTextChunk, onFinished },
+      caller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    caller.abort(reason);
+
+    await expect(completion).rejects.toBe(reason);
+    expect(cancel).toHaveBeenCalledWith(reason);
+    expect(onTextChunk).not.toHaveBeenCalled();
+    expect(onFinished).not.toHaveBeenCalled();
+  });
+
   it('emits token speed progress for bypass streaming requests', async () => {
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => now);

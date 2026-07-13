@@ -20,6 +20,17 @@ export const LEGAL_DEEPSEEK_ROUTE_FIXTURES = [
   { kind: 'history', url: 'https://chat.deepseek.com/api/v0/chat/history_messages?chat_session_id=one' },
 ] as const;
 
+export const DEEPSEEK_ACTIVE_ROUTE_METHOD_FIXTURES = [
+  { name: 'completion', path: '/api/v0/chat/completion', method: 'POST' },
+  { name: 'regenerate', path: '/api/v0/chat/regenerate', method: 'POST' },
+  { name: 'history', path: '/api/v0/chat/history_messages', method: 'GET' },
+  { name: 'powChallenge', path: '/api/v0/chat/create_pow_challenge', method: 'POST' },
+  { name: 'createSession', path: '/api/v0/chat_session/create', method: 'POST' },
+  { name: 'fetchSessions', path: '/api/v0/chat_session/fetch_page', method: 'GET' },
+  { name: 'uploadFile', path: '/api/v0/file/upload_file', method: 'POST' },
+  { name: 'fetchFiles', path: '/api/v0/file/fetch_files', method: 'GET' },
+] as const;
+
 export const DEEPSEEK_ROUTE_CURRENT_GAPS = [
   {
     name: 'stream matching accepts a different origin when the released path appears in the URL',
@@ -55,6 +66,18 @@ export const DEEPSEEK_REQUEST_BODY_FIXTURE = {
   action: 'continue',
   preempt: false,
   future_sibling: { preserve: true },
+} as const;
+
+export const DEEPSEEK_ACTIVE_COMPLETION_BODY_FIXTURE = {
+  chat_session_id: 'session-contract',
+  parent_message_id: 19,
+  model_type: 'expert',
+  prompt: 'Preserve the active request body.',
+  ref_file_ids: ['file-contract'],
+  thinking_enabled: true,
+  search_enabled: false,
+  action: null,
+  preempt: false,
 } as const;
 
 export const LEGAL_DEEPSEEK_SSE_FIXTURES = [

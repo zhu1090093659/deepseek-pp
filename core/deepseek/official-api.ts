@@ -3,8 +3,19 @@ import {
   normalizeOfficialApiChatConfig,
   type OfficialApiChatConfig,
 } from '../chat/official-api-config';
-import { parseSSEChunk, parseSSEData } from '../interceptor/sse-parser';
-import { DEEPSEEK_OFFICIAL_API_URL } from './contracts';
+import {
+  fetchWithNetworkPolicy,
+  readNetworkResponseText,
+} from '../network/request-policy';
+import {
+  createDeepSeekSseByteDecoder,
+  parseSSEData,
+  type SSEEvent,
+} from './stream-codec';
+import {
+  DEEPSEEK_BODY_BUDGETS,
+  DEEPSEEK_OFFICIAL_API_URL,
+} from './contracts';
 
 export { DEEPSEEK_OFFICIAL_API_URL } from './contracts';
 
@@ -46,8 +57,7 @@ export async function submitOfficialDeepSeekStreaming(
   callbacks: OfficialDeepSeekCallbacks,
   signal?: AbortSignal,
 ): Promise<OfficialDeepSeekTurn> {
-  const fetchImpl = input.fetchImpl ?? fetch;
-  const response = await fetchImpl(input.endpoint ?? DEEPSEEK_OFFICIAL_API_URL, {
+  const response = await fetchWithNetworkPolicy(input.endpoint ?? DEEPSEEK_OFFICIAL_API_URL, {
     method: 'POST',
     signal,
     headers: {
@@ -55,6 +65,12 @@ export async function submitOfficialDeepSeekStreaming(
       authorization: `Bearer ${input.apiKey}`,
     },
     body: JSON.stringify(createOfficialDeepSeekRequestBody(input)),
+  }, {
+    operation: 'DeepSeek official API completion',
+    phase: 'completion',
+    maxRequestBytes: DEEPSEEK_BODY_BUDGETS.officialApi,
+    maxResponseBytes: DEEPSEEK_BODY_BUDGETS.officialApi,
+    fetchImpl: input.fetchImpl,
   });
 
   if (!response.ok) {
@@ -92,37 +108,27 @@ async function readOfficialApiStream(
   callbacks: OfficialDeepSeekCallbacks,
 ): Promise<OfficialDeepSeekTurn> {
   const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+  const decoder = createDeepSeekSseByteDecoder();
   const turn: OfficialDeepSeekTurn = { assistantText: '', reasoningText: '', finished: false };
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const boundary = buffer.lastIndexOf('\n\n');
-    if (boundary === -1) continue;
-
-    const complete = buffer.slice(0, boundary + 2);
-    buffer = buffer.slice(boundary + 2);
-    consumeOfficialApiSse(complete, turn, callbacks);
+    consumeOfficialApiSse(decoder.push(value), turn, callbacks);
   }
 
-  if (buffer.trim()) {
-    consumeOfficialApiSse(buffer, turn, callbacks);
-  }
+  consumeOfficialApiSse(decoder.finish(), turn, callbacks);
 
   callbacks.onFinished?.();
   return turn;
 }
 
 function consumeOfficialApiSse(
-  text: string,
+  events: readonly SSEEvent[],
   turn: OfficialDeepSeekTurn,
   callbacks: OfficialDeepSeekCallbacks,
 ) {
-  const events = parseSSEChunk(text);
   for (const event of events) {
     if (event.data === '[DONE]') {
       turn.finished = true;
@@ -192,7 +198,7 @@ function isOfficialApiFinished(parsed: unknown): boolean {
 }
 
 async function readOfficialApiFailure(response: Response): Promise<string> {
-  const text = await response.text().catch(() => '');
+  const text = await readNetworkResponseText(response, 'DeepSeek official API completion');
   if (!text) return `DeepSeek official API failed with HTTP ${response.status}.`;
 
   try {

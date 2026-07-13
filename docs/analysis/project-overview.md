@@ -173,7 +173,7 @@ flowchart LR
 
 | Integration | Main Boundary |
 |:--|:--|
-| DeepSeek Web chat/history/upload/PoW | `core/deepseek/adapter.ts`, `core/deepseek/pow.ts` |
+| DeepSeek Web chat/history/upload/PoW | `core/deepseek/active-client.ts`, `core/deepseek/request-codec.ts`, `core/deepseek/stream-codec.ts`, `core/network/request-policy.ts`, `core/deepseek/pow.ts` |
 | DeepSeek Official API | `core/deepseek/official-api.ts` |
 | DeepSeek page interception | `core/interceptor/` |
 | Bing web search | `core/tool/web-search.ts` |

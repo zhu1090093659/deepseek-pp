@@ -4,7 +4,16 @@ import {
   createAutomationExecutionContext,
 } from '../core/automation/execution';
 import type { AutomationRunnerRequest } from '../core/automation/types';
+import {
+  createDeepSeekAutomationClient,
+  DeepSeekPayloadError,
+  DeepSeekPowError,
+} from '../core/deepseek/active-client';
+import type { DeepSeekAutomationClient } from '../core/deepseek/automation-client-port';
+import { DEEPSEEK_BODY_BUDGETS } from '../core/deepseek/contracts';
+import { NetworkPolicyError } from '../core/network/request-policy';
 import type { ToolDescriptor, ToolResult } from '../core/types';
+import { runDeepSeekAutomation, type AutomationRunnerOptions } from '../core/automation/runner';
 
 const adapterMocks = vi.hoisted(() => ({
   createChatSession: vi.fn(),
@@ -13,36 +22,22 @@ const adapterMocks = vi.hoisted(() => ({
   submitPrompt: vi.fn(),
 }));
 
-vi.mock('../core/deepseek/adapter', () => {
-  class DeepSeekAuthError extends Error {}
-  class DeepSeekPowError extends Error {}
-  class DeepSeekSessionError extends Error {}
-  class DeepSeekPayloadError extends Error {
-    readonly retryable: boolean;
+const deepSeekClient: DeepSeekAutomationClient = {
+  createClientHeaders: () => ({ Authorization: 'Bearer test-token' }),
+  createChatSession: adapterMocks.createChatSession,
+  createPowHeaders: adapterMocks.createPowHeaders,
+  submitPrompt: adapterMocks.submitPrompt,
+  readHistorySnapshot: adapterMocks.readHistorySnapshot,
+  normalizeMessageId: (value: unknown) => typeof value === 'number' ? value : null,
+  buildSessionUrl: (id: string) => `https://chat.deepseek.com/a/chat/s/${id}`,
+};
 
-    constructor(message: string, options?: { retryable?: boolean }) {
-      super(message);
-      this.retryable = options?.retryable ?? false;
-    }
-  }
-
-  return {
-    DeepSeekAuthError,
-    DeepSeekPowError,
-    DeepSeekSessionError,
-    DeepSeekPayloadError,
-    buildDeepSeekSessionUrl: (id: string) => `https://chat.deepseek.com/a/chat/s/${id}`,
-    createChatSession: adapterMocks.createChatSession,
-    createClientHeaders: () => ({ Authorization: 'Bearer test-token' }),
-    createPowHeaders: adapterMocks.createPowHeaders,
-    normalizeMessageId: (value: unknown) => typeof value === 'number' ? value : null,
-    readHistorySnapshot: adapterMocks.readHistorySnapshot,
-    submitPrompt: adapterMocks.submitPrompt,
-  };
-});
-
-const { runDeepSeekAutomation } = await import('../core/automation/runner');
-const { DeepSeekPayloadError, DeepSeekPowError } = await import('../core/deepseek/adapter');
+function runAutomation(
+  request: AutomationRunnerRequest,
+  options: Omit<AutomationRunnerOptions, 'deepSeekClient'> = {},
+) {
+  return runDeepSeekAutomation(request, { ...options, deepSeekClient });
+}
 
 const MCP_ECHO_DESCRIPTOR: ToolDescriptor = {
   id: 'mcp:mock:echo',
@@ -73,16 +68,19 @@ describe('automation runner execution context', () => {
     const controller = new AbortController();
     const execution = createExecution(controller);
 
-    const result = await runDeepSeekAutomation(createRequest({ chatSessionId: null }), {
+    const result = await runAutomation(createRequest({ chatSessionId: null }), {
       execution,
       executeToolCall: vi.fn(),
     });
 
     expect(result.ok).toBe(true);
-    expect(adapterMocks.createChatSession.mock.calls[0][1]).toBe(controller.signal);
-    expect(adapterMocks.createPowHeaders.mock.calls[0][2]).toBe(controller.signal);
-    expect(adapterMocks.submitPrompt.mock.calls[0][1]).toBe(controller.signal);
-    expect(adapterMocks.readHistorySnapshot.mock.calls[0][3]).toBe(controller.signal);
+    expect(adapterMocks.createChatSession.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    expect(adapterMocks.createPowHeaders.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    expect(adapterMocks.submitPrompt.mock.calls[0][1]).toEqual({
+      signal: controller.signal,
+      onDispatch: expect.any(Function),
+    });
+    expect(adapterMocks.readHistorySnapshot.mock.calls[0][3]).toEqual({ signal: controller.signal });
   });
 
   it('stops between tool calls and never submits a continuation after cancellation', async () => {
@@ -98,7 +96,7 @@ describe('automation runner execution context', () => {
       return { ok: true, summary: 'executed once' };
     });
 
-    await expect(runDeepSeekAutomation(createRequest(), {
+    await expect(runAutomation(createRequest(), {
       execution,
       executeToolCall,
     })).rejects.toMatchObject({ kind: 'cancelled' });
@@ -119,14 +117,17 @@ describe('automation runner execution context', () => {
       throw new DOMException('Aborted', 'AbortError');
     });
 
-    await expect(runDeepSeekAutomation(createRequest(), { execution }))
+    await expect(runAutomation(createRequest(), { execution }))
       .rejects.toMatchObject({ kind: 'timeout' });
   });
 
   it('marks a post-dispatch completion failure ambiguous and non-retryable', async () => {
-    adapterMocks.submitPrompt.mockRejectedValue(new DeepSeekPayloadError('response lost', { retryable: true }));
+    adapterMocks.submitPrompt.mockImplementation(async (_input, context) => {
+      context.onDispatch?.();
+      throw new DeepSeekPayloadError('response lost', { retryable: true });
+    });
 
-    const result = await runDeepSeekAutomation(createRequest());
+    const result = await runAutomation(createRequest());
 
     expect(result).toMatchObject({
       ok: false,
@@ -137,10 +138,102 @@ describe('automation runner execution context', () => {
     });
   });
 
+  it('keeps a post-dispatch network policy failure ambiguous and non-retryable', async () => {
+    adapterMocks.submitPrompt.mockImplementation(async (_input, context) => {
+      context.onDispatch?.();
+      throw new NetworkPolicyError(
+        'network_response_too_large',
+        'DeepSeek completion',
+        'completion response exceeded its body budget',
+        { retryable: false, phase: 'completion' },
+      );
+    });
+
+    const result = await runAutomation(createRequest());
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'deepseek_network_response_too_large',
+        phase: 'completion',
+        retryable: false,
+        details: { externalOutcome: 'ambiguous', retrySafe: false },
+      },
+    });
+  });
+
+  it('keeps a request-budget rejection pre-dispatch and retry-safe metadata truthful', async () => {
+    adapterMocks.submitPrompt.mockRejectedValue(new NetworkPolicyError(
+      'network_request_too_large',
+      'DeepSeek completion',
+      'completion request exceeded its body budget',
+      { retryable: false, phase: 'completion' },
+    ));
+
+    await expect(runAutomation(createRequest())).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'deepseek_network_request_too_large',
+        phase: 'completion',
+        retryable: false,
+        details: { externalOutcome: 'not_started', retrySafe: false },
+      },
+    });
+  });
+
+  it('preserves the semantic phase for session and PoW network failures', async () => {
+    adapterMocks.createChatSession.mockRejectedValueOnce(new NetworkPolicyError(
+      'network_request_failed',
+      'DeepSeek chat session create',
+      'session request failed',
+      { phase: 'session' },
+    ));
+
+    await expect(runAutomation(createRequest({ chatSessionId: null }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'deepseek_network_request_failed', phase: 'session' },
+    });
+
+    adapterMocks.createPowHeaders.mockRejectedValueOnce(new NetworkPolicyError(
+      'network_deadline_exceeded',
+      'DeepSeek PoW challenge',
+      'pow deadline exceeded',
+      { retryable: false, phase: 'pow' },
+    ));
+
+    await expect(runAutomation(createRequest())).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'deepseek_network_deadline_exceeded', phase: 'pow' },
+    });
+  });
+
+  it('does not retry an oversized PoW response from the production active client', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(
+      'x'.repeat(DEEPSEEK_BODY_BUDGETS.activeJson + 1),
+    ));
+    const realClient = createDeepSeekAutomationClient({ fetchImpl });
+
+    const result = await runDeepSeekAutomation(createRequest(), {
+      deepSeekClient: realClient,
+      clientHeaders: { Authorization: 'Bearer test-token' },
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'deepseek_network_response_too_large',
+        phase: 'pow',
+        retryable: false,
+        details: { externalOutcome: 'not_started', retrySafe: false },
+      },
+    });
+  });
+
   it('allows only a pre-dispatch PoW failure to request a safe retry', async () => {
     adapterMocks.createPowHeaders.mockRejectedValue(new DeepSeekPowError('pow unavailable'));
 
-    const result = await runDeepSeekAutomation(createRequest());
+    const result = await runAutomation(createRequest());
 
     expect(result).toMatchObject({
       ok: false,
@@ -154,10 +247,13 @@ describe('automation runner execution context', () => {
   });
 
   it('terminates instead of asking the model to repeat an ambiguously completed tool call', async () => {
-    adapterMocks.submitPrompt.mockResolvedValue(modelTurn(
-      '<mcp_mock_echo>{"text":"once"}</mcp_mock_echo>',
-      101,
-    ));
+    adapterMocks.submitPrompt.mockImplementation(async (_input, context) => {
+      context.onDispatch?.();
+      return modelTurn(
+        '<mcp_mock_echo>{"text":"once"}</mcp_mock_echo>',
+        101,
+      );
+    });
     const executeToolCall = vi.fn(async (): Promise<ToolResult> => ({
       ok: false,
       summary: 'response lost',
@@ -169,7 +265,7 @@ describe('automation runner execution context', () => {
       },
     }));
 
-    const result = await runDeepSeekAutomation(createRequest(), { executeToolCall });
+    const result = await runAutomation(createRequest(), { executeToolCall });
 
     expect(result).toMatchObject({
       ok: false,
@@ -201,7 +297,7 @@ describe('automation runner execution context', () => {
       },
     }));
 
-    const result = await runDeepSeekAutomation(createRequest(), { executeToolCall });
+    const result = await runAutomation(createRequest(), { executeToolCall });
 
     expect(result.ok).toBe(true);
     expect(executeToolCall).toHaveBeenCalledTimes(1);

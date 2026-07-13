@@ -55,7 +55,7 @@
 | T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | closed |
 | T3.1–T6.3 (old) | [#322](https://github.com/zhu1090093659/deepseek-pp/issues/322) through #336 | Original remaining decomposition | closed; `superseded-by-replan`, each Issue links replacements |
 | R3.1 | [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351) | Create typed handler seam and migrate the two bootstrap commands | closed |
-| R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | open |
+| R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | closed |
 | R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | open |
 | R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | open |
 | R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (1/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (2/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.2 / [Issue #352](https://github.com/zhu1090093659/deepseek-pp/issues/352) — tool contracts and local/MCP/browser provider registry.
+**Active Task**: R3.3 / [Issue #353](https://github.com/zhu1090093659/deepseek-pp/issues/353) — active DeepSeek protocol and network-policy core.
 
-**Execution Branch**: `codex/352-tool-provider-registry` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/352-tool-provider-registry`, based on `origin/main@16eec9a`.
+**Execution Branch**: `codex/353-deepseek-protocol-core` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/353-deepseek-protocol-core`, based on `origin/main@e8c83a8`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `16eec9a` after R3.1. The baseline passes 98 test files / 726 tests, full PC quality/package checks, and R3.1 hosted validation through PR #382. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `e8c83a8` after R3.2. The baseline passes 102 test files / 764 tests, full PC quality/package checks, and R3.2 hosted validation through PR #383. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -236,13 +236,22 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Local validation passes the targeted 7-file / 61-test slice, TypeScript compile, and the 60-second full suite at 98 files / 726 tests with no orphan Vitest process. Prompt freeze, production audit, workflow/i18n/automation checks, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification also pass; builds emit only the existing Pyodide `node:*` externalization warnings.
 - PR #382 merged at `16eec9a0dbea007a5b273ee65d450eafe7ebe659`; Issue #351 closed after telemetry and Milestone #45 advanced to 1/10 completed with zero cumulative drift.
 
-**R3.2 Evidence (implementation ready for hosted validation)**:
+**R3.2 Evidence (closed)**:
 
 - Added one ordered production provider registry for Memory, Web, Artifact, Skill Creator, Memory Import, Browser Control, and MCP. Descriptor ownership, duplicate IDs/invocation names, exact local `in_process` transport, optional provider refresh, and provider-before-name execution routing are enforced in that authority; Background only composes it.
 - Replaced permissive MCP storage normalization with a pure strict v1 codec. Released transports, secrets, allowlists, legacy cache collisions, and additive top-level fields survive legal reads/mutations; future/corrupt versions, duplicate/orphan identities, and unknown transports fail visibly before storage mutation, permission, UUID, notification, or provider/network action.
 - Externalized payload parse errors now complete authorization/history without provider I/O. Content descriptor sync uses strict records and disables the catalog on initial, locale, broadcast, or refresh failure instead of retaining default tools. Unsupported MCP protocol versions fail before `notifications/initialized`; missing versions preserve the released fallback.
 - Import-graph/SCC and AST composition checks prove that runtime/registry contracts do not import concrete providers and only the Background composition root constructs the registry. Prompt/XML ordering, grants, idempotency, history, visible results, and PC-only browser behavior remain frozen.
 - Final local validation passes the targeted 11-file / 146-test contract slice and the 60-second full suite at 102 files / 764 tests with no orphan Vitest/Vite process. TypeScript compile, seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds, 84-file UTF-8 policy, manifest policy, and `git diff --check` pass; builds emit only the existing Pyodide `node:*` externalization warnings.
+- Hosted quality and corrected contribution-evidence runs `29284787858` / `29284904063` passed. PR #383 squash-merged at `e8c83a81bd7ac6f1b8b01863f328baba324cd152`; Issue #352 closed after telemetry and Milestone #45 advanced to 2/10 completed with cumulative drift score 1.
+
+**R3.3 Evidence (implementation ready for hosted validation)**:
+
+- Added one pure active route/request codec for all eight released Web paths, exact origin/path/method policy, frozen session/PoW/completion/history request bytes, model aliases, bypass header, and no DeepSeek idempotency field/header. Active automation, upload/file metadata, and conversation export session/history/file requests now consume this route authority; the passive substring matcher remains an explicit R3.4 gap.
+- Moved the SSE implementation authority and token-speed metrics below `core/deepseek`; active Web and Official API clients share one incremental UTF-8 decoder/reducer, while passive interceptor imports are temporary compatibility re-exports for R3.4. Released text, fragment, batch, usage, message-id, and FINISHED shapes remain frozen; malformed JSON remains the R5.1 gap.
+- Added one injected network policy used by active Web, Official API, and export requests. Scheduler-owned automation uses only its existing execution `AbortSignal`, while standalone client calls may supply an absolute deadline; the policy does not duplicate the automation timer or release the Phase 2 lease early, preserves caller abort reasons, waits for non-cooperative fetch and stream cancellation settlement, and cancels late bodies. Active Web and Official API requests use 4 MiB UTF-8 budgets; per-session conversation export has a separate 32 MiB response budget, and image input retains its separate 8 MiB contract.
+- `runDeepSeekAutomation` now consumes a required narrow `DeepSeekAutomationClient` port instead of the 900-line compatibility adapter; the Background composition root injects the concrete client and tests inject the port rather than mocking a whole concrete module. Session/PoW/completion/history propagation, fresh-PoW continuation, stable tool idempotency, pre-dispatch safe retry, post-dispatch ambiguous failure, and history cancellation behavior remain green. Completion dispatch is marked only after body/deadline preflight and immediately before `fetch`, so rejected oversized requests remain `not_started`. The retired, unused content/window automation bridge constants, guards, and types were deleted.
+- Targeted validation passes 10 files / 61 tests; TypeScript compile and the 60-second full suite pass at 105 files / 783 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, 84-file UTF-8 policy, manifest policy, and release-asset verification. New evidence covers exact routes/methods/headers/raw bodies, model aliases, split UTF-8 SSE, message IDs/usage, operation-specific budget boundaries, large per-session export compatibility, response-header and deferred stream cancellation, non-cooperative late fetch cleanup, semantic network phases, real Official API signal propagation, truthful pre/post-dispatch outcomes, and a production-client oversized PoW response that preserves its non-retryable policy error.
 
 ## Governance Status
 
@@ -266,9 +275,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete hosted validation and merge R3.2 / Issue #352.
-2. Record R3.2 telemetry against Phase 3 Milestone state and enforce its adaptive thresholds.
-3. Start the next dependency-ready Phase 3 slice from the resulting main.
+1. Complete local quality/package and hosted validation for R3.3 / Issue #353.
+2. Record R3.3 telemetry against Phase 3 Milestone state and enforce its adaptive thresholds.
+3. Merge R3.3, close Issue #353, and start R3.4 from the resulting main.
 
 ## Session Log
 
@@ -317,3 +326,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | R3.1 closure | PR #382 merged at `16eec9a`, Issue #351 closed after telemetry, and Milestone #45 advanced to 1/10 completed with zero cumulative drift. |
 | 2026-07-13 | R3.2 execution start | Opened isolated branch `codex/352-tool-provider-registry` from `16eec9a`; audited tool runtime/provider composition, authorization, externalized payload, MCP persistence/protocol/transport, Content sync, and import-cycle boundaries. |
 | 2026-07-13 | R3.2 implementation | Added the sole ordered provider registry and strict MCP v1 codec, removed name-based and permissive fallback paths, closed unsupported transport/protocol behavior, preserved legal v1/cache/additive data, and passed targeted/full tests plus the PC Chrome/Edge/Firefox quality matrix. |
+| 2026-07-13 | R3.2 closure | PR #383 passed hosted quality/contribution gates and squash-merged at `e8c83a8`; Issue #352 closed after telemetry and Milestone #45 advanced to 2/10 with cumulative drift score 1. |
+| 2026-07-13 | R3.3 execution start | Opened isolated branch `codex/353-deepseek-protocol-core` from `e8c83a8`; audited active automation, Web/Official/export requests, route/body/SSE ownership, deadlines, byte budgets, late effects, and R3.4 passive boundaries. |
+| 2026-07-13 | R3.3 implementation | Added pure request/SSE codecs, an injected Active Client port and one deadline/body policy; removed duplicate completion readers/requests and retired automation bridge code; passed targeted/full cancellation, late-response, compatibility, and import-boundary tests. |

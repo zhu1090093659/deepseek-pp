@@ -243,6 +243,7 @@ import {
   loadClientHeadersFromStorage,
   uploadDeepSeekFile,
 } from '../core/deepseek/adapter';
+import { createDeepSeekAutomationClient } from '../core/deepseek/active-client';
 import {
   submitOfficialDeepSeekStreaming,
   type OfficialDeepSeekMessage,
@@ -290,6 +291,7 @@ const DEEPSEEK_TAB_URL_PATTERN = '*://chat.deepseek.com/*';
 const REFRESH_AUTH_MESSAGE = { type: 'REFRESH_DEEPSEEK_AUTH' } as const;
 const AUTOMATION_AUTH_TOKEN_MISSING_MESSAGE =
   'DeepSeek login token is missing. Refresh chat.deepseek.com or sign in again, then retry the automation.';
+const deepSeekAutomationClient = createDeepSeekAutomationClient();
 let chatSessionId: string | null = null;
 let chatParentMessageId: number | null = null;
 let officialApiChatMessages: OfficialDeepSeekMessage[] = [];
@@ -2245,6 +2247,7 @@ async function executeAutomationWithContext(
       toolDescriptors: enabledDescriptors,
     },
   }, {
+    deepSeekClient: deepSeekAutomationClient,
     executeToolCall: (call, toolExecution) => executeBackgroundRuntimeToolCall(
       call,
       'automation',

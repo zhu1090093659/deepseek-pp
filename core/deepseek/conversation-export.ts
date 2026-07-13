@@ -1,13 +1,19 @@
-import { DEEPSEEK_API_URL } from '../constants';
-import { DEEPSEEK_WEB_ROUTES } from './contracts';
-import { BYPASS_HOOK_HEADER } from './adapter';
+import {
+  DEEPSEEK_BYPASS_HOOK_HEADER,
+  DEEPSEEK_BODY_BUDGETS,
+  DEEPSEEK_WEB_ROUTES,
+} from './contracts';
+import { encodeDeepSeekRouteRequest } from './request-codec';
+import {
+  fetchWithNetworkPolicy,
+  readNetworkResponseText,
+} from '../network/request-policy';
 import {
   extractBizData,
   normalizeDeepSeekSessionSummary,
   type DeepSeekSessionSummary,
 } from '../export/normalize';
 
-const DEFAULT_BASE_URL = new URL(DEEPSEEK_API_URL).origin;
 const SESSION_FETCH_PATH = DEEPSEEK_WEB_ROUTES.fetchSessions;
 const HISTORY_PATH = DEEPSEEK_WEB_ROUTES.history;
 const FILE_FETCH_PATH = DEEPSEEK_WEB_ROUTES.fetchFiles;
@@ -101,11 +107,10 @@ export async function fetchDeepSeekSessionHistory(input: DeepSeekConversationExp
   includeRaw: boolean;
   signal?: AbortSignal;
 }): Promise<unknown> {
-  const url = createApiUrl(input.baseUrl, HISTORY_PATH);
-  url.searchParams.set('chat_session_id', input.session.id);
   return fetchDeepSeekJson({
-    url,
-    endpoint: HISTORY_PATH,
+    route: 'history',
+    baseUrl: input.baseUrl,
+    searchParams: { chat_session_id: input.session.id },
     clientHeaders: input.clientHeaders,
     fetchImpl: input.fetchImpl,
     signal: input.signal,
@@ -118,11 +123,10 @@ export async function fetchDeepSeekFileMetadata(input: DeepSeekConversationExpor
   signal?: AbortSignal;
 }): Promise<unknown[]> {
   if (input.fileIds.length === 0) return [];
-  const url = createApiUrl(input.baseUrl, FILE_FETCH_PATH);
-  url.searchParams.set('file_ids', input.fileIds.join(','));
   const json = await fetchDeepSeekJson({
-    url,
-    endpoint: FILE_FETCH_PATH,
+    route: 'fetchFiles',
+    baseUrl: input.baseUrl,
+    searchParams: { file_ids: input.fileIds.join(',') },
     clientHeaders: input.clientHeaders,
     fetchImpl: input.fetchImpl,
     signal: input.signal,
@@ -141,16 +145,16 @@ async function fetchDeepSeekSessionPage(input: DeepSeekConversationExportTranspo
   includeRaw: boolean;
   signal?: AbortSignal;
 }): Promise<DeepSeekSessionPage> {
-  const url = createApiUrl(input.baseUrl, SESSION_FETCH_PATH);
-  url.searchParams.set('count', String(input.count));
+  const searchParams: Record<string, string> = { count: String(input.count) };
   if (input.cursor) {
-    if (input.cursor.updatedAt !== null) url.searchParams.set('lte_cursor.updated_at', String(input.cursor.updatedAt));
-    url.searchParams.set('lte_cursor.pinned', String(input.cursor.pinned));
+    if (input.cursor.updatedAt !== null) searchParams['lte_cursor.updated_at'] = String(input.cursor.updatedAt);
+    searchParams['lte_cursor.pinned'] = String(input.cursor.pinned);
   }
 
   const json = await fetchDeepSeekJson({
-    url,
-    endpoint: SESSION_FETCH_PATH,
+    route: 'fetchSessions',
+    baseUrl: input.baseUrl,
+    searchParams,
     clientHeaders: input.clientHeaders,
     fetchImpl: input.fetchImpl,
     signal: input.signal,
@@ -183,32 +187,42 @@ async function fetchDeepSeekSessionPage(input: DeepSeekConversationExportTranspo
 }
 
 async function fetchDeepSeekJson(input: {
-  url: URL;
-  endpoint: string;
+  route: 'history' | 'fetchFiles' | 'fetchSessions';
+  baseUrl?: string;
+  searchParams: Readonly<Record<string, string>>;
   clientHeaders: Record<string, string>;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<unknown> {
-  const fetcher = input.fetchImpl ?? fetch;
-  const response = await fetcher(input.url.href, {
-    method: 'GET',
+  const endpoint = DEEPSEEK_WEB_ROUTES[input.route];
+  const operation = `DeepSeek export ${endpoint}`;
+  const request = encodeDeepSeekRouteRequest(input.route, {
     credentials: 'include',
     signal: input.signal,
     headers: {
       accept: 'application/json',
-      [BYPASS_HOOK_HEADER]: '1',
+      [DEEPSEEK_BYPASS_HOOK_HEADER]: '1',
       ...input.clientHeaders,
     },
+  }, {
+    baseUrl: input.baseUrl,
+    searchParams: input.searchParams,
   });
-  const text = await response.text();
-  const json = parseJson(text, input.endpoint, response.status);
+  const response = await fetchWithNetworkPolicy(request.url, request.init, {
+    operation,
+    phase: 'export',
+    maxResponseBytes: DEEPSEEK_BODY_BUDGETS.conversationExport,
+    fetchImpl: input.fetchImpl,
+  });
+  const text = await readNetworkResponseText(response, operation);
+  const json = parseJson(text, endpoint, response.status);
   const bizCode = readBizCode(json);
 
   if (!response.ok || (bizCode !== null && bizCode !== 0)) {
     throw new DeepSeekExportEndpointError(
-      `DeepSeek export endpoint ${input.endpoint} failed with HTTP ${response.status}${bizCode === null ? '' : `, biz_code ${bizCode}`}.`,
+      `DeepSeek export endpoint ${endpoint} failed with HTTP ${response.status}${bizCode === null ? '' : `, biz_code ${bizCode}`}.`,
       {
-        endpoint: input.endpoint,
+        endpoint,
         status: response.status,
         bizCode,
         retryable: response.status >= 500,
@@ -218,10 +232,6 @@ async function fetchDeepSeekJson(input: {
   }
 
   return json;
-}
-
-function createApiUrl(baseUrl: string | undefined, path: string): URL {
-  return new URL(path, baseUrl ?? DEFAULT_BASE_URL);
 }
 
 function parseJson(text: string, endpoint: string, status: number): unknown {

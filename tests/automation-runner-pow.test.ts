@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { runDeepSeekAutomation } from '../core/automation/runner';
 import type { AutomationRunnerRequest } from '../core/automation/types';
+import type { DeepSeekAutomationClient } from '../core/deepseek/automation-client-port';
 import type { ToolDescriptor, ToolResult } from '../core/types';
 
 const adapterMocks = vi.hoisted(() => ({
@@ -9,42 +11,22 @@ const adapterMocks = vi.hoisted(() => ({
   submitPrompt: vi.fn(),
 }));
 
-vi.mock('../core/deepseek/adapter', () => {
-  class DeepSeekAuthError extends Error {}
-  class DeepSeekPowError extends Error {}
-  class DeepSeekSessionError extends Error {}
-  class DeepSeekPayloadError extends Error {
-    readonly retryable: boolean;
-
-    constructor(message: string, options?: { retryable?: boolean }) {
-      super(message);
-      this.retryable = options?.retryable ?? false;
+const deepSeekClient: DeepSeekAutomationClient = {
+  createClientHeaders: () => ({ Authorization: 'Bearer test-token' }),
+  createChatSession: adapterMocks.createChatSession,
+  createPowHeaders: adapterMocks.createPowHeaders,
+  submitPrompt: adapterMocks.submitPrompt,
+  readHistorySnapshot: adapterMocks.readHistorySnapshot,
+  normalizeMessageId: (value: unknown) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
     }
-  }
-
-  return {
-    DeepSeekAuthError,
-    DeepSeekPowError,
-    DeepSeekSessionError,
-    DeepSeekPayloadError,
-    buildDeepSeekSessionUrl: (chatSessionId: string) => `https://chat.deepseek.com/a/chat/s/${chatSessionId}`,
-    createChatSession: adapterMocks.createChatSession,
-    createClientHeaders: () => ({ Authorization: 'Bearer test-token' }),
-    createPowHeaders: adapterMocks.createPowHeaders,
-    normalizeMessageId: (value: unknown) => {
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      if (typeof value === 'string' && value.trim()) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-      }
-      return null;
-    },
-    readHistorySnapshot: adapterMocks.readHistorySnapshot,
-    submitPrompt: adapterMocks.submitPrompt,
-  };
-});
-
-const { runDeepSeekAutomation } = await import('../core/automation/runner');
+    return null;
+  },
+  buildSessionUrl: (chatSessionId: string) => `https://chat.deepseek.com/a/chat/s/${chatSessionId}`,
+};
 
 const MCP_ECHO_DESCRIPTOR: ToolDescriptor = {
   id: 'mcp:mock:echo',
@@ -105,7 +87,7 @@ describe('runDeepSeekAutomation PoW handling', () => {
       output: { echoed: 'first' },
     }));
 
-    const result = await runDeepSeekAutomation(createRequest(), { executeToolCall });
+    const result = await runDeepSeekAutomation(createRequest(), { executeToolCall, deepSeekClient });
 
     expect(result.ok).toBe(true);
     expect(executeToolCall).toHaveBeenCalledTimes(1);

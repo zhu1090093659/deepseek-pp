@@ -1,23 +1,21 @@
+import type {
+  DeepSeekAutomationClient,
+  DeepSeekRequestContext,
+  ModelTurn,
+} from '../deepseek/automation-client-port';
 import {
   DeepSeekAuthError,
   DeepSeekPayloadError,
   DeepSeekPowError,
   DeepSeekSessionError,
-  buildDeepSeekSessionUrl,
-  createChatSession,
-  createClientHeaders,
-  createPowHeaders,
-  normalizeMessageId,
-  readHistorySnapshot,
-  submitPrompt,
-  type ModelTurn,
-} from '../deepseek/adapter';
+} from '../deepseek/errors';
 import { extractToolCalls } from '../interceptor/tool-parser';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { buildPromptAugmentation } from '../prompt';
 import { DEFAULT_TOOL_DESCRIPTORS } from '../tool';
 import { clampText, createToolExecutionRecord, runToolContinuationLoop } from '../tool-loop/engine';
 import type { ToolCall, ToolExecutionRecord, ToolResult } from '../types';
+import { NetworkPolicyError } from '../network/request-policy';
 import { createAutomationRunnerFailure } from './messages';
 import {
   AutomationExecutionStoppedError,
@@ -27,6 +25,7 @@ import type {
   AutomationRunnerRequest,
   AutomationRunnerResult,
   AutomationRunnerSuccess,
+  AutomationFailurePhase,
 } from './types';
 
 const AUTOMATION_MCP_CONTINUATION_LIMIT = 3;
@@ -41,6 +40,7 @@ class AutomationToolOutcomeAmbiguousError extends Error {
 }
 
 export interface AutomationRunnerOptions {
+  deepSeekClient: DeepSeekAutomationClient;
   executeToolCall?: (
     call: ToolCall,
     execution: { signal?: AbortSignal; idempotencyKey: string },
@@ -51,21 +51,27 @@ export interface AutomationRunnerOptions {
 
 export async function runDeepSeekAutomation(
   request: AutomationRunnerRequest,
-  options?: AutomationRunnerOptions,
+  options: AutomationRunnerOptions,
 ): Promise<AutomationRunnerResult> {
   let chatSessionId = request.chatSessionId;
   let parentMessageId: number | null = null;
   const locale = request.locale ?? DEFAULT_LOCALE;
   let externalOutcome: 'not_started' | 'ambiguous' = 'not_started';
+  const { deepSeekClient } = options;
+  const requestContext: DeepSeekRequestContext = options.execution
+    ? { signal: options.execution.signal }
+    : { deadlineAt: request.deadlineAt };
 
   try {
-    options?.execution?.assertActive();
-    parentMessageId = normalizeMessageId(request.parentMessageId, 'parent_message_id');
-    const clientHeaders = options?.clientHeaders ?? createClientHeaders({ missingTokenMessage: AUTOMATION_MISSING_TOKEN_MESSAGE });
+    options.execution?.assertActive();
+    parentMessageId = deepSeekClient.normalizeMessageId(request.parentMessageId, 'parent_message_id');
+    const clientHeaders = options.clientHeaders ?? deepSeekClient.createClientHeaders({
+      missingTokenMessage: AUTOMATION_MISSING_TOKEN_MESSAGE,
+    });
     if (chatSessionId === null) {
       externalOutcome = 'ambiguous';
-      chatSessionId = await createChatSession(clientHeaders, options?.execution?.signal);
-      options?.execution?.assertActive();
+      chatSessionId = await deepSeekClient.createChatSession(clientHeaders, requestContext);
+      options.execution?.assertActive();
     }
     const { augmented: prompt } = buildPromptAugmentation(request.prompt, {
       memories: request.promptContext?.memories ?? [],
@@ -81,10 +87,12 @@ export async function runDeepSeekAutomation(
       parentMessageId,
       prompt,
       clientHeaders,
-      options?.execution,
+      options.execution,
+      deepSeekClient,
+      requestContext,
       () => { externalOutcome = 'ambiguous'; },
     );
-    options?.execution?.assertActive();
+    options.execution?.assertActive();
     const assistantMessageId = stream.responseMessageId;
     if (assistantMessageId === null) {
       return createAutomationRunnerFailure(
@@ -106,9 +114,11 @@ export async function runDeepSeekAutomation(
       stream.assistantText,
       clientHeaders,
       locale,
+      deepSeekClient,
+      requestContext,
     );
     stream = toolLoop.stream;
-    options?.execution?.assertActive();
+    options.execution?.assertActive();
 
     const completedAt = Date.now();
     const finalAssistantMessageId = stream.responseMessageId ?? assistantMessageId;
@@ -116,14 +126,16 @@ export async function runDeepSeekAutomation(
       chatSessionId,
       finalAssistantMessageId,
       clientHeaders,
-      options?.execution,
+      options.execution,
+      deepSeekClient,
+      requestContext,
     );
-    options?.execution?.assertActive();
+    options.execution?.assertActive();
     const nextParentMessageId = history?.parentMessageId ?? finalAssistantMessageId;
     const result: AutomationRunnerSuccess = {
       ok: true,
       chatSessionId,
-      sessionUrl: buildDeepSeekSessionUrl(chatSessionId),
+      sessionUrl: deepSeekClient.buildSessionUrl(chatSessionId),
       parentMessageId: nextParentMessageId,
       assistantMessageId: history?.assistantMessageId ?? finalAssistantMessageId,
       assistantText: stream.assistantText,
@@ -133,15 +145,21 @@ export async function runDeepSeekAutomation(
     };
     return result;
   } catch (err) {
-    if (options?.execution?.signal.aborted) options.execution.assertActive();
+    if (options.execution?.signal.aborted) options.execution.assertActive();
     if (err instanceof AutomationExecutionStoppedError) throw err;
     const isAuthError = err instanceof DeepSeekAuthError;
     const isPowError = err instanceof DeepSeekPowError;
     const isSessionError = err instanceof DeepSeekSessionError;
     const isPayloadError = err instanceof DeepSeekPayloadError;
+    const isNetworkError = err instanceof NetworkPolicyError;
     const isAmbiguousToolError = err instanceof AutomationToolOutcomeAmbiguousError;
     const isRetryablePayloadError = isPayloadError && err.retryable;
-    const retrySafe = isPowError && externalOutcome === 'not_started';
+    const retrySafe = externalOutcome === 'not_started' && (
+      isPowError || (isNetworkError && err.phase === 'pow' && err.retryable)
+    );
+    const networkFailurePhase = isNetworkError
+      ? normalizeAutomationNetworkPhase(err.phase)
+      : null;
     return createAutomationRunnerFailure(
       { ...request, chatSessionId, parentMessageId },
       isAuthError
@@ -152,11 +170,21 @@ export async function runDeepSeekAutomation(
             ? 'deepseek_session_create_failed'
             : isPayloadError
               ? 'deepseek_payload_invalid'
+              : isNetworkError
+                ? `deepseek_${err.code}`
               : isAmbiguousToolError
                 ? 'automation_tool_outcome_ambiguous'
               : 'deepseek_runner_failed',
       err instanceof Error ? err.message : String(err),
-      isAuthError ? 'auth' : isPowError ? 'pow' : isSessionError ? 'session' : isPayloadError ? 'completion' : 'runner',
+      isAuthError
+        ? 'auth'
+        : isPowError
+          ? 'pow'
+          : isSessionError
+            ? 'session'
+            : isPayloadError
+              ? 'completion'
+              : networkFailurePhase ?? 'runner',
       retrySafe && !isAuthError && (!isPayloadError || isRetryablePayloadError),
       Date.now(),
       { externalOutcome, retrySafe },
@@ -168,14 +196,16 @@ async function readAutomationHistorySnapshot(
   chatSessionId: string,
   assistantMessageId: number,
   clientHeaders: Record<string, string>,
-  execution?: AutomationExecutionContext,
+  execution: AutomationExecutionContext | undefined,
+  deepSeekClient: DeepSeekAutomationClient,
+  requestContext: DeepSeekRequestContext,
 ) {
   try {
-    return await readHistorySnapshot(
+    return await deepSeekClient.readHistorySnapshot(
       chatSessionId,
       assistantMessageId,
       clientHeaders,
-      execution?.signal,
+      requestContext,
     );
   } catch {
     execution?.assertActive();
@@ -189,14 +219,15 @@ async function submitAutomationPrompt(
   parentMessageId: number | null,
   prompt: string,
   clientHeaders: Record<string, string>,
-  execution?: AutomationExecutionContext,
+  execution: AutomationExecutionContext | undefined,
+  deepSeekClient: DeepSeekAutomationClient,
+  requestContext: DeepSeekRequestContext,
   onDispatch?: () => void,
 ): Promise<ModelTurn> {
   execution?.assertActive();
-  const powHeaders = await createPowHeaders(clientHeaders, undefined, execution?.signal);
+  const powHeaders = await deepSeekClient.createPowHeaders(clientHeaders, requestContext);
   execution?.assertActive();
-  onDispatch?.();
-  return submitPrompt({
+  return deepSeekClient.submitPrompt({
     chatSessionId,
     parentMessageId,
     modelType: request.promptOptions.modelType,
@@ -206,17 +237,19 @@ async function submitAutomationPrompt(
     searchEnabled: request.promptOptions.searchEnabled,
     clientHeaders,
     powHeaders,
-  }, execution?.signal);
+  }, onDispatch ? { ...requestContext, onDispatch } : requestContext);
 }
 
 async function runAutomationToolLoop(
   request: AutomationRunnerRequest,
-  options: AutomationRunnerOptions | undefined,
+  options: AutomationRunnerOptions,
   chatSessionId: string,
   assistantMessageId: number,
   assistantText: string,
   clientHeaders: Record<string, string>,
   locale: SupportedLocale,
+  deepSeekClient: DeepSeekAutomationClient,
+  requestContext: DeepSeekRequestContext,
 ): Promise<{ stream: ModelTurn; executions: ToolExecutionRecord[] }> {
   const initialTurn: ModelTurn = {
     assistantText,
@@ -275,12 +308,21 @@ async function runAutomationToolLoop(
       prompt,
       clientHeaders,
       options.execution,
+      deepSeekClient,
+      requestContext,
     ),
     signal: options.execution?.signal,
     assertActive: () => options.execution?.assertActive(),
   });
 
   return { stream: loop.turn, executions: loop.executions };
+}
+
+function normalizeAutomationNetworkPhase(phase: string | null): AutomationFailurePhase {
+  if (phase === 'session' || phase === 'pow' || phase === 'completion' || phase === 'history') {
+    return phase;
+  }
+  return 'runner';
 }
 
 export function buildAutomationToolContinuationPrompt(

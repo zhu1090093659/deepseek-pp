@@ -15,7 +15,12 @@ const requiredFiles = [
   'core/inline-agent/loop.ts',
   'core/inline-agent/prompt.ts',
   'core/inline-agent/renderer.ts',
+  'core/deepseek/active-client.ts',
+  'core/deepseek/automation-client-port.ts',
   'core/deepseek/adapter.ts',
+  'core/deepseek/request-codec.ts',
+  'core/deepseek/stream-codec.ts',
+  'core/network/request-policy.ts',
   'core/messaging/schema.ts',
   'core/shell/index.ts',
   'core/shell/contracts.ts',
@@ -70,7 +75,11 @@ assertContains('core/messaging/schema.ts', "init: 'DPP_BRIDGE_INIT'");
 assertContains('core/inline-agent/loop.ts', 'INLINE_AGENT_MAX_STEPS');
 assertContains('core/inline-agent/prompt.ts', 'buildContinuationPrompt');
 assertContains('core/inline-agent/renderer.ts', 'createAgentStepElement');
-assertContains('core/deepseek/adapter.ts', 'BYPASS_HOOK_HEADER');
+assertContains('core/deepseek/active-client.ts', 'BYPASS_HOOK_HEADER');
+assertContains('core/automation/runner.ts', 'deepSeekClient: DeepSeekAutomationClient');
+assertNotContains('core/automation/runner.ts', 'DEFAULT_DEEPSEEK_AUTOMATION_CLIENT');
+assertContains('core/deepseek/adapter.ts', "export * from './active-client'");
+assertNotContains('core/deepseek/adapter.ts', 'fetch(');
 assertContains('core/shell/index.ts', 'createShellMcpPresetInput');
 assertContains('scripts/shell-mcp-host.mjs', '../packages/shell-host/native/shell-mcp-host.mjs');
 assertContains('scripts/install-shell-host.mjs', '../packages/shell-host/lib/installer.mjs');
