@@ -20,19 +20,15 @@
 
 ## Analysis Snapshot
 
-- 分支：`codex/345-remove-android-template`
-- 基线 HEAD：`6daa2a2`（T2.3 merge），本快照包含 #345 的 PC-only 范围变更
+- 分支：`codex/320-sync-download-rollback`
+- 基线 HEAD：`2928d85`（T2.4 merge），本快照包含 #320 的本地同步恢复变更
 - 日期：2026-07-13
-- 当前工作树包含用户已有、未提交的浮窗兼容性改动：
-  - `core/platform/chrome-api.ts`
-  - `entrypoints/content/adapters/chat-launcher.ts`
-  - `tests/chat-launcher.test.ts`（未跟踪）
-- 本轮没有改动上述文件；源码统计和验证包含当前工作树状态。
+- 当前实现位于独立 Issue worktree；原仓库中的用户改动未被读取、覆盖或带入本分支。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
-  - `core/`：178 个 TypeScript/TSX 文件，约 32,878 行
-  - `entrypoints/`：54 个 TypeScript/TSX 文件，约 24,423 行
-  - `packages/shell-host/`：3 个脚本，约 2,762 行
-  - `tests/`：97 个测试/fixture 源文件，约 16,487 行
+  - `core/`：188 个 TypeScript/TSX 文件，约 34,131 行
+  - `entrypoints/`：54 个 TypeScript/TSX 文件，约 24,460 行
+  - `packages/shell-host/`：3 个可执行/库脚本，约 2,833 行（另含 README/package metadata）
+  - `tests/`：106 个 TypeScript 测试/fixture 源文件，其中 92 个 test files，约 18,026 行
   - `scripts/`：16 个脚本，约 3,109 行
 
 ## Current Architecture
@@ -83,7 +79,7 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` | Service worker bootstrap、119 类消息、chat/sync/automation/tool/export/sandbox orchestration | 2,601 行，65 个静态内部依赖，单一 dispatcher 承担多域职责 |
+| `entrypoints/background.ts` | Service worker bootstrap、119 类消息、chat/sync/automation/tool/export/sandbox orchestration | 2,813 行、约 65 个静态内部依赖；sync apply 已移入 service/ports，但单一 dispatcher 仍承担多域职责 |
 | `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
 | `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
 | `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |
@@ -98,6 +94,7 @@ flowchart LR
 |:--|:--|
 | IndexedDB `DeepSeekPP` | Memory store，Dexie v1 -> v2 -> v3 migration |
 | IndexedDB `DeepSeekPPArtifacts` | Artifact store v1，兼容 legacy `storage.local` |
+| IndexedDB `DeepSeekPPSyncRecovery` | Sync local-apply undo journal v1；journal 删除是本地 commit point |
 | `chrome.storage.local` | Skills、presets、MCP、project、saved items、sync、automation、usage、settings、tool history 等 |
 | `chrome.storage.session` | Side Panel active chat loop recovery marker |
 | DeepSeek page `localStorage` | Web 登录 token 的读取入口 |
@@ -138,7 +135,7 @@ flowchart LR
 
 ## Testing Baseline
 
-本轮在当前工作树上实际验证：
+初始分析基线曾验证：
 
 | Check | Result |
 |:--|:--|
@@ -155,7 +152,7 @@ flowchart LR
 - 全部 Vitest 都在 jsdom 中运行，没有真实加载 Chrome/Edge/Firefox 扩展的 E2E。
 - 没有 coverage gate、bundle budget、DOM performance budget 或 background cold-start budget。
 - 没有真实 Dexie/IndexedDB 历史 migration 测试；artifact tests 明确禁用了 IndexedDB。
-- 没有 sync partial-failure/rollback fault injection。
+- Sync 已补齐远端 generation 和本地 apply/rollback 的逐写故障注入、重启恢复与幂等重试；一般并发用户写覆盖仍由 T6.3 处理。
 - `ci:quality` 只在 Ubuntu/Node 22 执行，未做浏览器运行时矩阵。
 
 ## Project Governance Baseline and Resolution

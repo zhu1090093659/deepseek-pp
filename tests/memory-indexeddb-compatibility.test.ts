@@ -35,7 +35,12 @@ afterAll(() => {
 describe('Memory historical IndexedDB compatibility', () => {
   it('executes the production v1→v3 and v2→v3 upgrades and preserves v3 project scope on reopen', async () => {
     await seedMemoryDatabase(1, MEMORY_V1_RECORD);
-    const { db } = await import('../core/memory/store');
+    const {
+      captureRawMemoryRecordsForSyncRecovery,
+      db,
+      replaceAllMemories,
+      restoreRawMemoryRecordsForSyncRecovery,
+    } = await import('../core/memory/store');
 
     await db.open();
     expect(await db.memories.toArray()).toEqual([MEMORY_V3_RECORD]);
@@ -59,6 +64,19 @@ describe('Memory historical IndexedDB compatibility', () => {
     ]);
     expect(db.name).toBe(MEMORY_DATABASE_NAME);
     expect(db.memories.schema.primKey).toMatchObject({ name: 'id', auto: true });
+
+    await db.memories.update(MEMORY_V3_RECORD.id, { recoveryFutureField: { preserve: true } } as never);
+    const rawBefore = await captureRawMemoryRecordsForSyncRecovery();
+    await replaceAllMemories([{ ...MEMORY_V3_RECORD, id: 99, tags: [...MEMORY_V3_RECORD.tags] }]);
+    await restoreRawMemoryRecordsForSyncRecovery(rawBefore);
+    expect(await db.memories.orderBy('id').toArray()).toEqual(rawBefore);
+    const { id: _id, ...newMemory } = MEMORY_V3_PROJECT_RECORD;
+    const nextIdAfterRollback = await db.memories.add({
+      ...newMemory,
+      syncId: '00000000-0000-4000-8000-000000000009',
+      tags: [...newMemory.tags],
+    });
+    expect(nextIdAfterRollback).toBe(100);
     db.close();
     await Dexie.delete(MEMORY_DATABASE_NAME);
   });

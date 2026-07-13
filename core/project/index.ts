@@ -16,6 +16,7 @@ export {
   bindPendingProjectConversation,
   createProjectContext,
   deleteProjectContext,
+  deleteProjectContextAndMemories,
   formatProjectPromptContext,
   getProjectContextState,
   getProjectForConversation,

@@ -118,6 +118,33 @@ export const SYNC_GENERATION_V1_FIXTURE = {
     '{"kind":"deepseek-pp.sync-generation-pointer","schemaVersion":1,"generationId":"fixture-generation-v1","publishedAt":1700000000000,"manifestChecksum":{"algorithm":"sha256","value":"179fbfaa25be9585b73c1e93dbb104ca865d51250136cd4d6ab0b622bc845e37"}}',
 } as const;
 
+export const SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE = {
+  id: 'current',
+  kind: 'deepseek-pp.sync-local-apply-journal',
+  schemaVersion: 1,
+  operationId: 'fixture-local-apply-v1',
+  createdAt: 1_700_000_000_000,
+  preimage: {
+    memoryRecords: [{
+      id: 77,
+      syncId: 'sync-before-77',
+      futureField: { preserved: true },
+    }],
+    storage: {
+      skills: { present: true, value: [{ future: 'opaque-skill' }] },
+      skillSources: { present: false },
+      presets: { present: true, value: [{ id: 'preset-before' }] },
+      activePreset: { present: true, value: 'preset-before' },
+      projectContext: { present: true, value: { schemaVersion: 99, raw: true } },
+      savedItems: { present: false },
+    },
+  },
+  preimageChecksum: {
+    algorithm: 'sha256',
+    value: 'e307861ce4625fa36f1ba2747f7564b38b473d56f01a25403679216818c5f367',
+  },
+} as const;
+
 export const SYNC_CURRENT_GAPS = [
   {
     name: 'released project v1 sync state is rejected instead of migrated',
@@ -130,10 +157,5 @@ export const SYNC_CURRENT_GAPS = [
     file: 'saved-items.json',
     content: JSON.stringify({ schemaVersion: 2, items: SAVED_ITEMS_V1_STATE.items }),
     target: 'unify-future-version-rejection-after-T3.3',
-  },
-  {
-    name: 'parallel local replacement can partially apply a parsed remote snapshot',
-    currentBehavior: 'parallel-multi-store-replacement',
-    target: 'transactional-local-apply-after-T2.5',
   },
 ] as const;

@@ -31,7 +31,7 @@
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
-| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 3 | 4 | 7 |
+| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 2 | 5 | 7 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 |
@@ -50,7 +50,7 @@
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | closed |
 | T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | closed; superseded by T2.3A |
 | T2.3A | [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) | Remove Android template and support surface | closed |
-| T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | open |
+| T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | closed |
 | T2.5 | [#320](https://github.com/zhu1090093659/deepseek-pp/issues/320) | Add staged sync download, journal, and rollback | open |
 | T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | open |
 | T3.1 | [#322](https://github.com/zhu1090093659/deepseek-pp/issues/322) | Establish exhaustive runtime command map and handler port | open |
@@ -93,7 +93,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 ## Phase Checklist
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
-- [ ] Phase 2: Critical Boundaries and Failure Safety (4/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
+- [ ] Phase 2: Critical Boundaries and Failure Safety (5/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
@@ -103,13 +103,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
 
-**Active Task**: T2.4 / [Issue #319](https://github.com/zhu1090093659/deepseek-pp/issues/319) — Make sync uploads generation-atomic.
+**Active Task**: T2.5 / [Issue #320](https://github.com/zhu1090093659/deepseek-pp/issues/320) — Add staged sync download, journal, and rollback.
 
-**Execution Branch**: `codex/319-sync-generation-atomic`
+**Execution Branch**: `codex/320-sync-download-rollback`
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `c3e68bd` after T2.3A closed with 83 test files / 580 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, and hosted run `29257208567` passing. Android project/build/runtime/test support is retired.
+**Baseline Evidence**: PC-only main is `2928d85` after T2.4 closed with 84 test files / 613 tests, full `ci:quality`, Chrome/Edge/Firefox builds/packages, source archive inspection, and hosted quality run `29261117461` passing. Android project/build/runtime/test support is retired.
 
 **T1.1 Evidence**:
 
@@ -184,13 +184,23 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - `AGENTS.md`, public README files, compatibility registries, analysis, plan, and this tracker now state one PC-only product boundary while retaining historical release/progress evidence as superseded rather than rewriting history.
 - Full `ci:quality` passed with 83 files / 580 tests, Chrome/Edge/Firefox builds and packages, source archive inspection, and no orphan test/Gradle process. PR #346 merged at `c3e68bd66681003b683f95888d5455f3033e81e2`; Issue #345 closed and hosted run `29257208567` passed.
 
-**T2.4 Evidence (in progress)**:
+**T2.4 Evidence (closed)**:
 
 - Split the provider-agnostic `StorageBackend` port from the concrete composition factory, removing the sync provider dependency cycle while retaining the same WebDAV, Google Drive, and OneDrive implementations.
 - New uploads serialize all six logical files, precompute SHA-256/UTF-8 byte metadata, stage generation-scoped payloads, write a schema-v1 manifest, and replace `sync-current.json` last. They never dual-write legacy fixed files.
 - Readers use legacy fixed files only when the pointer is absent. A present pointer requires a valid manifest, exact six-file allowlist, generation identity, byte lengths, and checksums; corrupt/future/incomplete generations fail visibly before local mutation.
 - Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 still owns staged local apply and rollback; config-operation serialization/concurrent overwrite remains assigned to T6.3, and committed-with-local-bookkeeping warning UX remains assigned to T5.1.
 - Current validation passes 6 targeted files / 73 tests and the 60-second full suite at 84 files / 613 tests, plus TypeScript compile, prompt freeze, i18n, manifest/UTF-8 policy, Chrome/Edge/Firefox builds, `git diff --check`, and orphan-process checks. Three independent final reviews report no remaining merge blocker after provider error-detail, raw-fixture, lost-response, manifest-integrity, and GDrive duplicate-object corrections.
+- PR #347 merged at `2928d85f5d0de361a98af461d5e54a566709d36f`; Issue #319 closed after telemetry, hosted quality and contribution-evidence runs passed, and Milestone #44 advanced to 5/7 with cumulative drift score 1.
+
+**T2.5 Evidence (in progress)**:
+
+- Replaced parallel multi-store download mutation with a pure local-apply coordinator and production browser/IndexedDB ports. Remote generation/legacy reads, schema validation, local-import merge, occurrence-stable duplicate-`syncId` Memory-ID planning, and active-preset decisions finish before journal preparation.
+- Added `DeepSeekPPSyncRecovery` v1 with singleton `journal/current`. The SHA-256-protected record stores raw Memory rows and opaque present/value preimages for Skills, Skill Sources, Presets, active preset, Project Context, and Saved Items; unknown/corrupt/future journals fail closed without deletion.
+- Fixed-order target writes are committed only by deleting the journal. Every apply failure restores all stores in reverse order; incomplete rollback keeps the record for restart recovery. Lost prepare/clear responses are read back, and an unverifiable clear is reported as commit-indeterminate rather than guessed.
+- Local Skill-import merge, sync apply/recovery, ordinary Memory/Skill/Preset/Project/Saved Items mutations, and project/Memory cascade deletion now share one non-reentrant local-state lock, while the coordinator calls explicit already-locked store primitives. Failed-apply recovery runs before lock release; if it remains incomplete, the lock is fail-closed and retries recovery before any queued write or second download can stage. Background recovery gates runtime dispatch, stale-Memory archival, and startup/alarm automation scans; transient durable-recovery failures are retried by the next dispatch, and post-recovery broadcast failure is reported without poisoning readiness.
+- Exact rollback covers released raw Memory rows/IDs/unknown fields plus all affected raw key values/absence. IndexedDB cannot rewind its hidden `++id` generator, so a failed high-ID target can only make a future new ID skip forward; this has executable fake-IndexedDB evidence, loses no row/reference/retry identity, and remains an explicit `DB-001`/T3.3 schema-design gap rather than a silent compatibility claim.
+- Targeted validation passes 14 files / 117 tests, including every target write's fail-before/commit-then-throw boundary, every recovery-write failure, queued mutation/download recovery ordering, all interrupted prefixes, corrupt/future/checksum journals, idempotent retry, executable raw journal fixture, raw missing-key restoration, occurrence-stable duplicate Memory IDs, and fake-IndexedDB reopen/generator evidence. The 60-second full suite passes 92 files / 671 tests; full `ci:quality` also passes prompt freeze, TypeScript, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release assets, and `git diff --check`.
 
 ## Governance Status
 
@@ -213,9 +223,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete targeted/full validation and diff review for T2.4 / Issue #319.
-2. Record telemetry, merge the T2.4 PR, close #319, and advance Milestone #44 to 5/7.
-3. Continue with T2.5 / Issue #320 for staged local sync apply, journal, and rollback.
+1. Complete full validation, independent diff review, and browser build/smoke evidence for T2.5 / Issue #320.
+2. Record telemetry, merge the T2.5 PR, close #320, and advance Milestone #44 to 6/7.
+3. Continue with T2.6 / Issue #321 for automation cancellation, lease, and idempotency propagation.
 
 ## Session Log
 
@@ -251,3 +261,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T2.3A closure | Merged PR #346 at `c3e68bd`, closed Issue #345 after telemetry, passed local/hosted PC-browser-only quality gates, and advanced Milestone #44 to 4/7 with cumulative drift score 1. |
 | 2026-07-13 | T2.4 execution start | Rebased `codex/319-sync-generation-atomic` onto PC-only main `c3e68bd`; audited remote persistence, provider, prompt/runtime, and compatibility boundaries before implementing the generation contract. |
 | 2026-07-13 | T2.4 implementation | Added generation-scoped payloads, schema-v1 manifest/checksums, last-write current pointer, strict generation reads, legacy pointer-absence fallback, provider port/factory separation, and exhaustive remote-write fault injection. |
+| 2026-07-13 | T2.4 closure | Merged PR #347 at `2928d85`, closed Issue #319 after telemetry, passed local/hosted quality and contribution-evidence gates, and advanced Milestone #44 to 5/7 with cumulative drift score 1. |
+| 2026-07-13 | T2.5 execution start | Opened `codex/320-sync-download-rollback` from `2928d85`; audited raw persistence, restart, background lifecycle, optional legacy-file, and commit-point boundaries before implementation. |
+| 2026-07-13 | T2.5 implementation | Added the versioned recovery DB, pure local apply coordinator, raw browser preimage adapter, deterministic Memory IDs, reverse rollback, startup recovery barrier, and exhaustive local fault/restart/idempotency tests. |

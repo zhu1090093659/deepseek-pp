@@ -29,6 +29,14 @@ import {
 } from '../core/scenario/store';
 import { SYNC_CONFIG_STORAGE_KEY } from '../core/sync/config';
 import {
+  SYNC_RECOVERY_DATABASE_NAME,
+  SYNC_RECOVERY_DATABASE_VERSION,
+  SYNC_RECOVERY_JOURNAL_ID,
+  SYNC_RECOVERY_JOURNAL_TABLE_NAME,
+  SYNC_RECOVERY_JOURNAL_TABLE_SCHEMA,
+} from '../core/sync/apply-journal';
+import { validateSyncLocalApplyJournal } from '../core/sync/local-apply';
+import {
   OPTIONAL_SYNC_FILE_KEYS,
   REQUIRED_SYNC_FILE_KEYS,
   SYNC_FILE_KEYS,
@@ -72,6 +80,7 @@ import {
   SYNC_CURRENT_GAPS,
   SYNC_JSON_FIXTURES,
   SYNC_LEGACY_JSON_FIXTURES,
+  SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE,
   SYNC_MEMORY_RECORD,
 } from './fixtures/persistence-contract/sync';
 
@@ -118,6 +127,10 @@ describe('persistence and sync compatibility contract', () => {
       .toEqual(MEMORY_V3_RECORD);
     expect(MEMORY_CURRENT_GAPS[0].target)
       .toBe('preserve-future-database-without-overwrite-after-T3.3');
+    expect(MEMORY_CURRENT_GAPS[1]).toMatchObject({
+      currentBehavior: 'next-memory-id-may-skip-after-rollback',
+      target: 'define-logical-id-allocation-with-schema-migration-after-T3.3',
+    });
   });
 
   it('reads legal legacy artifacts and classifies malformed filtering as a migration gap', async () => {
@@ -227,7 +240,23 @@ describe('persistence and sync compatibility contract', () => {
       .toEqual(SAVED_ITEMS_V1_STATE);
   });
 
-  it('keeps sync migration and atomicity failures out of the legal contract', () => {
+  it('freezes and executes the sync local-apply recovery journal raw v1 fixture', async () => {
+    expect(SYNC_RECOVERY_DATABASE_NAME).toBe('DeepSeekPPSyncRecovery');
+    expect(SYNC_RECOVERY_DATABASE_VERSION).toBe(1);
+    expect(SYNC_RECOVERY_JOURNAL_TABLE_NAME).toBe('journal');
+    expect(SYNC_RECOVERY_JOURNAL_TABLE_SCHEMA).toBe('&id');
+    expect(SYNC_RECOVERY_JOURNAL_ID).toBe('current');
+    await expect(validateSyncLocalApplyJournal(SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE))
+      .resolves.toMatchObject({
+      kind: 'deepseek-pp.sync-local-apply-journal',
+      schemaVersion: 1,
+      operationId: 'fixture-local-apply-v1',
+      preimage: SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE.preimage,
+      preimageChecksum: { algorithm: 'sha256' },
+    });
+  });
+
+  it('keeps remaining sync migration failures out of the legal contract', () => {
     expect(() => parseValidatedJson(
       SYNC_FILE_KEYS.projectContext,
       SYNC_CURRENT_GAPS[0].content,
@@ -243,7 +272,6 @@ describe('persistence and sync compatibility contract', () => {
     expect(SYNC_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
       'migrate-v1-without-overwrite-after-T3.3',
       'unify-future-version-rejection-after-T3.3',
-      'transactional-local-apply-after-T2.5',
     ]);
   });
 });

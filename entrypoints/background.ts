@@ -4,9 +4,7 @@ import {
   saveMemory,
   updateMemory,
   deleteMemory,
-  deleteMemoriesForProject,
   touchMemories,
-  replaceAllMemories,
   archiveStaleMemories,
 } from '../core/memory/store';
 import { filterMemoriesByProjectScope } from '../core/memory/scope';
@@ -16,8 +14,6 @@ import {
   getAllSkills,
   getSkillLibrary,
   getUserSkills,
-  replaceAllCustomSkills,
-  replaceAllSkillSources,
   saveSkill,
   setSkillEnabled,
   setSkillsEnabled,
@@ -40,7 +36,6 @@ import {
   deletePreset,
   getActivePreset,
   setActivePresetId,
-  replaceAllPresets,
 } from '../core/preset/store';
 import { getModelType, setModelType } from '../core/model/store';
 import { getDeepSeekTheme, saveDeepSeekTheme } from '../core/theme/store';
@@ -60,6 +55,11 @@ import {
   uploadSyncGeneration,
 } from '../core/sync/generation';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
+import {
+  recoverPendingSyncLocalApply,
+  stageAndApplySyncSnapshotLocally,
+} from '../core/sync/local-apply-runtime';
+import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
 import { createStorageBackend } from '../core/sync/backend-factory';
 import type { StorageBackend } from '../core/sync/storage-backend';
 import {
@@ -112,14 +112,13 @@ import {
   addConversationToProject,
   bindPendingProjectConversation,
   createProjectContext,
-  deleteProjectContext,
+  deleteProjectContextAndMemories,
   formatProjectPromptContext,
   getProjectContextState,
   getProjectForConversation,
   getProjectPromptContextForConversation,
   refreshProjectConversation,
   removeConversationFromProject,
-  saveProjectContextState,
   setPendingProjectContext,
   updateProjectContext,
 } from '../core/project';
@@ -128,7 +127,6 @@ import {
   deleteSavedItem,
   getAllSavedItems,
   getSavedItemsState,
-  replaceAllSavedItems,
   saveSavedItem,
 } from '../core/saved-items';
 import {
@@ -298,6 +296,22 @@ const externalPayloadAuthorizationCache = new ExternalPayloadAuthorizationCache(
 let currentBackgroundLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
+const syncLocalRecoveryBarrier = createSyncRecoveryBarrier({
+  recover: recoverPendingSyncLocalApply,
+  async notifyRecovered() {
+    await Promise.all([
+      broadcastStateUpdate(),
+      broadcastProjectContextUpdate(),
+      broadcastSavedItemsUpdate(),
+    ]);
+  },
+  onRecoveryFailure(error) {
+    reportBackgroundStartupError('sync_local_recovery_failed', error);
+  },
+  onNotificationFailure(error) {
+    reportBackgroundStartupError('sync_local_recovery_broadcast_failed', error);
+  },
+});
 const SANDBOX_OFFSCREEN_URL = 'sandbox-offscreen.html';
 const browserSandboxRuntime: SandboxToolRuntime = {
   runSandbox: (request) => runBrowserSandboxToolResult(request),
@@ -322,6 +336,7 @@ type ActionApi = {
 };
 
 export default defineBackground(() => {
+  void syncLocalRecoveryBarrier.ensureReady().catch(() => undefined);
   enableSidePanelActionClick();
   registerWhatsNewInstallListener();
   registerAutomationAlarmListener();
@@ -338,12 +353,18 @@ export default defineBackground(() => {
       .catch((error) => reportBackgroundStartupError('locale_refresh_failed', error));
   });
 
-  archiveStaleMemories().catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error));
+  syncLocalRecoveryBarrier.ensureReady()
+    .then(() => archiveStaleMemories()
+      .catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error)))
+    .catch(() => undefined);
   ensureBuiltInMcpPresets().catch((error) => reportBackgroundStartupError('builtin_mcp_presets_failed', error));
   refreshWhatsNewBadge().catch((error) => reportBackgroundStartupError('whats_new_badge_failed', error));
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
   reconcileInterruptedChatLoopOnWake().catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
-  scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error));
+  syncLocalRecoveryBarrier.ensureReady()
+    .then(() => scanDueAutomationsFromWake()
+      .catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error)))
+    .catch(() => undefined);
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     let envelope: RuntimeMessageEnvelope | undefined;
@@ -361,7 +382,8 @@ export default defineBackground(() => {
       return false;
     }
 
-    handleMessage(envelope, context)
+    syncLocalRecoveryBarrier.ensureReady()
+      .then(() => handleMessage(envelope, context))
       .then(sendResponse)
       .catch((error) => sendResponse(createBackgroundErrorResponse(
         envelope,
@@ -382,8 +404,16 @@ export default defineBackground(() => {
 function registerAutomationAlarmListener() {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== AUTOMATION_WAKE_ALARM_NAME) return;
-    scanDueAutomationsFromWake().catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error));
+    syncLocalRecoveryBarrier.ensureReady()
+      .then(() => scanDueAutomationsFromWake()
+        .catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error)))
+      .catch(() => undefined);
   });
+}
+
+function beginSyncLocalApply(stage: () => Promise<SyncDataSnapshot>) {
+  const operation = stageAndApplySyncSnapshotLocally(stage);
+  return syncLocalRecoveryBarrier.trackApply(operation);
 }
 
 async function ensureAutomationWakeAlarm() {
@@ -1094,8 +1124,7 @@ async function handleMessage(
 
     case 'DELETE_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string };
-      await deleteProjectContext(projectId);
-      const deletedMemories = await deleteMemoriesForProject(projectId);
+      const deletedMemories = await deleteProjectContextAndMemories(projectId);
       await broadcastProjectContextUpdate(context.tabId);
       if (deletedMemories > 0) await broadcastStateUpdate(context.tabId);
       return { ok: true, deletedMemories };
@@ -1319,21 +1348,10 @@ async function handleMessage(
       if (!config) throw new Error(backgroundT('background.sync.missingSync'));
 
       const backend = createStorageBackend(config, backgroundT);
-      const snapshot = await mergeSyncSnapshotWithLocalImports(await getRemoteSyncDataSnapshot(backend));
-
-      const replacements: Promise<unknown>[] = [
-        replaceAllMemories(snapshot.memories),
-        replaceAllCustomSkills(snapshot.skills),
-        replaceAllSkillSources(snapshot.skillSources),
-        replaceAllPresets(snapshot.presets),
-      ];
-      if (snapshot.projectContext) {
-        replacements.push(saveProjectContextState(snapshot.projectContext));
-      }
-      if (snapshot.savedItems) {
-        replacements.push(replaceAllSavedItems(snapshot.savedItems.items));
-      }
-      await Promise.all(replacements);
+      const remoteSnapshot = await getRemoteSyncDataSnapshot(backend);
+      const snapshot = await beginSyncLocalApply(
+        () => mergeSyncSnapshotWithLocalImports(remoteSnapshot),
+      );
 
       const now = Date.now();
       await saveSyncConfig({ ...config, lastSyncAt: now });

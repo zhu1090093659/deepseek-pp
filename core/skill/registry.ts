@@ -1,9 +1,10 @@
 import type { GitHubSkillSource, LocalSkillSource, Skill, SkillImportSource } from '../types';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../i18n';
+import { withSyncLocalStateLock } from '../persistence/local-state-lock';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from './builtin';
 
-const STORAGE_KEY = 'deepseek_pp_skills';
-const SOURCES_STORAGE_KEY = 'deepseek_pp_skill_sources';
+export const SKILLS_STORAGE_KEY = 'deepseek_pp_skills';
+export const SKILL_SOURCES_STORAGE_KEY = 'deepseek_pp_skill_sources';
 const BUNDLED_ENABLED_STORAGE_KEY = 'deepseek_pp_bundled_skill_enabled';
 
 const USER_SKILL_SOURCES = new Set(['custom', 'remote']);
@@ -32,43 +33,52 @@ export async function getSkillLibrary(locale: SupportedLocale = DEFAULT_LOCALE):
 }
 
 export async function getUserSkills(): Promise<Skill[]> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  const storedSkills = data[STORAGE_KEY];
+  const data = await chrome.storage.local.get(SKILLS_STORAGE_KEY) as Record<string, unknown>;
+  const storedSkills = data[SKILLS_STORAGE_KEY];
   return normalizeStoredSkills(storedSkills);
 }
 
 export async function saveSkill(skill: Skill, previousName?: string): Promise<void> {
-  const custom = (await getUserSkills()).filter((s) => s.source === 'custom');
-  const namesToReplace = new Set<string>([skill.name]);
-  if (previousName) namesToReplace.add(previousName);
+  await withSyncLocalStateLock(async () => {
+    const userSkills = await getUserSkills();
+    const custom = userSkills.filter((s) => s.source === 'custom');
+    const namesToReplace = new Set<string>([skill.name]);
+    if (previousName) namesToReplace.add(previousName);
 
-  const previousIndex = previousName ? custom.findIndex((s) => s.name === previousName) : -1;
-  const currentIndex = custom.findIndex((s) => s.name === skill.name);
-  const insertIndex = previousIndex >= 0 ? previousIndex : currentIndex;
-  const next = custom.filter((s) => !namesToReplace.has(s.name));
-  const remote = (await getUserSkills()).filter((s) => s.source === 'remote');
-  const savedSkill = { ...skill, source: 'custom' as const, enabled: skill.enabled !== false };
+    const previousIndex = previousName ? custom.findIndex((s) => s.name === previousName) : -1;
+    const currentIndex = custom.findIndex((s) => s.name === skill.name);
+    const insertIndex = previousIndex >= 0 ? previousIndex : currentIndex;
+    const next = custom.filter((s) => !namesToReplace.has(s.name));
+    const remote = userSkills.filter((s) => s.source === 'remote');
+    const savedSkill = { ...skill, source: 'custom' as const, enabled: skill.enabled !== false };
 
-  if (insertIndex >= 0) {
-    next.splice(Math.min(insertIndex, next.length), 0, savedSkill);
-  } else {
-    next.push(savedSkill);
-  }
-  await chrome.storage.local.set({ [STORAGE_KEY]: [...next, ...remote] });
+    if (insertIndex >= 0) {
+      next.splice(Math.min(insertIndex, next.length), 0, savedSkill);
+    } else {
+      next.push(savedSkill);
+    }
+    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: [...next, ...remote] });
+  });
 }
 
 export async function deleteSkill(name: string): Promise<void> {
-  const userSkills = await getUserSkills();
-  const removed = userSkills.find((s) => s.name === name);
-  const next = userSkills.filter((s) => s.name !== name);
-  await chrome.storage.local.set({ [STORAGE_KEY]: next });
+  await withSyncLocalStateLock(async () => {
+    const userSkills = await getUserSkills();
+    const removed = userSkills.find((s) => s.name === name);
+    const next = userSkills.filter((s) => s.name !== name);
+    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: next });
 
-  if (removed?.source === 'remote' && removed.remote) {
-    await removeRemoteSkillFromSource(removed.remote.sourceId, removed.remote.path, removed.name);
-  }
+    if (removed?.source === 'remote' && removed.remote) {
+      await removeRemoteSkillFromSource(removed.remote.sourceId, removed.remote.path, removed.name);
+    }
+  });
 }
 
 export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
+  await withSyncLocalStateLock(() => replaceAllCustomSkillsForSyncApply(skills));
+}
+
+export async function replaceAllCustomSkillsForSyncApply(skills: Skill[]): Promise<void> {
   const userSkills = skills
     .filter((s) => USER_SKILL_SOURCES.has(s.source))
     .map((s) => ({
@@ -76,7 +86,7 @@ export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
       source: s.source === 'remote' ? 'remote' as const : 'custom' as const,
       enabled: s.enabled !== false,
     }));
-  await chrome.storage.local.set({ [STORAGE_KEY]: userSkills });
+  await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: userSkills });
 }
 
 export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
@@ -86,6 +96,10 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
 export async function setSkillsEnabled(updates: Array<{ name: string; enabled: boolean }>): Promise<void> {
   if (updates.length === 0) return;
 
+  await withSyncLocalStateLock(() => setSkillsEnabledUnlocked(updates));
+}
+
+async function setSkillsEnabledUnlocked(updates: Array<{ name: string; enabled: boolean }>): Promise<void> {
   const updateByName = new Map<string, boolean>();
   for (const update of updates) {
     updateByName.set(update.name, update.enabled);
@@ -113,7 +127,7 @@ export async function setSkillsEnabled(updates: Array<{ name: string; enabled: b
 
   if (Object.keys(bundledUpdates).length === 0) {
     if (!userSkillsChanged) return;
-    await chrome.storage.local.set({ [STORAGE_KEY]: next });
+    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: next });
     return;
   }
 
@@ -124,15 +138,15 @@ export async function setSkillsEnabled(updates: Array<{ name: string; enabled: b
       ...bundledUpdates,
     },
   };
-  if (userSkillsChanged) patch[STORAGE_KEY] = next;
+  if (userSkillsChanged) patch[SKILLS_STORAGE_KEY] = next;
   await chrome.storage.local.set({
     ...patch,
   });
 }
 
 export async function getAllSkillSources(): Promise<SkillImportSource[]> {
-  const data = await chrome.storage.local.get(SOURCES_STORAGE_KEY) as Record<string, unknown>;
-  const storedSources = data[SOURCES_STORAGE_KEY];
+  const data = await chrome.storage.local.get(SKILL_SOURCES_STORAGE_KEY) as Record<string, unknown>;
+  const storedSources = data[SKILL_SOURCES_STORAGE_KEY];
   if (!Array.isArray(storedSources)) return [];
   return storedSources.filter(isSkillImportSource);
 }
@@ -148,12 +162,14 @@ export async function getGitHubSkillSourceById(sourceId: string): Promise<GitHub
 }
 
 export async function saveGitHubSkillSource(source: GitHubSkillSource): Promise<void> {
-  const sources = await getAllSkillSources();
-  await chrome.storage.local.set({
-    [SOURCES_STORAGE_KEY]: [
-      ...sources.filter((item) => item.id !== source.id),
-      source,
-    ],
+  await withSyncLocalStateLock(async () => {
+    const sources = await getAllSkillSources();
+    await chrome.storage.local.set({
+      [SKILL_SOURCES_STORAGE_KEY]: [
+        ...sources.filter((item) => item.id !== source.id),
+        source,
+      ],
+    });
   });
 }
 
@@ -172,6 +188,13 @@ export async function upsertLocalSkillSource(
 }
 
 async function upsertImportedSkillSource(
+  source: SkillImportSource,
+  incomingSkills: Skill[],
+): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
+  return withSyncLocalStateLock(() => upsertImportedSkillSourceUnlocked(source, incomingSkills));
+}
+
+async function upsertImportedSkillSourceUnlocked(
   source: SkillImportSource,
   incomingSkills: Skill[],
 ): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
@@ -224,8 +247,8 @@ async function upsertImportedSkillSource(
   ];
 
   await chrome.storage.local.set({
-    [STORAGE_KEY]: nextUserSkills,
-    [SOURCES_STORAGE_KEY]: nextSources,
+    [SKILLS_STORAGE_KEY]: nextUserSkills,
+    [SKILL_SOURCES_STORAGE_KEY]: nextSources,
   });
 
   return { imported, replaced, renamed };
@@ -236,19 +259,25 @@ export async function deleteGitHubSkillSource(sourceId: string): Promise<void> {
 }
 
 export async function deleteSkillSource(sourceId: string): Promise<void> {
-  const [userSkills, sources] = await Promise.all([
-    getUserSkills(),
-    getAllSkillSources(),
-  ]);
-  await chrome.storage.local.set({
-    [STORAGE_KEY]: userSkills.filter((skill) => skill.remote?.sourceId !== sourceId),
-    [SOURCES_STORAGE_KEY]: sources.filter((source) => source.id !== sourceId),
+  await withSyncLocalStateLock(async () => {
+    const [userSkills, sources] = await Promise.all([
+      getUserSkills(),
+      getAllSkillSources(),
+    ]);
+    await chrome.storage.local.set({
+      [SKILLS_STORAGE_KEY]: userSkills.filter((skill) => skill.remote?.sourceId !== sourceId),
+      [SKILL_SOURCES_STORAGE_KEY]: sources.filter((source) => source.id !== sourceId),
+    });
   });
 }
 
 export async function replaceAllSkillSources(sources: SkillImportSource[]): Promise<void> {
+  await withSyncLocalStateLock(() => replaceAllSkillSourcesForSyncApply(sources));
+}
+
+export async function replaceAllSkillSourcesForSyncApply(sources: SkillImportSource[]): Promise<void> {
   await chrome.storage.local.set({
-    [SOURCES_STORAGE_KEY]: sources.filter(isSkillImportSource),
+    [SKILL_SOURCES_STORAGE_KEY]: sources.filter(isSkillImportSource),
   });
 }
 
@@ -338,5 +367,5 @@ async function removeRemoteSkillFromSource(sourceId: string, path: string, name:
       };
     })
     .filter((source) => source.skillPaths.length > 0);
-  await chrome.storage.local.set({ [SOURCES_STORAGE_KEY]: nextSources });
+  await chrome.storage.local.set({ [SKILL_SOURCES_STORAGE_KEY]: nextSources });
 }

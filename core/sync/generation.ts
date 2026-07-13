@@ -9,10 +9,15 @@ import {
   isSyncFileKey,
   type SyncFileKey,
 } from './contracts';
+import {
+  assertSha256Checksum,
+  createSha256Checksum,
+  createSha256ChecksumFromBytes,
+  parseSha256Checksum,
+  type Sha256Checksum,
+} from './checksum';
 import type { StorageBackend } from './storage-backend';
 
-const SHA256_ALGORITHM = 'sha256' as const;
-const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const GENERATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/i;
 
 export interface SyncGenerationSourceFile {
@@ -20,10 +25,7 @@ export interface SyncGenerationSourceFile {
   content: string;
 }
 
-export interface SyncChecksum {
-  algorithm: typeof SHA256_ALGORITHM;
-  value: string;
-}
+export type SyncChecksum = Sha256Checksum;
 
 export interface SyncGenerationFileRecord {
   key: SyncFileKey;
@@ -72,7 +74,7 @@ export async function uploadSyncGeneration(
     files,
   };
   const manifestContent = JSON.stringify(manifest);
-  const manifestChecksum = await createChecksum(manifestContent);
+  const manifestChecksum = await createSha256Checksum(manifestContent);
   const pointer: SyncGenerationPointer = {
     kind: SYNC_GENERATION_POINTER_KIND,
     schemaVersion: SYNC_GENERATION_SCHEMA_VERSION,
@@ -118,7 +120,7 @@ export async function readCurrentSyncGeneration(
   if (manifestContent === null) {
     throw new Error(`Sync generation manifest is missing: ${manifestKey}`);
   }
-  await assertChecksum('Sync generation manifest', manifestContent, pointer.manifestChecksum);
+  await assertSha256Checksum('Sync generation manifest', manifestContent, pointer.manifestChecksum);
 
   const manifest = parseManifest(manifestContent);
   if (manifest.generationId !== pointer.generationId) {
@@ -133,7 +135,7 @@ export async function readCurrentSyncGeneration(
     if (byteLength !== file.byteLength) {
       throw new Error(`Sync generation file size does not match: ${file.key}`);
     }
-    await assertChecksum(`Sync generation file ${file.key}`, content, file.checksum);
+    await assertSha256Checksum(`Sync generation file ${file.key}`, content, file.checksum);
     return [file.key, content] as const;
   }));
 
@@ -145,27 +147,8 @@ async function createFileRecord(sourceFile: SyncGenerationSourceFile): Promise<S
   return {
     key: sourceFile.key,
     byteLength: bytes.byteLength,
-    checksum: await createChecksumFromBytes(bytes),
+    checksum: await createSha256ChecksumFromBytes(bytes),
   };
-}
-
-async function createChecksum(content: string): Promise<SyncChecksum> {
-  return createChecksumFromBytes(new TextEncoder().encode(content));
-}
-
-async function createChecksumFromBytes(bytes: Uint8Array<ArrayBuffer>): Promise<SyncChecksum> {
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi?.subtle) throw new Error('Web Crypto SHA-256 is required for sync generations');
-  const digest = await cryptoApi.subtle.digest('SHA-256', bytes);
-  return {
-    algorithm: SHA256_ALGORITHM,
-    value: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
-  };
-}
-
-async function assertChecksum(label: string, content: string, expected: SyncChecksum): Promise<void> {
-  const actual = await createChecksum(content);
-  if (actual.value !== expected.value) throw new Error(`${label} checksum does not match`);
 }
 
 async function publishPointer(backend: StorageBackend, pointerContent: string): Promise<void> {
@@ -230,7 +213,7 @@ function parsePointer(content: string): SyncGenerationPointer {
     schemaVersion: SYNC_GENERATION_SCHEMA_VERSION,
     generationId,
     publishedAt: validateTimestamp(object.publishedAt, 'Sync generation pointer publishedAt'),
-    manifestChecksum: parseChecksum(object.manifestChecksum, 'Sync generation pointer manifestChecksum'),
+    manifestChecksum: parseSha256Checksum(object.manifestChecksum, 'Sync generation pointer manifestChecksum'),
   };
 }
 
@@ -271,19 +254,8 @@ function parseFileRecord(value: unknown, index: number): SyncGenerationFileRecor
   return {
     key: object.key,
     byteLength: byteLength as number,
-    checksum: parseChecksum(object.checksum, `Sync generation manifest files[${index}].checksum`),
+    checksum: parseSha256Checksum(object.checksum, `Sync generation manifest files[${index}].checksum`),
   };
-}
-
-function parseChecksum(value: unknown, label: string): SyncChecksum {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-  const object = value as Record<string, unknown>;
-  if (object.algorithm !== SHA256_ALGORITHM || typeof object.value !== 'string' || !SHA256_HEX_PATTERN.test(object.value)) {
-    throw new Error(`${label} is invalid`);
-  }
-  return { algorithm: SHA256_ALGORITHM, value: object.value };
 }
 
 function parseObject(content: string, label: string): Record<string, unknown> {

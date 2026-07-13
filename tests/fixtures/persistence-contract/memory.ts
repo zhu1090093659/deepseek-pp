@@ -36,4 +36,9 @@ export const MEMORY_CURRENT_GAPS = [
     currentBehavior: 'dexie-open-rejection',
     target: 'preserve-future-database-without-overwrite-after-T3.3',
   },
+  {
+    name: 'sync rollback restores raw rows but IndexedDB does not rewind its hidden auto-increment generator',
+    currentBehavior: 'next-memory-id-may-skip-after-rollback',
+    target: 'define-logical-id-allocation-with-schema-migration-after-T3.3',
+  },
 ] as const;

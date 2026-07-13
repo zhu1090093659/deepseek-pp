@@ -4,6 +4,7 @@ import {
   type SavedItemInput,
   type SavedItemsState,
 } from './types';
+import { withSyncLocalStateLock } from '../persistence/local-state-lock';
 
 export const SAVED_ITEMS_STORAGE_KEY = 'deepseek_pp_saved_items';
 
@@ -17,47 +18,49 @@ export async function getAllSavedItems(): Promise<SavedItem[]> {
 }
 
 export async function saveSavedItem(input: SavedItemInput): Promise<SavedItem> {
-  const state = await getSavedItemsState();
-  const now = Date.now();
-  const item: SavedItem = {
-    id: input.id ?? createId(),
-    syncId: input.syncId ?? createId(),
-    kind: input.kind === 'bookmark' ? 'bookmark' : 'snippet',
-    title: requireNonEmptyString(input.title, 'title'),
-    content: requireNonEmptyString(input.content, 'content'),
-    ...(input.sourceUrl && input.sourceUrl.trim() ? { sourceUrl: input.sourceUrl.trim() } : {}),
-    tags: normalizeTags(input.tags),
-    createdAt: input.createdAt ?? now,
-    updatedAt: now,
-  };
-  const nextItems = [
-    ...state.items.filter((existing) => existing.id !== item.id),
-    item,
-  ].sort((a, b) => b.updatedAt - a.updatedAt);
-  await chrome.storage.local.set({
-    [SAVED_ITEMS_STORAGE_KEY]: {
-      schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
-      items: nextItems,
-    } satisfies SavedItemsState,
+  return withSyncLocalStateLock(async () => {
+    const state = await getSavedItemsState();
+    const now = Date.now();
+    const item: SavedItem = {
+      id: input.id ?? createId(),
+      syncId: input.syncId ?? createId(),
+      kind: input.kind === 'bookmark' ? 'bookmark' : 'snippet',
+      title: requireNonEmptyString(input.title, 'title'),
+      content: requireNonEmptyString(input.content, 'content'),
+      ...(input.sourceUrl && input.sourceUrl.trim() ? { sourceUrl: input.sourceUrl.trim() } : {}),
+      tags: normalizeTags(input.tags),
+      createdAt: input.createdAt ?? now,
+      updatedAt: now,
+    };
+    const nextItems = [
+      ...state.items.filter((existing) => existing.id !== item.id),
+      item,
+    ].sort((a, b) => b.updatedAt - a.updatedAt);
+    await writeSavedItems(nextItems);
+    return item;
   });
-  return item;
 }
 
 export async function deleteSavedItem(id: string): Promise<void> {
-  const state = await getSavedItemsState();
-  await chrome.storage.local.set({
-    [SAVED_ITEMS_STORAGE_KEY]: {
-      schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
-      items: state.items.filter((item) => item.id !== id),
-    } satisfies SavedItemsState,
+  await withSyncLocalStateLock(async () => {
+    const state = await getSavedItemsState();
+    await writeSavedItems(state.items.filter((item) => item.id !== id));
   });
 }
 
 export async function replaceAllSavedItems(items: SavedItem[]): Promise<void> {
+  await withSyncLocalStateLock(() => replaceAllSavedItemsForSyncApply(items));
+}
+
+export async function replaceAllSavedItemsForSyncApply(items: SavedItem[]): Promise<void> {
+  await writeSavedItems(items.map(normalizeSavedItem));
+}
+
+async function writeSavedItems(items: SavedItem[]): Promise<void> {
   await chrome.storage.local.set({
     [SAVED_ITEMS_STORAGE_KEY]: {
       schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
-      items: items.map(normalizeSavedItem),
+      items,
     } satisfies SavedItemsState,
   });
 }

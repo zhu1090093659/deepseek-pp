@@ -9,6 +9,8 @@ import type {
 } from './types';
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
 import { PROJECT_UNTITLED_CONVERSATION, isPlaceholderProjectConversationTitle } from './title';
+import { withSyncLocalStateLock } from '../persistence/local-state-lock';
+import { deleteMemoriesForProjectAlreadyLocked } from '../memory/store';
 
 export const PROJECT_CONTEXT_STORAGE_KEY = 'deepseek_pp_project_context';
 
@@ -25,55 +27,80 @@ export async function getProjectContextState(): Promise<ProjectContextState> {
 }
 
 export async function saveProjectContextState(state: ProjectContextState): Promise<void> {
+  await withSyncLocalStateLock(() => writeProjectContextState(state));
+}
+
+export async function saveProjectContextStateForSyncApply(state: ProjectContextState): Promise<void> {
+  await writeProjectContextState(state);
+}
+
+async function writeProjectContextState(state: ProjectContextState): Promise<void> {
   await chrome.storage.local.set({
     [PROJECT_CONTEXT_STORAGE_KEY]: normalizeProjectContextState(state),
   });
 }
 
 export async function createProjectContext(input: ProjectContextCreateInput): Promise<ProjectContext> {
-  const now = Date.now();
-  const state = await getProjectContextState();
-  const project: ProjectContext = {
-    id: crypto.randomUUID(),
-    name: requiredTrimmed(input.name, 'Project name'),
-    description: String(input.description ?? '').trim(),
-    instructions: String(input.instructions ?? '').trim(),
-    createdAt: now,
-    updatedAt: now,
-  };
-  await saveProjectContextState({
-    ...state,
-    projects: [...state.projects, project],
+  return withProjectMutation(async (state) => {
+    const now = Date.now();
+    const project: ProjectContext = {
+      id: crypto.randomUUID(),
+      name: requiredTrimmed(input.name, 'Project name'),
+      description: String(input.description ?? '').trim(),
+      instructions: String(input.instructions ?? '').trim(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeProjectContextState({
+      ...state,
+      projects: [...state.projects, project],
+    });
+    return project;
   });
-  return project;
 }
 
 export async function updateProjectContext(
   projectId: string,
   patch: ProjectContextUpdateInput,
 ): Promise<ProjectContext> {
-  const state = await getProjectContextState();
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project) throw new Error(`Project not found: ${projectId}`);
+  return withProjectMutation(async (state) => {
+    const project = state.projects.find((item) => item.id === projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
 
-  const nextProject: ProjectContext = {
-    ...project,
-    ...(patch.name === undefined ? {} : { name: requiredTrimmed(patch.name, 'Project name') }),
-    ...(patch.description === undefined ? {} : { description: String(patch.description).trim() }),
-    ...(patch.instructions === undefined ? {} : { instructions: String(patch.instructions).trim() }),
-    updatedAt: Date.now(),
-  };
+    const nextProject: ProjectContext = {
+      ...project,
+      ...(patch.name === undefined ? {} : { name: requiredTrimmed(patch.name, 'Project name') }),
+      ...(patch.description === undefined ? {} : { description: String(patch.description).trim() }),
+      ...(patch.instructions === undefined ? {} : { instructions: String(patch.instructions).trim() }),
+      updatedAt: Date.now(),
+    };
 
-  await saveProjectContextState({
-    ...state,
-    projects: state.projects.map((item) => item.id === projectId ? nextProject : item),
+    await writeProjectContextState({
+      ...state,
+      projects: state.projects.map((item) => item.id === projectId ? nextProject : item),
+    });
+    return nextProject;
   });
-  return nextProject;
 }
 
 export async function deleteProjectContext(projectId: string): Promise<void> {
-  const state = await getProjectContextState();
-  await saveProjectContextState({
+  await withProjectMutation(async (state) => {
+    await deleteProjectContextState(state, projectId);
+  });
+}
+
+export async function deleteProjectContextAndMemories(projectId: string): Promise<number> {
+  return withProjectMutation(async (state) => {
+    await deleteProjectContextState(state, projectId);
+    return deleteMemoriesForProjectAlreadyLocked(projectId);
+  });
+}
+
+async function deleteProjectContextState(
+  state: ProjectContextState,
+  projectId: string,
+): Promise<void> {
+  await writeProjectContextState({
     ...state,
     projects: state.projects.filter((project) => project.id !== projectId),
     conversations: state.conversations.filter((conversation) => conversation.projectId !== projectId),
@@ -85,7 +112,14 @@ export async function addConversationToProject(
   projectId: string,
   input: ProjectConversationInput,
 ): Promise<ProjectConversation> {
-  const state = await getProjectContextState();
+  return withProjectMutation((state) => addConversationToProjectState(state, projectId, input));
+}
+
+async function addConversationToProjectState(
+  state: ProjectContextState,
+  projectId: string,
+  input: ProjectConversationInput,
+): Promise<ProjectConversation> {
   const project = state.projects.find((item) => item.id === projectId);
   if (!project) throw new Error(`Project not found: ${projectId}`);
 
@@ -101,7 +135,7 @@ export async function addConversationToProject(
     lastSeenAt: now,
   };
 
-  await saveProjectContextState({
+  await writeProjectContextState({
     ...state,
     projects: state.projects.map((item) => item.id === projectId ? { ...item, updatedAt: now } : item),
     conversations: [
@@ -117,57 +151,66 @@ export async function addConversationToProject(
 export async function refreshProjectConversation(
   input: ProjectConversationInput,
 ): Promise<ProjectConversation | null> {
-  const state = await getProjectContextState();
-  const conversationId = requiredTrimmed(input.conversationId, 'Conversation id');
-  const existing = state.conversations.find((item) => item.conversationId === conversationId);
-  if (!existing) return null;
+  return withProjectMutation(async (state) => {
+    const conversationId = requiredTrimmed(input.conversationId, 'Conversation id');
+    const existing = state.conversations.find((item) => item.conversationId === conversationId);
+    if (!existing) return null;
 
-  const now = Date.now();
-  const conversation: ProjectConversation = {
-    ...existing,
-    title: selectConversationTitle(input.title, existing.title),
-    url: normalizeConversationUrl(input.url ?? existing.url),
-    lastSeenAt: now,
-  };
+    const now = Date.now();
+    const conversation: ProjectConversation = {
+      ...existing,
+      title: selectConversationTitle(input.title, existing.title),
+      url: normalizeConversationUrl(input.url ?? existing.url),
+      lastSeenAt: now,
+    };
 
-  await saveProjectContextState({
-    ...state,
-    projects: state.projects.map((item) => item.id === existing.projectId ? { ...item, updatedAt: now } : item),
-    conversations: state.conversations.map((item) => item.conversationId === conversationId ? conversation : item),
+    await writeProjectContextState({
+      ...state,
+      projects: state.projects.map((item) => item.id === existing.projectId ? { ...item, updatedAt: now } : item),
+      conversations: state.conversations.map((item) => item.conversationId === conversationId ? conversation : item),
+    });
+    return conversation;
   });
-
-  return conversation;
 }
 
 export async function removeConversationFromProject(conversationId: string): Promise<void> {
-  const state = await getProjectContextState();
-  await saveProjectContextState({
-    ...state,
-    conversations: state.conversations.filter((item) => item.conversationId !== conversationId),
+  await withProjectMutation(async (state) => {
+    await writeProjectContextState({
+      ...state,
+      conversations: state.conversations.filter((item) => item.conversationId !== conversationId),
+    });
   });
 }
 
 export async function setPendingProjectContext(projectId: string | null): Promise<void> {
-  const state = await getProjectContextState();
-  const exists = projectId === null || state.projects.some((project) => project.id === projectId);
-  if (!exists) throw new Error(`Project not found: ${projectId}`);
-  await saveProjectContextState({
-    ...state,
-    pendingProjectId: projectId,
+  await withProjectMutation(async (state) => {
+    const exists = projectId === null || state.projects.some((project) => project.id === projectId);
+    if (!exists) throw new Error(`Project not found: ${projectId}`);
+    await writeProjectContextState({
+      ...state,
+      pendingProjectId: projectId,
+    });
   });
 }
 
 export async function bindPendingProjectConversation(
   input: ProjectConversationInput,
 ): Promise<ProjectConversation | null> {
-  const state = await getProjectContextState();
-  if (!state.pendingProjectId) return null;
-  const projectExists = state.projects.some((project) => project.id === state.pendingProjectId);
-  if (!projectExists) {
-    await saveProjectContextState({ ...state, pendingProjectId: null });
-    return null;
-  }
-  return addConversationToProject(state.pendingProjectId, input);
+  return withProjectMutation(async (state) => {
+    if (!state.pendingProjectId) return null;
+    const projectExists = state.projects.some((project) => project.id === state.pendingProjectId);
+    if (!projectExists) {
+      await writeProjectContextState({ ...state, pendingProjectId: null });
+      return null;
+    }
+    return addConversationToProjectState(state, state.pendingProjectId, input);
+  });
+}
+
+function withProjectMutation<T>(
+  operation: (state: ProjectContextState) => Promise<T>,
+): Promise<T> {
+  return withSyncLocalStateLock(async () => operation(await getProjectContextState()));
 }
 
 export async function getProjectForConversation(conversationId: string): Promise<ProjectContext | null> {
