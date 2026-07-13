@@ -43,9 +43,4 @@ export const PLATFORM_CURRENT_GAPS = [
     currentBehavior: 'legacy-null-environment-means-supported',
     target: 'loaded-explicit-capability-state-after-T3.2',
   },
-  {
-    name: 'Android TypeScript and Kotlin producers disagree on file picker support',
-    currentBehavior: 'typescript-true-kotlin-false',
-    target: 'single-serializable-android-capability-contract-after-T3.2',
-  },
 ] as const;

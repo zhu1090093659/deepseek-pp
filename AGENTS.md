@@ -14,7 +14,7 @@ DeepSeek++ is a WXT/React/TypeScript MV3 browser extension that adds agentic mem
 - persist user state in IndexedDB and browser storage;
 - integrate optional MCP, Native Host, sync, sandbox, Side Panel, and floating-chat surfaces.
 
-Chrome, Edge, and Firefox are supported extension targets. Android is an experimental WebView shell and is not assumed to have full browser-extension parity.
+Chrome, Edge, and Firefox on desktop are the only supported product targets. Android, mobile WebView shells, and mobile packages are outside the current product scope.
 
 ## Truth Sources
 
@@ -46,7 +46,7 @@ When prose and executable behavior disagree, verify the code and tests, then upd
 - Cross-runtime and external-I/O contracts must be serializable and validated at the receiving trust boundary.
 - Before privileged runtime, Port, MessagePort, or frame dispatch, derive authority only from browser-provided sender, tab, frame, document, WindowProxy, and receiver-owned correlation state, then run the direction-specific codec. Message-declared source, tab, frame, session, or request IDs are routing claims, not identity; MAIN-world payloads remain untrusted. Opaque sandbox `postMessage('*')` is allowed only with exact source/origin checks and strict request correlation.
 - Every production tool execution must pass through the runtime authorization path before payload rehydration or provider execution. Page/model calls require a background-owned grant that binds the receiver-owned document/session, advertised descriptor security snapshot, canonical provider/mode/risk, request identity, and one-time call reservation; caller-supplied ToolCall metadata is never authorization evidence.
-- Android may inject its native bridge and web bundle only for the parsed `https://chat.deepseek.com` origin on the default HTTPS port. The bridge must use an exact-origin, main-frame WebMessage listener and one versioned structured dispatcher with explicit command/storage/runtime allowlists; never restore a global `JavascriptInterface`, arbitrary preference access, or a broad fallback when the safe WebView feature is unavailable.
+- Do not add an Android project, mobile WebView bridge, mobile platform kind, build job, test surface, documentation claim, or release path unless the user explicitly reopens that product scope.
 - Content capabilities own explicit, idempotent `start/stop` lifecycles and all listeners, observers, timers, DOM roots, and mutable state they create.
 - Background entrypoints are composition/lifecycle roots; domain behavior belongs in typed handlers and services.
 - Do not add broad catches, silent defaults, mock-success paths, or unlogged fallbacks to make failures disappear. Best-effort behavior must be explicit, bounded, and tested.
@@ -54,7 +54,7 @@ When prose and executable behavior disagree, verify the code and tests, then upd
 ## Security Baseline
 
 - Never hardcode secrets, API keys, credentials, or tokens.
-- Validate and sanitize external input at page, runtime-message, native-host, sync, network, and Android bridge boundaries before privileged work.
+- Validate and sanitize external input at page, runtime-message, native-host, sync, and network boundaries before privileged work.
 - Keep public security Issues limited to repair goals and verifiable outcomes. Detailed trust-boundary or exploit evidence stays in local analysis until disclosure is appropriate.
 
 ## Testing and Validation
@@ -69,14 +69,12 @@ Run applicable validation in this order:
    Update prompt goldens only through `npm run prompt:freeze:update`, after the active Issue explicitly authorizes the byte change and the generated diff has been reviewed.
    Keep runtime, bridge, tool-record, and sandbox contract fixtures synchronized with every cross-runtime contract change. Label malformed behavior that is merely accepted today as a `current-gap` with its owning follow-up; never promote it to a legal fixture without an explicit compatibility decision.
    Keep historical IndexedDB, local-storage, and sync fixtures synchronized with every persistence contract change. Data-loss, silent-default, filtered-row, partial-commit, and future-version behavior must remain labeled migration gaps with an owning follow-up; never treat those paths as successful compatibility.
-   Keep DeepSeek route/SSE, generated-manifest/capability, MCP/Native envelope, Shell catalog/installer, and Android-minimum fixtures synchronized with every external-runtime contract change. Keep accepted-unknown and degraded behavior labeled with an owning follow-up; Android remains a security/shared-contract target, not a browser-parity promise.
+   Keep DeepSeek route/SSE, generated-manifest/capability, MCP/Native envelope, and Shell catalog/installer fixtures synchronized with every external-runtime contract change. Keep accepted-unknown and degraded behavior labeled with an owning follow-up.
 4. Affected browser builds; use `npm run build:all` for cross-browser or closure tasks.
 5. `npm run verify:manifest-policy` and `npm run verify:extension-utf8` when manifests, assets, permissions, or build output change.
 6. The narrow smoke test for the changed runtime, followed by `npm run ci:quality` at compatibility/release closure.
 
 Backend/unit tests use a hard 60-second timeout. After timeout or interruption, verify the process group exited and no orphaned Vitest/test child remains. Starting a server or host is not smoke evidence; exercise at least one real command or tool call.
-
-Android validation must state whether JDK/Gradle tooling was available. Do not claim Android runtime verification from browser builds or JavaScript-only tests.
 
 ## Spec-Driven Tracking
 

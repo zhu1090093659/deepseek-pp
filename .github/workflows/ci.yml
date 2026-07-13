@@ -47,26 +47,3 @@ jobs:
 
       - name: Run quality gates
         run: npm run ci:quality
-
-  android-unit:
-    name: Android JVM contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '8.9'
-
-      - name: Run Android JVM tests
-        run: npm run test:android -- --no-daemon

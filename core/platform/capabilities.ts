@@ -1,6 +1,6 @@
 import { readOptionalChromeApi } from './chrome-api';
 
-export type PlatformKind = 'browser_extension' | 'android_webview' | 'unknown';
+export type PlatformKind = 'browser_extension' | 'unknown';
 
 export type PlatformCapability =
   | 'storage'
@@ -136,32 +136,6 @@ export function getCurrentBrowserExtensionEnvironment(): PlatformEnvironment {
 }
 
 export function getCurrentPlatformEnvironment(): PlatformEnvironment {
-  const androidBridge = typeof window !== 'undefined'
-    ? (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge
-    : undefined;
-  if (androidBridge) {
-    return {
-      kind: 'android_webview',
-      name: 'Android WebView',
-      capabilities: createCapabilityMap({
-        storage: true,
-        runtimeMessaging: true,
-        downloads: false,
-        filePicker: true,
-        folderPicker: false,
-        assetUrl: true,
-        sidePanel: false,
-        nativeMessaging: false,
-        contextMenus: false,
-        alarms: false,
-        tabs: false,
-        tabGroups: false,
-        debugger: false,
-        browserControl: false,
-        accessibilityTree: false,
-      }),
-    };
-  }
   if (safeChromeRuntime()) return getCurrentBrowserExtensionEnvironment();
   return {
     kind: 'unknown',

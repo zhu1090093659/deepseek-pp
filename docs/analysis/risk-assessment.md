@@ -9,7 +9,7 @@ This document is the public risk summary for the `core-refactor-2026-07` run. It
 | S — Single Purpose | At risk | Content, background, Side Panel, interceptor, and Native Host hotspots own multiple domains and lifecycles. | High |
 | U — Unidirectional Flow | At risk | Root contracts, tool/provider registration, platform access, and sync composition have reverse or cyclic dependencies. | High |
 | P — Ports over Implementation | Partial | Export and transport modules contain useful ports, but runtime, persistence, and environment boundaries are not consistently authoritative. | High |
-| E — Environment-Agnostic | At risk | Browser and Android capability/degradation behavior is not represented by one shared, tested contract. | High |
+| E — Environment-Agnostic | At risk | Browser capability/degradation behavior is not yet represented by narrow, authoritative ports with real consumers. | High |
 | R — Replaceable Parts | At risk | Replacing protocol, persistence, runtime, or page adapters currently affects unrelated modules. | High |
 
 The refactor therefore starts with compatibility contracts, addresses critical boundaries and failure safety, introduces only narrow ports with real consumers, and then removes superseded paths through a strangler cutover.
@@ -19,15 +19,15 @@ The refactor therefore starts with compatibility contracts, addresses critical b
 | ID | Public risk statement | Impact | Priority | Required public outcome |
 |:--|:--|:--:|:--:|:--|
 | R-01 | Privileged runtime messages need one validated authorization boundary. | Critical | P0 | Legal calls remain compatible; malformed, unauthorized, stale, replayed, and cross-session calls fail before privileged I/O. |
-| R-02 | Android origin and native command exposure are broader than the intended minimum contract. | Critical | P0 | Parsed origin comparison and a structured command allowlist replace broad access without promising browser feature parity. |
+| R-02 | The unsupported Android template created a second platform and security contract. | Resolved | Closed by #345 | Remove the template, bridge, build, CI, tests, and current-support claims; keep PC Chrome/Edge/Firefox as the only product targets. |
 | R-03 | Sync has no generation-level atomic commit or download rollback. | High | P0 | Upload publishes only complete generations; download stages, journals, commits deterministically, and restores the prior state after injected failure. |
 | R-04 | Automation timeout is not yet an end-to-end cancellation contract. | High | P0 | Deadline, abort, lease, and supported idempotency context reach request, stream, and tool boundaries; ambiguous external work is not replayed silently. |
 | R-05 | Persistence version and migration policy is inconsistent across stores. | High | P1 | Historical data migrates deterministically; corrupt/future data fails visibly without overwrite; each concept converges on one truth source. |
 | R-06 | Background and content entrypoints have a large regression and merge radius. | High | P1 | Typed handlers/controllers own one lifecycle and one domain; migrated legacy paths are deleted. |
 | R-07 | Long-lived DOM observation and polling have no measured ownership/budget. | High | P1 | Controllers own and fully tear down their resources; callback/startup/write changes are measured against recorded baselines. |
-| R-08 | Platform abstractions and actual browser/Android capabilities can drift. | High | P1 | Narrow ports have real consumers; Chrome/Edge/Firefox behavior and explicit unsupported degradation remain green. |
+| R-08 | Platform abstractions and actual browser capabilities can drift. | High | P1 | Narrow ports have real consumers; Chrome/Edge/Firefox behavior and explicit unsupported degradation remain green. |
 | R-09 | Timeout, cancellation, retry, and body budgets vary by network/runtime path. | High | P1 | Migrated paths use explicit, compatible failure and recovery contracts without hidden fallback. |
-| R-10 | Current tests do not cover every migration, fault, browser-runtime, or Android boundary. | High | P1 | Each behavior-changing task adds targeted executable evidence; final closure runs all applicable repository gates. |
+| R-10 | Current tests do not cover every migration, fault, or browser-runtime boundary. | High | P1 | Each behavior-changing task adds targeted executable evidence; final closure runs all applicable repository gates. |
 | R-11 | Floating-chat permission and lifecycle state can disagree across UI/runtime surfaces. | Medium | P2 | One state machine covers disabled, permission-missing, ready, and context-invalidated behavior while preserving existing user settings. |
 | R-12 | Heavy assets and hot runtime paths lack stable performance budgets. | Medium | P2 | Performance work records before/after evidence and keeps every compatibility fixture green. |
 
@@ -49,7 +49,6 @@ The v1.10.0 baseline passes the current Vitest suite, TypeScript compile, prompt
 - historical IndexedDB migrations and future-version protection;
 - sync fault recovery and restart idempotency;
 - exhaustive runtime/bridge authorization behavior;
-- Android runtime behavior on a JDK/Gradle-capable environment;
 - steady-state DOM, startup, bundle, or persistence-write performance.
 
 Those gaps are assigned to the specific tasks in [`docs/plan/task-breakdown.md`](../plan/task-breakdown.md); they are not deferred to an unbounded standalone testing program.

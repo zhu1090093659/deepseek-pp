@@ -19,7 +19,8 @@ flowchart TD
         T15 --> T21
         T21 --> T22["T2.2 Tool authorization context"]
         T12 --> T22
-        T15 --> T23["T2.3 Android bridge"]
+        T15 --> T23["T2.3 Historical Android bridge hardening"]
+        T23 --> T23A["T2.3A Remove Android support surface"]
         T14 --> T24["T2.4 Atomic sync upload"]
         T24 --> T25["T2.5 Staged sync rollback"]
         T13 --> T26["T2.6 Automation cancellation"]
@@ -30,7 +31,7 @@ flowchart TD
         T21 --> T31["T3.1 Runtime command map"]
         T22 --> T31
         T15 --> T32["T3.2 Narrow platform ports"]
-        T23 --> T32
+        T23A --> T32
         T25 --> T33["T3.3 Persistence codecs and repositories"]
         T32 --> T33
         T26 --> T34["T3.4 DeepSeek protocol and adapters"]
@@ -81,7 +82,7 @@ flowchart TD
 | Phase | Parallel Work | Required Serial Merge |
 |:--|:--|:--|
 | 1 | T1.2, T1.3, T1.4, and T1.5 after T1.1 | Merge contract indexes once after all fixture lanes finish. |
-| 2 | Runtime/tool, Android, sync, and automation lanes | T2.1 → T2.2; T2.4 → T2.5; merge runtime/tool before rebasing automation wiring. |
+| 2 | Runtime/tool, platform-scope, sync, and automation lanes | T2.1 → T2.2; T2.3 → T2.3A; T2.4 → T2.5; merge runtime/tool before rebasing automation wiring. |
 | 3 | Command/tool, platform/persistence, and DeepSeek lanes | T3.1 → T3.5; T3.2 → T3.3; central contract integration last. |
 | 4 | Background, content, Side Panel, and Shell Host lanes | Only one owner edits each central entrypoint; T4.2 → T4.3. |
 | 5 | None | T5.1 → T5.2; this is the single compatibility-integration lane. |

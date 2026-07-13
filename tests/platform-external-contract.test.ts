@@ -15,7 +15,6 @@ import {
 } from './fixtures/external-runtime/platform';
 
 afterEach(() => {
-  delete (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge;
   vi.unstubAllGlobals();
 });
 
@@ -89,23 +88,22 @@ describe('external platform capability contract', () => {
     expect(request).toHaveBeenCalledWith({ origins: ['https://mcp.example.test/*'] });
   });
 
-  it('records manifest/capability and Android double-truth behavior as T3.2 gaps', () => {
+  it('records manifest/capability gaps while unknown environments fail closed', () => {
     expect(isShellNativeHostSupported(null)).toBe(true);
 
     vi.stubGlobal('chrome', chromiumApiProfile());
     expect(getCurrentBrowserExtensionEnvironment().capabilities.downloads).toBe(true);
 
     vi.unstubAllGlobals();
-    (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge = {};
-    const android = getCurrentPlatformEnvironment();
-    expect(android.capabilities.filePicker).toBe(true);
-    expect(android.capabilities.nativeMessaging).toBe(false);
+    const unknown = getCurrentPlatformEnvironment();
+    expect(unknown.kind).toBe('unknown');
+    expect(Object.values(unknown.capabilities).every((supported) => !supported)).toBe(true);
+    expect(isShellNativeHostSupported(unknown)).toBe(false);
 
     expect(PLATFORM_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
       'manifest-aligned-capability-port-after-T3.2',
       'manifest-aligned-capability-port-after-T3.2',
       'loaded-explicit-capability-state-after-T3.2',
-      'single-serializable-android-capability-contract-after-T3.2',
     ]);
   });
 });

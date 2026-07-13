@@ -8,7 +8,7 @@ This directory is the compatibility firewall for the `core-refactor-2026-07` run
 |:--|:--|:--|
 | Prompt bytes, tool XML, inline agent, runtime messages, MAIN/content bridge, sandbox | [Prompt and Runtime](./prompt-and-runtime.md) and [Runtime Command Inventory](./runtime-command-inventory.md) | T1.2 / [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312), T1.3 / [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) |
 | Storage keys, IndexedDB identity, schemas, sync, export | [Persistence and Sync](./persistence-and-sync.md) | T1.4 / [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) |
-| Chrome, Edge, Firefox, DeepSeek, MCP, Native Host, Shell Host, Android minimum | [Platform and Integrations](./platform-and-integrations.md) | T1.5 / [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) |
+| PC Chrome, Edge, Firefox, DeepSeek, MCP, Native Host, Shell Host | [Platform and Integrations](./platform-and-integrations.md) | T1.5 / [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315); Android rows retired by [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) |
 
 ## How to Read a Contract
 
@@ -30,12 +30,12 @@ Every registry row has a stable ID and the following fields:
 3. For versioned data, decode historical versions, migrate deterministically and idempotently, and write the current version only after validation succeeds.
 4. Unknown future versions and corrupt records must fail visibly without overwriting the original bytes or records.
 5. Any operation spanning multiple durable records needs either an atomic commit point or a recovery journal. Partial success is not a compatible success result.
-6. Browser/runtime differences must be represented as capabilities and explicit unsupported results. Android remains a security/shared-contract target, not a browser feature-parity target.
+6. Browser/runtime differences must be represented as capabilities and explicit unsupported results. Chrome, Edge, and Firefox on PC are the only supported product targets.
 7. Update the relevant registry row and its executable fixture in the same behavior-changing pull request.
 
 ## Baseline and Validation
 
-T1.1 is documentation-only and does not change production behavior. The baseline has already passed 63 test files / 359 tests, TypeScript compilation, the current 10-case prompt source freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, and production audit. Android runtime checks were unavailable on the baseline machine because JDK/Gradle were not installed.
+T1.1 is documentation-only and does not change production behavior. The baseline has already passed 63 test files / 359 tests, TypeScript compilation, the current 10-case prompt source freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, and production audit.
 
 The current repository commands referenced by this registry are:
 
@@ -51,4 +51,4 @@ npm run smoke:mcp
 npm run smoke:shell
 ```
 
-T1.2-T1.5 supply executable prompt bytes, cross-runtime messages, historical persistence, cross-browser manifests/capabilities, DeepSeek/MCP protocols, Native Host framing, Shell installer/catalog, and Android-minimum staging evidence. Rows marked `Current-only` remain inventory rather than proof until replaced by an executable fixture.
+T1.2-T1.5 supply executable prompt bytes, cross-runtime messages, historical persistence, cross-browser manifests/capabilities, DeepSeek/MCP protocols, Native Host framing, and Shell installer/catalog evidence. T1.5's former Android-minimum rows and fixtures were retired by #345 rather than preserved as a current compatibility promise. Rows marked `Current-only` remain inventory rather than proof until replaced by an executable fixture.

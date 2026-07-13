@@ -8,18 +8,20 @@
 
 用户于 2026-07-13 确认本轮任务名为 **DeepSeek++ Reliability and Compatibility Refactor**，并确定以下执行边界：
 
-1. **Scope**：主范围包含 Chrome/Edge/Firefox 扩展、Shell Native Host、同步、持久化和自动化；Android 只处理安全与跨平台契约，不做全面功能对齐。
+1. **Scope**：主范围包含 PC 端 Chrome/Edge/Firefox 扩展、Shell Native Host、同步、持久化和自动化；Android、移动 WebView 和移动安装包不再属于产品范围。
 2. **Strategy**：采用 compatibility-contract-first 的渐进式重构。先固定历史数据和行为合同，再修安全/数据/取消语义，之后建立有真实消费者的 ports、拆分大型入口，最后依据测量结果优化性能。
 3. **Compatibility**：保留全部现有用户功能、prompt 输出、storage keys、IndexedDB、sync/MCP/runtime message/Native Host 契约和 Chrome/Edge/Firefox 支持；任何 schema 变化必须有显式 migration，不允许静默丢弃旧数据。
 4. **Testing policy**：不把建设完整 E2E、coverage 或 performance 基础设施作为独立项目目标；但任何行为、数据、安全、schema、routing、permission、persistence 或 caching 变更都必须增加或更新相应自动化测试，并通过现有相关质量门。
 5. **Tracking**：使用 `GITHUB_STANDARD` 的 Issues + Milestones + PR；不创建 Project board。安全敏感任务的公开 Issue 只描述修复目标和可公开验收条件，详细信任边界证据保留在本地分析中。
 6. **Governance**：`AGENTS.md` 是唯一 agent instruction truth source。根 `CLAUDE.md` 不再使用；若存在则先把仍有效内容合并进 `AGENTS.md` 后删除。当前根 `CLAUDE.md` 已不存在；`videos/deepseek-pp-promo/CLAUDE.md` 与同目录 `AGENTS.md` 完全相同，已保留后者并删除重复文件。
-7. **Deferred**：Android 全功能 parity、任意全局 coverage 数字、独立的大型测试平台建设，以及没有现有消费者的预留 abstraction。
+7. **Deferred**：任意全局 coverage 数字、独立的大型测试平台建设，以及没有现有消费者的预留 abstraction。
+
+2026-07-13 范围修订：Issue [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) 取代此前的 Android 最小兼容计划，删除 Android 模板、桥接、构建、CI 和测试支持面。T1.5/T2.3 的 Android 记录仅保留为历史执行证据。
 
 ## Analysis Snapshot
 
-- 分支：`main`
-- HEAD：`165ec46`（`Release DeepSeek++ 1.10.0`）
+- 分支：`codex/345-remove-android-template`
+- 基线 HEAD：`6daa2a2`（T2.3 merge），本快照包含 #345 的 PC-only 范围变更
 - 日期：2026-07-13
 - 当前工作树包含用户已有、未提交的浮窗兼容性改动：
   - `core/platform/chrome-api.ts`
@@ -27,15 +29,15 @@
   - `tests/chat-launcher.test.ts`（未跟踪）
 - 本轮没有改动上述文件；源码统计和验证包含当前工作树状态。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
-  - `core/`：163 个 TypeScript 文件，约 30,184 行
-  - `entrypoints/`：54 个 TypeScript/TSX 文件，约 23,817 行
-  - `packages/shell-host/`：约 2,735 行 MJS
-  - `tests/`：63 个测试文件，约 10,802 行
-  - `scripts/`：18 个脚本，约 3,281 行
+  - `core/`：178 个 TypeScript/TSX 文件，约 32,878 行
+  - `entrypoints/`：54 个 TypeScript/TSX 文件，约 24,423 行
+  - `packages/shell-host/`：3 个脚本，约 2,762 行
+  - `tests/`：97 个测试/fixture 源文件，约 16,487 行
+  - `scripts/`：16 个脚本，约 3,109 行
 
 ## Current Architecture
 
-DeepSeek++ 是一个多运行时 WebExtension 系统，而不是单一 React 页面。它同时包含 MV3 service worker、DeepSeek 页面隔离世界与 MAIN world 脚本、React Side Panel/Sidebar、全网页悬浮聊天入口、浏览器沙箱、Native Messaging Host 和实验性 Android WebView 外壳。
+DeepSeek++ 是一个面向 PC 浏览器的多运行时 WebExtension 系统，而不是单一 React 页面。它包含 MV3 service worker、DeepSeek 页面隔离世界与 MAIN world 脚本、React Side Panel/Sidebar、全网页悬浮聊天入口、浏览器沙箱和 Native Messaging Host。
 
 ```mermaid
 flowchart LR
@@ -52,7 +54,6 @@ flowchart LR
     BG --> Offscreen["Offscreen sandbox relay"]
     Offscreen --> Runner["Sandbox iframe + Worker"]
     Runner --> Pyodide["Bundled Pyodide"]
-    Android["Android WebView shell"] --> Page
 ```
 
 ### Runtime Flow
@@ -68,7 +69,7 @@ flowchart LR
 
 | Layer | Current | Transformation Position |
 |:--|:--|:--|
-| Language | TypeScript 5.9 / ESM；Android Kotlin | 保留；是否调整 target 由兼容性合同决定 |
+| Language | TypeScript 5.9 / ESM | 保留；是否调整 target 由兼容性合同决定 |
 | Extension framework | WXT 0.20，MV3 | 保留，强化平台适配边界 |
 | UI | React 19、Tailwind CSS 4、React Markdown | 保留，按 feature/controller 拆分 |
 | Local persistence | Chrome storage、Dexie/IndexedDB | 保留 key/DB identity，补迁移和事务合同 |
@@ -77,7 +78,6 @@ flowchart LR
 | Test | Vitest 4 + jsdom | 保留并增加真实浏览器、迁移和 fault-path 验证 |
 | Build/release | npm workspaces、WXT、GitHub Actions | 保留三浏览器与 release gate |
 | Native integration | Node Native Messaging Host | 保留协议，拆分单体实现 |
-| Android | Android WebView + JavaScriptInterface | 仅处理 origin/bridge 安全与共享契约，不做浏览器功能 parity |
 
 ## Entry Points
 
@@ -91,7 +91,6 @@ flowchart LR
 | `entrypoints/sandbox-offscreen/` | Offscreen 到 sandbox iframe 中继 | Chromium API 依赖，需要明确降级合同 |
 | `entrypoints/sandbox-runner/` | JS/TS/Python/HTML 运行 | 多层重复校验，合同尚未单一化 |
 | `packages/shell-host/` | Native Host 安装和 MCP 工具 | 主 host 文件约 2,141 行、跨平台安全边界集中 |
-| `android/` | WebView 外壳、原生 bridge、JS shim | 与浏览器能力和数据合同存在漂移 |
 
 ## Persistence and Backward-Compatibility Surface
 
@@ -136,7 +135,6 @@ flowchart LR
 | Prompt compatibility | `npm run prompt:freeze` |
 | Manifest/asset policy | `npm run verify:manifest-policy` / `verify:extension-utf8` |
 | Full quality gate | `npm run ci:quality` |
-| Android staging/build/test | `npm run build:android` / `android:assemble:debug` / `test:android` |
 
 ## Testing Baseline
 
@@ -158,7 +156,6 @@ flowchart LR
 - 没有 coverage gate、bundle budget、DOM performance budget 或 background cold-start budget。
 - 没有真实 Dexie/IndexedDB 历史 migration 测试；artifact tests 明确禁用了 IndexedDB。
 - 没有 sync partial-failure/rollback fault injection。
-- Android 本机缺少 JDK/Gradle，无法执行当前 Android build/test；CI 也未纳入 Android。
 - `ci:quality` 只在 Ubuntu/Node 22 执行，未做浏览器运行时矩阵。
 
 ## Project Governance Baseline and Resolution
@@ -190,7 +187,6 @@ flowchart LR
 | Chrome Debugger Protocol | `core/browser-control/` |
 | OpenAI/Gemini multimodal provider settings | `core/multimodal/` |
 | Pyodide | `core/sandbox/python-worker.ts` |
-| Android WebView | `android/` |
 
 ## Architectural Starting Point
 

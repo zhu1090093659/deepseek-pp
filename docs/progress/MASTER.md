@@ -11,7 +11,7 @@
 
 - **Project Board**: Not used in `GITHUB_STANDARD` mode.
 - **Run labels**: `spec-driven` + `spec:core-refactor-2026-07`
-- **Issue range**: [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) through [#336](https://github.com/zhu1090093659/deepseek-pp/issues/336)
+- **Issue range**: [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) through [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345)
 - **Task state authority**: GitHub Issues; this file is the local continuity index.
 - **Adaptive state authority**: Each GitHub Milestone description; task telemetry is recorded in Issue comments before closure.
 
@@ -31,7 +31,7 @@
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
-| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 4 | 2 | 6 |
+| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 4 | 3 | 7 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 |
@@ -48,7 +48,8 @@
 | T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | closed |
 | T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | closed |
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | closed |
-| T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | open |
+| T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | closed; superseded by T2.3A |
+| T2.3A | [#345](https://github.com/zhu1090093659/deepseek-pp/issues/345) | Remove Android template and support surface | open |
 | T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | open |
 | T2.5 | [#320](https://github.com/zhu1090093659/deepseek-pp/issues/320) | Add staged sync download, journal, and rollback | open |
 | T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | open |
@@ -92,7 +93,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 ## Phase Checklist
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
-- [ ] Phase 2: Critical Boundaries and Failure Safety (2/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
+- [ ] Phase 2: Critical Boundaries and Failure Safety (3/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
@@ -102,13 +103,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
 
-**Active Task**: T2.3 / [Issue #318](https://github.com/zhu1090093659/deepseek-pp/issues/318) — Minimize Android WebView native bridge.
+**Active Task**: T2.3A / [Issue #345](https://github.com/zhu1090093659/deepseek-pp/issues/345) — Remove Android template and support surface.
 
-**Execution Branch**: `codex/318-android-native-bridge`
+**Execution Branch**: `codex/345-remove-android-template`
 
-**Blockers**: None. This machine still lacks a usable JDK/Android SDK, but the hosted JDK 17 + Gradle 8.9 contract compiles the Android app and runs its JVM suite; the isolated worktree keeps the original repository's user-owned changes untouched.
+**Blockers**: None. Work is isolated from the original repository's user-owned changes. T2.4 remains paused in its clean worktree until this scope-change task closes.
 
-**Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and Android asset staging passing. Android runtime validation was unavailable because this machine lacked a usable JDK/Gradle.
+**Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, and PoW/MCP/mock/Shell smoke passing. Its former Android evidence is historical and retired by #345; current validation is PC-browser-only.
 
 **T1.1 Evidence**:
 
@@ -165,7 +166,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - The bridge contract adds the additive `REQUEST_TERMINAL` event and request-owned augmentation metadata, moving the executable bridge inventory from 13 to 14 types. Prompt-visible tool ordering and legal `ToolCall`, `ToolResult`, history, and manual/high-risk mode semantics remain unchanged.
 - Full `npm run ci:quality` passed: 83 files / 583 tests, seven prompt goldens, TypeScript compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. A separate 60-second full-test run passed, `git diff --check` is clean, and three independent contract reviews found no remaining blocker after the response-terminal, retry-state, provider-identity, and cache-expiry fixes. PR #343 merged at `279cb3e`; Issue #317 closed and Milestone #44 advanced to 2/6 with zero cumulative drift.
 
-**T2.3 Evidence (implementation complete; closure pending)**:
+**T2.3 Evidence (closed; historical and superseded by T2.3A)**:
 
 - Replaced four string-prefix trust decisions with one pure parsed scheme/host/effective-port policy used by intent loading, WebView navigation, source-origin checks, and bundle injection. External launch failure is fail-closed.
 - Removed global `addJavascriptInterface` and all seven legacy public native methods. AndroidX WebKit 1.16.0 now provides an exact-origin WebMessage listener; callbacks require the trusted main frame and the bundle stays disabled when the feature is unavailable.
@@ -173,7 +174,14 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Added Android compatibility for T2.2's authorization lifecycle through bounded empty-descriptor grants while keeping tool execution, payload chunks, sandbox, MCP mutation, and browser parity unsupported.
 - Strict JSON decoding rejects Android `org.json` extensions, trailing input, duplicate keys, and Unicode-escape-equivalent keys before platform parsing. Fake-store JVM tests cover storage atomicity/corruption and the bounded authorization lifecycle; three independent contract reviews report no remaining P0/P1/P2.
 - Full local and hosted `npm run ci:quality` passed with 84 files / 592 tests, seven prompt goldens, TypeScript compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. The separate 60-second full suite passed, Android staging produced 35 files with a byte-identical shim, and no orphan Vitest/Gradle process remained.
-- Local `testDebugUnitTest` fails explicitly because no JDK is installed. Hosted run `29254635243` compiled the Android app with aligned Java/Kotlin 17 targets and passed all 15 JVM tests; its repository quality job also passed. Two earlier Android runs exposed and drove removal of the JVM-target mismatch and platform-`org.json` assumptions rather than being bypassed.
+- Local `testDebugUnitTest` fails explicitly because no JDK is installed. Hosted run `29254928324` compiled the Android app with aligned Java/Kotlin 17 targets and passed all 15 JVM tests; its repository quality job also passed. Two earlier Android runs exposed and drove removal of the JVM-target mismatch and platform-`org.json` assumptions rather than being bypassed.
+- PR #344 merged at `6daa2a2946dd7aec9192e888d8b6323aca21ad55`; Issue #318 closed after telemetry was recorded, and Milestone #44 advanced to 3/6 with zero cumulative drift before the user changed the supported-platform scope.
+
+**T2.3A Evidence (in progress)**:
+
+- User scope changed to PC Chrome/Edge/Firefox only. Issue #345 and isolated branch `codex/345-remove-android-template` were created; Milestone #44 was rescaled to seven tasks with one recorded scope drift.
+- Android project, bridge/shim, build scripts, package commands, JVM CI job, and Android-specific tests/fixtures are removed. Platform detection now has one supported browser-extension kind and an explicit all-false `unknown` degradation path.
+- `AGENTS.md`, public README files, compatibility registries, analysis, plan, and this tracker now state one PC-only product boundary while retaining historical release/progress evidence as superseded rather than rewriting history.
 
 ## Governance Status
 
@@ -196,9 +204,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Record T2.3 telemetry on Issue #318.
-2. Merge PR #344 after its green Android JVM, contribution, and repository quality checks.
-3. Verify Issue #318 closure, advance Milestone #44 to 3/6, and continue with T2.4.
+1. Complete targeted/full validation and diff review for T2.3A / Issue #345.
+2. Record telemetry, merge the T2.3A PR, close #345, and advance Milestone #44 to 4/7.
+3. Resume T2.4 / Issue #319 from its clean isolated worktree.
 
 ## Session Log
 
@@ -228,3 +236,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T2.2 closure | Merged PR #343 at `279cb3e`, closed Issue #317, recorded telemetry, and advanced Milestone #44 to 2/6 completed with zero cumulative drift. |
 | 2026-07-13 | T2.3 execution start | Opened isolated branch `codex/318-android-native-bridge` from `279cb3e`; audited navigation, native bridge, shim, content runtime dependencies, persistence keys, capabilities, Android tooling, and official WebView security contracts. |
 | 2026-07-13 | T2.3 implementation | Replaced prefix checks and global JavascriptInterface with parsed navigation plus exact-origin/main-frame WebMessage, introduced a bounded versioned allowlist dispatcher, preserved the Android chat bootstrap after T2.2, removed arbitrary storage and fake downloads, and added JVM/JS/static negative coverage. |
+| 2026-07-13 | T2.3 closure | Merged PR #344 at `6daa2a2`, closed Issue #318 after telemetry, and advanced Milestone #44 to 3/6 completed with zero cumulative drift. |
+| 2026-07-13 | Platform scope change | User ended Android support and limited the product to PC Chrome/Edge/Firefox; opened T2.3A / Issue #345 and rescaled Milestone #44 to 7 tasks with drift score 1. |
+| 2026-07-13 | T2.3A execution start | Paused T2.4 in a clean worktree, opened `codex/345-remove-android-template` from `6daa2a2`, and removed the Android product/build/runtime/test surface while preserving explicit unknown-environment degradation. |

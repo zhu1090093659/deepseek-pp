@@ -562,7 +562,7 @@ npm run shell:install -- --browser chrome --extension-id <扩展ID>
 | 权限和隐私边界 | Chrome / Edge 包新增浏览器控制所需权限；功能默认关闭，只有用户启用并选择目标标签页后才会提供页面文本快照和浏览器动作工具。 |
 | 侧边栏反馈 | 保存项、项目上下文和提示词控制补强成功、失败、后端不可用等状态提示，操作结果更明确。 |
 | Skill 管理 | 第三方 Skill 按来源分组展示，并支持独立启用、停用、检查更新和同步，降低大型 Skill 库的管理成本。 |
-| 平台能力 | 能力页会区分浏览器扩展、Android WebView 和不支持平台的功能边界，避免把不可用能力显示成可用。 |
+| 平台能力 | 当时的能力页会区分浏览器扩展、实验性移动端外壳和不支持平台；移动端外壳现已移除，当前仅支持 PC 端 Chrome、Edge 和 Firefox。 |
 | 回归覆盖 | 新增浏览器控制、侧边栏交互、运行时广播、平台能力和 Skill 本地化测试，发布前继续覆盖多浏览器构建与资产校验。 |
 
 </details>
@@ -903,21 +903,13 @@ npm run build:firefox
 npm run build:all
 ```
 
+当前产品仅支持 PC 端 Chrome、Edge 和 Firefox，不提供 Android 或其他移动端安装包。
+
 Shell MCP host 的 smoke check：
 
 ```bash
 npm run smoke:shell
 ```
-
-### Android WebView 开发者基线
-
-仓库包含 Android WebView 基线，用于验证 DeepSeek++ 的移动端能力边界。当前可运行：
-
-```bash
-npm run build:android
-```
-
-该命令会构建并暂存 Web 资源。APK 构建和 Android 单测需要本机 JDK；没有 JDK 时会明确提示安装后重试。Android 端会禁用浏览器侧边栏、Native Messaging、Shell Host、右键菜单和后台闹钟等浏览器扩展专属能力。
 
 | 浏览器 | 加载入口 | 构建目录 |
 |--------|----------|----------|

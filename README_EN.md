@@ -562,7 +562,7 @@ Thanks to [@maoxin1234](https://github.com/maoxin1234) for improving Shell MCP e
 | Permission and privacy boundaries | Chrome / Edge packages add the permissions needed for Browser Control; the feature stays off by default and only sends text snapshots and browser actions after the user enables it and selects a tab. |
 | Side-panel feedback | Saved items, project material, and prompt controls now show clearer success, failure, and unavailable-state messages. |
 | Skill management | Third-party Skills are grouped by source, with independent enablement, disablement, update checks, and sync. |
-| Platform capabilities | The Capabilities page distinguishes browser extension, Android WebView, and unsupported-platform boundaries so unavailable features are not presented as available. |
+| Platform capabilities | The Capabilities page previously distinguished the browser extension, an experimental mobile shell, and unsupported platforms. The mobile shell has since been removed; current support is limited to PC Chrome, Edge, and Firefox. |
 | Regression coverage | Adds coverage for Browser Control, side-panel interactions, runtime broadcast, platform capabilities, and Skill localization while keeping multi-browser build and asset checks in the release gate. |
 
 </details>
@@ -903,21 +903,13 @@ npm run build:firefox
 npm run build:all
 ```
 
+The product currently supports Chrome, Edge, and Firefox on PC only. No Android or other mobile package is provided.
+
 Shell MCP host smoke check:
 
 ```bash
 npm run smoke:shell
 ```
-
-### Android WebView Developer Baseline
-
-The repository includes an Android WebView baseline for validating DeepSeek++ mobile capability boundaries. The available local staging command is:
-
-```bash
-npm run build:android
-```
-
-This builds and stages the web assets. APK assembly and Android unit tests require a local JDK; without one, the Gradle entry points fail with an explicit install-and-retry message. Android intentionally disables browser-extension-only capabilities such as browser side panels, Native Messaging, Shell Host, context menus, and background alarms.
 
 | Browser | Load entry | Build directory |
 |---------|------------|-----------------|

@@ -10,7 +10,6 @@ import type { PlatformEnvironment } from '../core/platform';
 import type { McpServerTransportConfig } from '../core/mcp/types';
 
 afterEach(() => {
-  delete (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge;
   vi.unstubAllGlobals();
 });
 
@@ -79,23 +78,18 @@ describe('platform capability contracts', () => {
     expect(isCapabilitySupported(environment, 'browserControl')).toBe(true);
   });
 
-  it('detects Android WebView as explicit non-native-messaging platform', () => {
-    (window as typeof window & { AndroidBridge?: unknown }).AndroidBridge = {};
-
+  it('reports unknown with no capabilities outside an extension runtime', () => {
     const environment = getCurrentPlatformEnvironment();
 
-    expect(environment.kind).toBe('android_webview');
-    expect(environment.capabilities.storage).toBe(true);
-    expect(environment.capabilities.nativeMessaging).toBe(false);
-    expect(environment.capabilities.sidePanel).toBe(false);
-    expect(environment.capabilities.browserControl).toBe(false);
+    expect(environment.kind).toBe('unknown');
+    expect(Object.values(environment.capabilities).every((supported) => !supported)).toBe(true);
   });
 
   it('filters native MCP controls when native messaging is unsupported', () => {
     const environment: PlatformEnvironment = {
-      kind: 'android_webview',
-      name: 'Android WebView',
-      capabilities: createCapabilityMap({ storage: true, runtimeMessaging: true }),
+      kind: 'unknown',
+      name: 'Unknown',
+      capabilities: createCapabilityMap({}),
     };
     const kinds: McpServerTransportConfig['kind'][] = ['streamable_http', 'native_messaging', 'stdio_bridge'];
 
