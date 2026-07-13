@@ -1,5 +1,5 @@
 import { getMcpToolDescriptors, refreshMcpServerDiscovery } from '../mcp/discovery';
-import { getAllMcpServers, updateMcpServer } from '../mcp/store';
+import { getAllMcpServers, getMcpToolCache, updateMcpServer } from '../mcp/store';
 import { buildShellAllowlistUpgrade, isShellMcpServer } from '../shell';
 import type {
   LocalSkillImportRequest,
@@ -435,9 +435,14 @@ async function executeShellMcpTool(
   payload: Record<string, unknown>,
   deps: LocalSkillImporterDeps,
 ): Promise<ToolResult> {
+  const descriptorId = `mcp:${server.id}:${name}`;
+  const cache = await getMcpToolCache(server.id);
+  if (!cache?.descriptors.some((descriptor) => descriptor.id === descriptorId)) {
+    await refreshMcpServerDiscovery(server.id);
+  }
   const call = {
     name,
-    descriptorId: `mcp:${server.id}:${name}`,
+    descriptorId,
     provider: {
       kind: 'mcp' as const,
       id: server.id,

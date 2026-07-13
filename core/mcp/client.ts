@@ -23,6 +23,7 @@ import type {
 } from './types';
 import { getExtensionVersion } from '../version';
 import { MCP_PROTOCOL_VERSION } from './constants';
+import { createMcpDescriptorId, createMcpInvocationName } from './descriptor-identity';
 
 const CLIENT_NAME = 'DeepSeek++';
 
@@ -80,6 +81,34 @@ export async function initializeMcpServer(
     },
   );
   const result = unwrapMcpResponse(response, 'mcp_initialize_failed');
+  const rawResult = result as unknown as Record<string, unknown>;
+  const hasAdvertisedProtocolVersion = Object.prototype.hasOwnProperty.call(
+    rawResult,
+    'protocolVersion',
+  );
+  const advertisedProtocolVersion = rawResult.protocolVersion;
+  const protocolVersion = hasAdvertisedProtocolVersion
+    ? advertisedProtocolVersion
+    : MCP_PROTOCOL_VERSION;
+  if (typeof protocolVersion !== 'string' || protocolVersion !== MCP_PROTOCOL_VERSION) {
+    throw new McpProtocolError(
+      'mcp_protocol_version_unsupported',
+      'Unsupported MCP protocol version.',
+      {
+        details: {
+          requestedProtocolVersion: MCP_PROTOCOL_VERSION,
+          advertisedProtocolVersion,
+        },
+      },
+    );
+  }
+  const initialization = {
+    protocolVersion,
+    capabilities: jsonRecordValue(rawResult.capabilities),
+    serverInfo: clientInfoValue(rawResult.serverInfo),
+    instructions: stringValue(rawResult.instructions),
+  };
+  transport.commitInitialization?.(initialization);
 
   if (transport.notify) {
     await transport.notify(createMcpNotification('notifications/initialized'), {
@@ -88,13 +117,7 @@ export async function initializeMcpServer(
     });
   }
 
-  const rawResult = result as unknown as Record<string, unknown>;
-  return {
-    protocolVersion: stringValue(rawResult.protocolVersion) || MCP_PROTOCOL_VERSION,
-    capabilities: jsonRecordValue(rawResult.capabilities),
-    serverInfo: clientInfoValue(rawResult.serverInfo),
-    instructions: stringValue(rawResult.instructions),
-  };
+  return initialization;
 }
 
 export async function listMcpTools(
@@ -278,14 +301,6 @@ export function unwrapMcpResponse<TResult>(
   return response.result as TResult;
 }
 
-export function createMcpDescriptorId(serverId: string, toolName: string): string {
-  return `mcp:${serverId}:${toolName}`;
-}
-
-export function createMcpInvocationName(serverId: string, toolName: string): string {
-  return `mcp_${sanitizeName(serverId)}_${sanitizeName(toolName)}`.slice(0, 96);
-}
-
 function getMcpToolResultSummary(call: ToolCall, result: McpCallToolResult): string {
   if (call.name === 'python_exec') return result.isError ? '工具返回错误' : '工具已执行';
   return result.isError ? 'MCP 工具返回错误' : 'MCP 工具已执行';
@@ -437,10 +452,4 @@ function stringifyOutput(value: JsonValue): string {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function sanitizeName(value: string): string {
-  const normalized = value.trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-  const safe = normalized || 'tool';
-  return /^[A-Za-z_]/.test(safe) ? safe : `t_${safe}`;
 }

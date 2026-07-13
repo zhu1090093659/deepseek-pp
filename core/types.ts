@@ -75,7 +75,6 @@ export type {
   ToolExecutionMode,
   ToolExecutionTrigger,
   ToolPayload,
-  ToolProvider,
   ToolProviderId,
   ToolProviderIdentity,
   ToolProviderKind,

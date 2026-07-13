@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCP_PROTOCOL_VERSION } from '../core/mcp';
+import { createMcpDescriptorId, createMcpInvocationName } from '../core/mcp/descriptor-identity';
 import { executeMcpToolCall, getMcpToolDescriptors, refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import {
   createMcpServer,
@@ -287,8 +288,8 @@ describe('MCP execution policy', () => {
 function createMcpCall(serverId: string, descriptor?: ToolDescriptor): ToolCall {
   return {
     name: descriptor?.name ?? 'sample_tool',
-    invocationName: descriptor?.invocationName ?? `mcp_${serverId}_sample_tool`,
-    descriptorId: descriptor?.id ?? `mcp:${serverId}:sample_tool`,
+    invocationName: descriptor?.invocationName ?? createMcpInvocationName(serverId, 'sample_tool'),
+    descriptorId: descriptor?.id ?? createMcpDescriptorId(serverId, 'sample_tool'),
     provider: {
       kind: 'mcp',
       id: serverId,
@@ -302,7 +303,7 @@ function createMcpCall(serverId: string, descriptor?: ToolDescriptor): ToolCall 
 
 function createMcpDescriptor(server: McpServerConfig, name = 'sample_tool'): ToolDescriptor {
   return {
-    id: `mcp:${server.id}:${name}`,
+    id: createMcpDescriptorId(server.id, name),
     provider: {
       kind: 'mcp',
       id: server.id,
@@ -310,7 +311,7 @@ function createMcpDescriptor(server: McpServerConfig, name = 'sample_tool'): Too
       transport: server.transport.kind,
     },
     name,
-    invocationName: `mcp_${server.id}_${name}`,
+    invocationName: createMcpInvocationName(server.id, name),
     title: name,
     description: `${name} MCP tool.`,
     inputSchema: {

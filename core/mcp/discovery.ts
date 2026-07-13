@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDescriptor, ToolResult } from '../tool';
+import type { ToolCall, ToolDescriptor, ToolResult } from '../tool/types';
 import { haveEquivalentToolDescriptorSecurity } from '../tool/authorization';
 import { applyMcpToolPolicy, callMcpTool, initializeMcpServer, listMcpTools } from './client';
 import {

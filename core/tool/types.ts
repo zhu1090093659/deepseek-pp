@@ -139,12 +139,6 @@ export interface ToolExecutionContext {
   maxResultBytes?: number;
 }
 
-export interface ToolProvider {
-  identity: ToolProviderIdentity;
-  listTools(): Promise<ToolDescriptor[]>;
-  execute(call: ToolCall, context: ToolExecutionContext): Promise<ToolResult>;
-}
-
 export interface ToolRegistrySnapshot {
   providers: ToolProviderIdentity[];
   tools: ToolDescriptor[];

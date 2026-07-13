@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeRuntimeToolCall } from '../core/tool/runtime';
+import { executeRuntimeToolCall } from './helpers/production-tool-runtime';
 import type { ToolCall } from '../core/tool/types';
 
 describe('runtime tool history persistence', () => {

@@ -6,10 +6,7 @@ import {
 import type { ToolCall, ToolCallRestoreRecord, ToolCallSource, ToolDescriptor } from '../types';
 import { isInlineAgentContinuationRequest } from '../inline-agent/prompt';
 import { sanitizeInternalPromptText } from '../prompt';
-import {
-  DEFAULT_TOOL_DESCRIPTORS,
-  createToolInvocationCatalog,
-} from '../tool';
+import { createToolInvocationCatalog } from '../tool';
 import {
   findFirstXmlToolTag,
   getPartialXmlToolTagTailLength,
@@ -59,7 +56,7 @@ interface HookState {
 }
 
 let hookState: HookState = {
-  toolDescriptors: [...DEFAULT_TOOL_DESCRIPTORS],
+  toolDescriptors: [],
   onRequestBody: async () => null,
   onHeadersCaptured: () => {},
   onToolCallStarted: () => {},
@@ -750,7 +747,7 @@ export class XmlToolStreamFilter {
   private chunkBuffer = '';
   private encoder = new TextEncoder();
 
-  constructor(descriptors: readonly ToolDescriptor[] = DEFAULT_TOOL_DESCRIPTORS, visiblePrompt: string = '') {
+  constructor(descriptors: readonly ToolDescriptor[] = [], visiblePrompt: string = '') {
     this.visiblePrompt = visiblePrompt;
     this.toolInvocationNameSet = new Set(createToolInvocationCatalog(descriptors).invocationNames);
   }

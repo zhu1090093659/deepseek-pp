@@ -131,7 +131,10 @@ export function parseExternalizedToolPayload(
   }
 }
 
-function createExternalizedToolParseError(invocationName: string, message: string): ToolError {
+function createExternalizedToolParseError(
+  invocationName: string,
+  message: string,
+): ToolError {
   return {
     code: 'tool_call_external_payload_invalid',
     message,

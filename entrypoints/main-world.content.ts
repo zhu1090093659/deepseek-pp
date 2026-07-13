@@ -132,7 +132,7 @@ function installContentBridge(): void {
 
     contentPort = port;
     contentPort.onmessage = (message) => handlePortMessage(message.data, bridgeSession);
-    contentPort.onmessageerror = () => disconnectContentPort(bridgeSession);
+    contentPort.onmessageerror = () => handleContentPortMessageError(bridgeSession);
     contentPort.start();
     stopBridgeRequests();
     postToContent({ type: BRIDGE_READY_TYPE });
@@ -197,12 +197,24 @@ function disconnectContentPort(bridgeSession?: BridgeSessionContext): void {
   contentPort?.close();
   contentPort = null;
   stopBridgeRequests();
+  updateHookState({ toolDescriptors: [] });
 
   for (const pending of pendingAugmentRequests.values()) {
     clearTimeout(pending.timeout);
     pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'));
   }
   pendingAugmentRequests.clear();
+}
+
+function handleContentPortMessageError(bridgeSession: BridgeSessionContext): void {
+  if (!contentBridgeSessions?.accepts(
+    bridgeSession,
+    window.location.origin,
+    window === window.top,
+  )) return;
+  console.error('[DeepSeek++] content bridge message could not be decoded; requesting state resync');
+  updateHookState({ toolDescriptors: [] });
+  postToContent({ type: 'SYNC_HOOK_STATE_REQUEST' });
 }
 
 function requestAugmentedBody(

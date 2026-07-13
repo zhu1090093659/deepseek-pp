@@ -17,7 +17,7 @@ import type {
   ToolResult,
 } from '../core/tool/types';
 import { createWebSearchToolDescriptors } from '../core/tool/web-search';
-import { executeRuntimeToolCall } from '../core/tool/runtime';
+import { executeRuntimeToolCall } from './helpers/production-tool-runtime';
 
 let sessionStorage: Record<string, unknown>;
 

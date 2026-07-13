@@ -32,7 +32,7 @@
 |:--:|:--|:--|--:|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 10 | 0 | 5 | 10 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 9 | 1 | 5 | 10 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
 | 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
@@ -54,7 +54,7 @@
 | T2.5 | [#320](https://github.com/zhu1090093659/deepseek-pp/issues/320) | Add staged sync download, journal, and rollback | closed |
 | T2.6 | [#321](https://github.com/zhu1090093659/deepseek-pp/issues/321) | Propagate automation cancellation, lease, and idempotency | closed |
 | T3.1–T6.3 (old) | [#322](https://github.com/zhu1090093659/deepseek-pp/issues/322) through #336 | Original remaining decomposition | closed; `superseded-by-replan`, each Issue links replacements |
-| R3.1 | [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351) | Create typed handler seam and migrate the two bootstrap commands | open |
+| R3.1 | [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351) | Create typed handler seam and migrate the two bootstrap commands | closed |
 | R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | open |
 | R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | open |
 | R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (0/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (1/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.1 / [Issue #351](https://github.com/zhu1090093659/deepseek-pp/issues/351) — typed handler seam and two bootstrap commands.
+**Active Task**: R3.2 / [Issue #352](https://github.com/zhu1090093659/deepseek-pp/issues/352) — tool contracts and local/MCP/browser provider registry.
 
-**Execution Branch**: `codex/351-typed-handler-seam` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/351-typed-handler-seam`, based on `origin/main@2bbc105`.
+**Execution Branch**: `codex/352-tool-provider-registry` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/352-tool-provider-registry`, based on `origin/main@16eec9a`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `2bbc105` after the Phase 2 adaptive-replan closeout. The current baseline passes 97 test files / 710 tests, full `ci:quality`, seven prompt goldens, Chrome/Edge/Firefox builds/packages, MCP/live-mock/Shell/PoW smoke, and hosted closeout runs `29277137767` / `29277276784`. Android project/build/runtime/test support is retired.
+**Baseline Evidence**: PC-only main is `16eec9a` after R3.1. The baseline passes 98 test files / 726 tests, full PC quality/package checks, and R3.1 hosted validation through PR #382. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -228,12 +228,21 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Final local validation passes targeted cancellation/MCP slices, TypeScript compile, and the 60-second full suite at 97 files / 710 tests. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. Coverage includes timeout settlement, internal cancellation, stable retry keys, no ambiguous retry, scheduled occurrence dedupe, restart lease recovery, legacy deadline normalization, finalization fencing, shared cancellable PoW loading, web-response release, DeepSeek signal propagation, continuation cancellation, and MCP/Native cancellation. Independent final reviews report no P0/P1/P2 blocker.
 - PR #350 passed hosted quality and contribution-evidence runs `29273029432` / `29273029933`, then squash-merged at `1b933d1fdbc5a5ec4d5c47b5911d0e50ca297324`; Issue #321 closed after telemetry. Milestone #44 completed 7/7 with cumulative drift score 3, triggering adaptive replanning before any Phase 3 implementation.
 
-**R3.1 Evidence (implementation ready for hosted validation)**:
+**R3.1 Evidence (closed)**:
 
 - Added one production runtime-command ownership registry with exactly two typed bootstrap handlers, 119 transitional legacy cases, and two explicitly client-only notification names. Unknown and client-only dispatch returns stable `runtime_command_unknown`; typed failures cannot fall back to the legacy switch.
 - Moved `GET_CONFIG` and `WHATS_NEW_DISMISSED` out of the switch into dependency-injected handlers, preserving exact success records, ignored request siblings, dismiss-before-badge ordering, and the listener's released `{ok:false,error}` projection. Their Side Panel callers now use the same compile-time request/success-response contracts.
 - Promoted the 123-name contract metadata to the single production owner authority and updated AST/inventory checks to prove the frozen `121/91/89/32/2` and `77/44/71` topology, exclusive current `2/119/2` ownership, exclusive future `2/57/29/16/17` cutover ledger, migrated-case deletion, duplicate/missing/cross-owner rejection, serialization, unknown behavior, and bootstrap failure stages.
 - Local validation passes the targeted 7-file / 61-test slice, TypeScript compile, and the 60-second full suite at 98 files / 726 tests with no orphan Vitest process. Prompt freeze, production audit, workflow/i18n/automation checks, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification also pass; builds emit only the existing Pyodide `node:*` externalization warnings.
+- PR #382 merged at `16eec9a0dbea007a5b273ee65d450eafe7ebe659`; Issue #351 closed after telemetry and Milestone #45 advanced to 1/10 completed with zero cumulative drift.
+
+**R3.2 Evidence (implementation ready for hosted validation)**:
+
+- Added one ordered production provider registry for Memory, Web, Artifact, Skill Creator, Memory Import, Browser Control, and MCP. Descriptor ownership, duplicate IDs/invocation names, exact local `in_process` transport, optional provider refresh, and provider-before-name execution routing are enforced in that authority; Background only composes it.
+- Replaced permissive MCP storage normalization with a pure strict v1 codec. Released transports, secrets, allowlists, legacy cache collisions, and additive top-level fields survive legal reads/mutations; future/corrupt versions, duplicate/orphan identities, and unknown transports fail visibly before storage mutation, permission, UUID, notification, or provider/network action.
+- Externalized payload parse errors now complete authorization/history without provider I/O. Content descriptor sync uses strict records and disables the catalog on initial, locale, broadcast, or refresh failure instead of retaining default tools. Unsupported MCP protocol versions fail before `notifications/initialized`; missing versions preserve the released fallback.
+- Import-graph/SCC and AST composition checks prove that runtime/registry contracts do not import concrete providers and only the Background composition root constructs the registry. Prompt/XML ordering, grants, idempotency, history, visible results, and PC-only browser behavior remain frozen.
+- Final local validation passes the targeted 11-file / 146-test contract slice and the 60-second full suite at 102 files / 764 tests with no orphan Vitest/Vite process. TypeScript compile, seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds, 84-file UTF-8 policy, manifest policy, and `git diff --check` pass; builds emit only the existing Pyodide `node:*` externalization warnings.
 
 ## Governance Status
 
@@ -257,9 +266,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete hosted validation and merge R3.1 / Issue #351.
-2. Record R3.1 telemetry against the reset Phase 3 Milestone state and enforce its adaptive thresholds.
-3. Start R3.2 / Issue #352 from the resulting main; keep the provider/tool lane serial behind R3.1.
+1. Complete hosted validation and merge R3.2 / Issue #352.
+2. Record R3.2 telemetry against Phase 3 Milestone state and enforce its adaptive thresholds.
+3. Start the next dependency-ready Phase 3 slice from the resulting main.
 
 ## Session Log
 
@@ -305,3 +314,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | Adaptive replan | Halted before Phase 3, replaced unstarted #322–#336 with bounded #351–#380 vertical slices, reset Milestone #45–#48 adaptive state, removed redundant Pyodide-first-use work, assigned every frozen background command and persistence gap exactly once, and preserved PC Chrome/Edge/Firefox-only scope. |
 | 2026-07-13 | R3.1 execution start | Opened isolated branch `codex/351-typed-handler-seam` from `2bbc105` and started the two-command typed registry seam for Issue #351. |
 | 2026-07-13 | R3.1 implementation | Established exclusive `2 typed / 119 legacy / 2 client-only` ownership, migrated the two bootstrap handlers and callers, made unknown dispatch explicit, and passed targeted/full tests plus the PC Chrome/Edge/Firefox quality matrix. |
+| 2026-07-13 | R3.1 closure | PR #382 merged at `16eec9a`, Issue #351 closed after telemetry, and Milestone #45 advanced to 1/10 completed with zero cumulative drift. |
+| 2026-07-13 | R3.2 execution start | Opened isolated branch `codex/352-tool-provider-registry` from `16eec9a`; audited tool runtime/provider composition, authorization, externalized payload, MCP persistence/protocol/transport, Content sync, and import-cycle boundaries. |
+| 2026-07-13 | R3.2 implementation | Added the sole ordered provider registry and strict MCP v1 codec, removed name-based and permissive fallback paths, closed unsupported transport/protocol behavior, preserved legal v1/cache/additive data, and passed targeted/full tests plus the PC Chrome/Edge/Firefox quality matrix. |

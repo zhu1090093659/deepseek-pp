@@ -1,5 +1,11 @@
-import type { ToolExecutionMode, ToolTransportKind } from '../tool';
-import type { JsonValue, ToolCall, ToolDescriptor, ToolResult } from '../tool/types';
+import type {
+  JsonValue,
+  ToolCall,
+  ToolDescriptor,
+  ToolExecutionMode,
+  ToolResult,
+  ToolTransportKind,
+} from '../tool/types';
 
 export type McpServerId = string;
 
@@ -204,6 +210,7 @@ export interface McpProtocolTransport {
     notification: McpJsonRpcNotification,
     options?: McpTransportRequestOptions,
   ): Promise<void>;
+  commitInitialization?(result: McpInitializeResult): void;
 }
 
 export interface McpTransportRequestOptions {

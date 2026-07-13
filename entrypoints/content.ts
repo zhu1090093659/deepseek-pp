@@ -18,7 +18,8 @@ import type {
 } from '../core/types';
 import { normalizePetConfig } from '../core/pet/config';
 import { pickPetLine, type PetState } from '../core/pet/lines';
-import { createDefaultToolDescriptors, createToolInvocationCatalog } from '../core/tool/invocation';
+import { createToolInvocationCatalog } from '../core/tool/invocation';
+import { createLatestSyncGate, type LatestSyncLease } from '../core/tool/latest-sync';
 import { DEFAULT_PROMPT_INJECTION_SETTINGS, normalizePromptInjectionSettings } from '../core/prompt/settings';
 import { normalizeBackgroundConfig } from '../core/background/config';
 import {
@@ -112,6 +113,7 @@ import {
   createRuntimeBoundaryErrorResponse,
   decodeRuntimeMessageEnvelope,
 } from '../core/messaging/runtime-boundary';
+import { isToolDescriptorRecord } from '../core/messaging/tool-record-codec';
 import { startDeepSeekHistoryOrganizer, type HistoryOrganizerController } from './content/adapters/history-organizer';
 import { startDeepSeekProjectSidebarOrganizer, type ProjectSidebarOrganizerController } from './content/adapters/project-sidebar-organizer';
 import { startContentUxPolish, type ContentUxPolishController } from './content/adapters/ux-polish';
@@ -358,7 +360,8 @@ let currentModelType: ModelType = null;
 let currentPromptSettings: PromptInjectionSettings = DEFAULT_PROMPT_INJECTION_SETTINGS;
 let currentContentLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentContentTranslator = createTranslator(DEFAULT_LOCALE);
-let currentToolDescriptors: ToolDescriptor[] = [...createDefaultToolDescriptors(currentContentLocale)];
+let currentToolDescriptors: ToolDescriptor[] = [];
+const toolDescriptorSyncGate = createLatestSyncGate();
 let currentRequestMessageCount = 0;
 let mainWorldPort: MessagePort | null = null;
 let mainWorldBridgeReady = false;
@@ -477,7 +480,7 @@ export default defineContentScript({
     watchLocalePreference(() => {
       void refreshContentLocale()
         .then(() => loadAndSyncRuntimeState())
-        .catch(() => undefined);
+        .catch((error) => console.error('[DeepSeek++] content locale refresh failed', error));
     });
     installExtensionInvalidationGuards();
     installMainWorldBridge();
@@ -583,7 +586,7 @@ export default defineContentScript({
 
     setMainWorldMessageHandler(handleMainWorldMessage);
 
-    void loadAndSyncRuntimeState().catch(() => undefined);
+    void loadAndSyncRuntimeState();
 
     await new Promise((r) => {
       if (document.readyState === 'complete' || document.readyState === 'interactive') r(undefined);
@@ -636,16 +639,27 @@ export default defineContentScript({
           normalizePromptInjectionSettings(message.promptSettings),
         );
       } else if (message.type === 'TOOL_DESCRIPTORS_UPDATED') {
-        syncToMainWorld(currentMemories, currentSkills, currentActivePreset, currentModelType, normalizeToolDescriptors(message.toolDescriptors), currentPromptSettings);
+        const syncLease = toolDescriptorSyncGate.begin();
+        try {
+          const descriptors = decodeToolDescriptors(message.toolDescriptors);
+          syncLease.commit(() => syncToMainWorld(
+            currentMemories,
+            currentSkills,
+            currentActivePreset,
+            currentModelType,
+            descriptors,
+            currentPromptSettings,
+          ));
+        } catch (error) {
+          syncLease.commit(() => reportToolDescriptorSyncFailure(error));
+        }
       } else if (message.type === 'MCP_SERVERS_UPDATED') {
         if (Array.isArray(message.servers)) {
           setMultimodalMediaInputEnabled(shouldEnableMultimodalMediaInput(message.servers));
         } else {
           void refreshMultimodalMediaInputAvailability();
         }
-        sendRuntimeMessage<ToolDescriptor[]>({ type: 'GET_TOOL_DESCRIPTORS' })
-          .then((descriptors) => syncToMainWorld(currentMemories, currentSkills, currentActivePreset, currentModelType, normalizeToolDescriptors(descriptors), currentPromptSettings))
-          .catch(() => undefined);
+        void refreshToolDescriptorsFromBackground();
       } else if (message.type === 'BACKGROUND_UPDATED') {
         applyBackground(message.config as BackgroundConfig | null);
       } else if (message.type === 'PET_UPDATED') {
@@ -726,7 +740,9 @@ function connectMainWorldPort(): void {
   mainWorldPort.onmessage = (event) => {
     void handleMainWorldPortMessage(event.data, bridgeSession);
   };
-  mainWorldPort.onmessageerror = () => disconnectMainWorldPort(bridgeSession);
+  mainWorldPort.onmessageerror = () => {
+    console.error('[DeepSeek++] main-world bridge message could not be decoded');
+  };
   mainWorldPort.start();
 
   window.postMessage(
@@ -752,6 +768,12 @@ async function handleMainWorldPortMessage(
   if (message.type === BRIDGE_READY_TYPE) {
     mainWorldBridgeReady = true;
     flushMainWorldMessages();
+    syncCurrentRuntimeStateToMainWorld();
+    return;
+  }
+
+  if (message.type === 'SYNC_HOOK_STATE_REQUEST') {
+    syncCurrentRuntimeStateToMainWorld();
     return;
   }
 
@@ -997,24 +1019,73 @@ function flushMainWorldMessages(): void {
   }
 }
 
-async function loadAndSyncRuntimeState() {
-  const [memories, skills, activePreset, modelType, toolDescriptors, promptSettings] = await Promise.all([
+async function loadAndSyncRuntimeState(
+  syncLease: LatestSyncLease = toolDescriptorSyncGate.begin(),
+): Promise<void> {
+  const descriptorResultPromise = (async () => {
+    try {
+      const value = await sendRuntimeMessageStrict<ToolDescriptor[]>({
+        type: 'GET_TOOL_DESCRIPTORS',
+      });
+      return { ok: true as const, descriptors: decodeToolDescriptors(value) };
+    } catch (error) {
+      return { ok: false as const, error };
+    }
+  })();
+
+  const runtimeStateSync = Promise.all([
     sendRuntimeMessage<Memory[]>({ type: 'GET_MEMORIES' }),
     sendRuntimeMessage<Skill[]>({ type: 'GET_SKILLS' }),
     sendRuntimeMessage<SystemPromptPreset | null>({ type: 'GET_ACTIVE_PRESET' }),
     sendRuntimeMessage<ModelType>({ type: 'GET_MODEL_TYPE' }),
-    sendRuntimeMessage<ToolDescriptor[]>({ type: 'GET_TOOL_DESCRIPTORS' }),
     sendRuntimeMessage<PromptInjectionSettings>({ type: 'GET_PROMPT_INJECTION_SETTINGS' }),
-  ]);
-
-  syncToMainWorld(
-    memories ?? [],
-    skills ?? [],
-    activePreset ?? null,
-    modelType ?? null,
-    normalizeToolDescriptors(toolDescriptors),
-    normalizePromptInjectionSettings(promptSettings),
+  ]).then(
+    ([memories, skills, activePreset, modelType, promptSettings]) => syncToMainWorld(
+      memories ?? [],
+      skills ?? [],
+      activePreset ?? null,
+      modelType ?? null,
+      currentToolDescriptors,
+      normalizePromptInjectionSettings(promptSettings),
+    ),
+    (error: unknown) => console.error('[DeepSeek++] runtime state sync failed', error),
   );
+
+  const descriptorSync = descriptorResultPromise.then((descriptorResult) => {
+    if (descriptorResult.ok) {
+      syncLease.commit(() => syncToMainWorld(
+        currentMemories,
+        currentSkills,
+        currentActivePreset,
+        currentModelType,
+        descriptorResult.descriptors,
+        currentPromptSettings,
+      ));
+    } else {
+      syncLease.commit(() => reportToolDescriptorSyncFailure(descriptorResult.error));
+    }
+  });
+
+  await Promise.all([runtimeStateSync, descriptorSync]);
+}
+
+async function refreshToolDescriptorsFromBackground(): Promise<void> {
+  const syncLease = toolDescriptorSyncGate.begin();
+  try {
+    const descriptors = decodeToolDescriptors(
+      await sendRuntimeMessageStrict<ToolDescriptor[]>({ type: 'GET_TOOL_DESCRIPTORS' }),
+    );
+    syncLease.commit(() => syncToMainWorld(
+      currentMemories,
+      currentSkills,
+      currentActivePreset,
+      currentModelType,
+      descriptors,
+      currentPromptSettings,
+    ));
+  } catch (error) {
+    syncLease.commit(() => reportToolDescriptorSyncFailure(error));
+  }
 }
 
 function hasLiveExtensionContext(): boolean {
@@ -4139,14 +4210,38 @@ function syncToMainWorld(
   });
 }
 
+function syncCurrentRuntimeStateToMainWorld(): void {
+  syncToMainWorld(
+    currentMemories,
+    currentSkills,
+    currentActivePreset,
+    currentModelType,
+    currentToolDescriptors,
+    currentPromptSettings,
+  );
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function normalizeToolDescriptors(value: unknown): ToolDescriptor[] {
-  if (!Array.isArray(value)) return [...createDefaultToolDescriptors(currentContentLocale)];
-  const descriptors = value.filter((item): item is ToolDescriptor => Boolean(item && typeof item === 'object'));
-  return descriptors.length > 0 ? descriptors : [...createDefaultToolDescriptors(currentContentLocale)];
+function decodeToolDescriptors(value: unknown): ToolDescriptor[] {
+  if (!Array.isArray(value) || !value.every(isToolDescriptorRecord)) {
+    throw new Error('Runtime tool descriptor catalog does not match the released contract.');
+  }
+  return value as unknown as ToolDescriptor[];
+}
+
+function reportToolDescriptorSyncFailure(error: unknown): void {
+  console.error('[DeepSeek++] tool descriptor sync failed; tool execution disabled', error);
+  syncToMainWorld(
+    currentMemories,
+    currentSkills,
+    currentActivePreset,
+    currentModelType,
+    [],
+    currentPromptSettings,
+  );
 }
 
 function buildToolOpenTagRegex(descriptors: ToolDescriptor[]): RegExp {
@@ -4162,7 +4257,7 @@ function buildToolMarkerRegex(descriptors: ToolDescriptor[]): RegExp {
 function buildToolTagPattern(descriptors: ToolDescriptor[]): string {
   const catalogNames = createToolInvocationCatalog(descriptors).invocationNames;
   const escaped = [...new Set(catalogNames)].map(escapeRegExp);
-  return escaped.length > 0 ? escaped.join('|') : 'memory_save|memory_update|memory_delete';
+  return escaped.length > 0 ? escaped.join('|') : '(?!)';
 }
 
 function hashString(value: string): string {

@@ -67,6 +67,11 @@ export const LEGAL_BRIDGE_CASES = {
       skillPopupCopy: { hint: 'Type a Skill name.' },
     },
   }],
+  SYNC_HOOK_STATE_REQUEST: [{
+    name: 'main requests an authoritative hook-state resynchronization',
+    expectedSource: MAIN,
+    message: { source: MAIN, type: 'SYNC_HOOK_STATE_REQUEST' },
+  }],
   AUGMENT_REQUEST_BODY: [{
     name: 'main requests body augmentation',
     expectedSource: MAIN,
@@ -262,6 +267,12 @@ export const MALFORMED_BRIDGE_PAYLOAD_CASES = {
     name: 'hook state has invalid descriptor and Skill collections',
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'SYNC_HOOK_STATE', toolDescriptors: {}, skillSummaries: 'invalid' },
+    target: 'reject-at-T2.1-boundary',
+  }],
+  SYNC_HOOK_STATE_REQUEST: [{
+    name: 'hook-state resync request travels in the wrong direction',
+    expectedSource: CONTENT,
+    message: { source: CONTENT, type: 'SYNC_HOOK_STATE_REQUEST' },
     target: 'reject-at-T2.1-boundary',
   }],
   AUGMENT_REQUEST_BODY: [{

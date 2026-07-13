@@ -4,7 +4,7 @@ import {
   normalizeRestoredToolExecution,
   sanitizeToolExecutionForRestoreStorage,
 } from '../core/tool/execution-restore';
-import { executeRuntimeToolCall } from '../core/tool/runtime';
+import { executeRuntimeToolCall } from './helpers/production-tool-runtime';
 import {
   isToolCallHistoryRecord,
   isToolCallRecord,

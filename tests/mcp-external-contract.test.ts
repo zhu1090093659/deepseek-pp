@@ -20,6 +20,7 @@ import type {
 import type { ToolCall } from '../core/types';
 import {
   MCP_CURRENT_GAPS,
+  MCP_UNKNOWN_TRANSPORT_CONTRACT,
   MCP_NATIVE_ENVELOPE_FIXTURE,
   MCP_PROTOCOL_CONTRACT,
   MCP_PROTOCOL_NEGOTIATION_FIXTURES,
@@ -44,7 +45,7 @@ describe('MCP and Native external contract', () => {
     ]);
   });
 
-  it('preserves known/missing negotiation and characterizes arbitrary server versions as a gap', async () => {
+  it('preserves known/missing negotiation and rejects unsupported versions before notification', async () => {
     vi.stubGlobal('chrome', {
       runtime: { getManifest: () => ({ version: '1.10.0' }) },
     });
@@ -58,7 +59,9 @@ describe('MCP and Native external contract', () => {
             jsonrpc: '2.0',
             id: request.id,
             result: {
-              ...(fixture.serverVersion ? { protocolVersion: fixture.serverVersion } : {}),
+              ...(fixture.classification === 'legacy-fallback'
+                ? {}
+                : { protocolVersion: fixture.serverVersion }),
               capabilities: { tools: {} },
               serverInfo: { name: 'contract-server', version: '1.0.0' },
             },
@@ -69,12 +72,16 @@ describe('MCP and Native external contract', () => {
         },
       };
 
-      await expect(initializeMcpServer(mcpServer(), transport))
-        .resolves.toMatchObject({ protocolVersion: fixture.currentOutput });
-      expect(methods).toEqual(MCP_PROTOCOL_CONTRACT.handshakeMethods.slice(0, 2));
+      const initialization = initializeMcpServer(mcpServer(), transport);
+      if (fixture.classification === 'unsupported') {
+        await expect(initialization).rejects.toMatchObject({ code: fixture.errorCode });
+        expect(methods).toEqual(['initialize']);
+      } else {
+        await expect(initialization)
+          .resolves.toMatchObject({ protocolVersion: fixture.currentOutput });
+        expect(methods).toEqual(MCP_PROTOCOL_CONTRACT.handshakeMethods.slice(0, 2));
+      }
     }
-    expect(MCP_PROTOCOL_NEGOTIATION_FIXTURES[2].target)
-      .toBe('supported-version-negotiation-after-T3.5');
   });
 
   it('propagates a caller cancellation signal through MCP initialization and tool calls', async () => {
@@ -174,7 +181,7 @@ describe('MCP and Native external contract', () => {
     expect(posted).toEqual([MCP_NATIVE_ENVELOPE_FIXTURE]);
   });
 
-  it('keeps unknown transport fallback executable but classified as a pre-network rejection gap', async () => {
+  it('rejects an unknown transport before network access', () => {
     const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
       const request = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
@@ -195,15 +202,10 @@ describe('MCP and Native external contract', () => {
       url: 'https://future-mcp.example.test/rpc',
     } as any);
 
-    await createMcpTransport(server).request(createMcpRequest('initialize', {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: 'contract', version: '1.0.0' },
+    expect(() => createMcpTransport(server)).toThrowError(expect.objectContaining({
+      code: MCP_UNKNOWN_TRANSPORT_CONTRACT.errorCode,
     }));
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(MCP_CURRENT_GAPS[0].target)
-      .toBe('reject-unknown-transport-before-network-after-T3.5');
+    expect(fetchMock).toHaveBeenCalledTimes(MCP_UNKNOWN_TRANSPORT_CONTRACT.networkRequests);
   });
 
   it('records shallow response normalization without promoting malformed JSON-RPC to legal output', () => {
@@ -224,7 +226,7 @@ describe('MCP and Native external contract', () => {
       result: { value: true },
       error: { code: -32000, message: 'also present' },
     });
-    expect(MCP_CURRENT_GAPS[1].target).toBe('strict-json-rpc-response-codec-after-T3.5');
+    expect(MCP_CURRENT_GAPS[0].target).toBe('strict-json-rpc-response-codec-after-T3.5');
   });
 
   it('freezes structured, text-error, and current UTF-16 truncation output behavior', async () => {
@@ -261,7 +263,7 @@ describe('MCP and Native external contract', () => {
       { call: toolCall(), maxResultBytes: 3 },
     );
     expect(truncated).toMatchObject({ truncated: true, detail: '中文\ud83d' });
-    expect(MCP_CURRENT_GAPS[2].target).toBe('byte-accurate-output-budget-after-T5.1');
+    expect(MCP_CURRENT_GAPS[1].target).toBe('byte-accurate-output-budget-after-T5.1');
   });
 
   it('keeps page-level tool-count overshoot executable but owned by T4.5', async () => {
@@ -275,7 +277,7 @@ describe('MCP and Native external contract', () => {
     server.limits.maxToolCount = 1;
 
     await expect(listMcpTools(server, transport)).resolves.toHaveLength(2);
-    expect(MCP_CURRENT_GAPS[3].target).toBe('explicit-shell-catalog-limit-after-T4.5');
+    expect(MCP_CURRENT_GAPS[2].target).toBe('explicit-shell-catalog-limit-after-T4.5');
   });
 });
 

@@ -11,16 +11,14 @@ import type {
   McpToolCacheEntry,
 } from './types';
 import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS } from './constants';
+import {
+  decodeMcpStorageState,
+  encodeMcpStorageState,
+  MCP_STORAGE_KEY,
+  MCP_STORAGE_VERSION,
+} from './storage-codec';
 
-const STORAGE_KEY = 'deepseek_pp_mcp_servers';
-const STORAGE_VERSION = 1;
 const REDACTED_SECRET_VALUE = '********';
-
-const EMPTY_STATE: McpServerStorageState = {
-  version: STORAGE_VERSION,
-  servers: [],
-  toolCaches: [],
-};
 
 export async function getAllMcpServers(options?: { includeSecrets?: boolean }): Promise<McpServerConfig[]> {
   const state = await readState();
@@ -41,8 +39,8 @@ export async function getMcpServerById(
 export async function createMcpServer(input: McpServerCreateInput): Promise<McpServerConfig> {
   const state = await readState();
   const now = Date.now();
-  const server = normalizeServer({
-    version: STORAGE_VERSION,
+  const server = normalizeServerForMutation({
+    version: MCP_STORAGE_VERSION,
     id: crypto.randomUUID(),
     displayName: input.displayName,
     enabled: input.enabled ?? true,
@@ -86,7 +84,7 @@ export async function updateMcpServer(
     const nextPatch: McpServerUpdateInput = patch.secrets
       ? { ...patch, secrets: mergeRedactedSecrets(server.secrets, patch.secrets) }
       : patch;
-    const nextServer = normalizeServer({
+    const nextServer = normalizeServerForMutation({
       ...server,
       ...nextPatch,
       updatedAt: Date.now(),
@@ -176,41 +174,23 @@ export function buildMcpRequestHeaders(server: McpServerConfig): Record<string, 
 }
 
 async function readState(): Promise<McpServerStorageState> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  return normalizeState(data[STORAGE_KEY]);
+  const data = await chrome.storage.local.get(MCP_STORAGE_KEY) as Record<string, unknown>;
+  return decodeMcpStorageState(data[MCP_STORAGE_KEY]);
 }
 
 async function writeState(state: McpServerStorageState): Promise<void> {
   await chrome.storage.local.set({
-    [STORAGE_KEY]: {
-      version: STORAGE_VERSION,
-      servers: state.servers.map(normalizeServer),
-      toolCaches: state.toolCaches.map(normalizeToolCache),
-    },
+    [MCP_STORAGE_KEY]: encodeMcpStorageState(state),
   });
 }
 
-function normalizeState(raw: unknown): McpServerStorageState {
-  if (!raw || typeof raw !== 'object') return { ...EMPTY_STATE };
-  const value = raw as Partial<McpServerStorageState>;
-  return {
-    version: STORAGE_VERSION,
-    servers: Array.isArray(value.servers)
-      ? value.servers.map(normalizeServer).filter((server): server is McpServerConfig => server !== null)
-      : [],
-    toolCaches: Array.isArray(value.toolCaches)
-      ? value.toolCaches.map(normalizeToolCache).filter((cache): cache is McpToolCacheEntry => cache !== null)
-      : [],
-  };
-}
-
-function normalizeServer(raw: unknown): McpServerConfig {
+function normalizeServerForMutation(raw: unknown): McpServerConfig {
   const value = raw && typeof raw === 'object' ? raw as Partial<McpServerConfig> : {};
   const now = Date.now();
   const enabled = value.enabled !== false;
   const status = normalizeServerStatus(value.status, enabled);
   return {
-    version: STORAGE_VERSION,
+    version: MCP_STORAGE_VERSION,
     id: stringValue(value.id) || crypto.randomUUID(),
     displayName: stringValue(value.displayName) || 'MCP Server',
     enabled,
@@ -381,25 +361,4 @@ function positiveNumber(value: unknown, fallback: number): number {
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function normalizeToolCache(raw: unknown): McpToolCacheEntry {
-  const value = raw && typeof raw === 'object' ? raw as Partial<McpToolCacheEntry> : {};
-  const serverId = stringValue(value.serverId);
-  const now = Date.now();
-  const checkedAt = positiveNumber(value.health?.checkedAt, positiveNumber(value.refreshedAt, now));
-  return {
-    serverId,
-    descriptors: Array.isArray(value.descriptors) ? value.descriptors : [],
-    refreshedAt: positiveNumber(value.refreshedAt, now),
-    expiresAt: positiveNumber(value.expiresAt, now),
-    health: {
-      serverId,
-      status: value.health?.status ?? 'unknown',
-      checkedAt,
-      latencyMs: nullableNumber(value.health?.latencyMs),
-      toolCount: positiveNumber(value.health?.toolCount, 0),
-      error: stringValue(value.health?.error),
-    },
-  };
 }

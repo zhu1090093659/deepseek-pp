@@ -22,9 +22,37 @@ export const MCP_PROTOCOL_NEGOTIATION_FIXTURES = [
   {
     name: 'arbitrary future server protocol version',
     serverVersion: '2099-12-31',
-    currentOutput: '2099-12-31',
-    classification: 'current-gap',
-    target: 'supported-version-negotiation-after-T3.5',
+    currentOutput: undefined,
+    classification: 'unsupported',
+    errorCode: 'mcp_protocol_version_unsupported',
+  },
+  {
+    name: 'empty advertised protocol version',
+    serverVersion: '',
+    currentOutput: undefined,
+    classification: 'unsupported',
+    errorCode: 'mcp_protocol_version_unsupported',
+  },
+  {
+    name: 'numeric advertised protocol version',
+    serverVersion: 20250618,
+    currentOutput: undefined,
+    classification: 'unsupported',
+    errorCode: 'mcp_protocol_version_unsupported',
+  },
+  {
+    name: 'null advertised protocol version',
+    serverVersion: null,
+    currentOutput: undefined,
+    classification: 'unsupported',
+    errorCode: 'mcp_protocol_version_unsupported',
+  },
+  {
+    name: 'object advertised protocol version',
+    serverVersion: { version: MCP_PROTOCOL_CONTRACT.requestVersion },
+    currentOutput: undefined,
+    classification: 'unsupported',
+    errorCode: 'mcp_protocol_version_unsupported',
   },
 ] as const;
 
@@ -46,11 +74,6 @@ export const MCP_NATIVE_ENVELOPE_FIXTURE = {
 
 export const MCP_CURRENT_GAPS = [
   {
-    name: 'unknown transport falls through to Streamable HTTP and may make a network request',
-    currentBehavior: 'streamable-http-fallback',
-    target: 'reject-unknown-transport-before-network-after-T3.5',
-  },
-  {
     name: 'response normalization accepts a wrong id and result plus error while rewriting jsonrpc',
     currentBehavior: 'shallow-normalization',
     target: 'strict-json-rpc-response-codec-after-T3.5',
@@ -66,3 +89,8 @@ export const MCP_CURRENT_GAPS = [
     target: 'explicit-shell-catalog-limit-after-T4.5',
   },
 ] as const;
+
+export const MCP_UNKNOWN_TRANSPORT_CONTRACT = {
+  errorCode: 'mcp_transport_unsupported',
+  networkRequests: 0,
+} as const;

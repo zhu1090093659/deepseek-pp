@@ -34,6 +34,7 @@ export {
 
 import type { McpProtocolTransport, McpServerConfig } from '../types';
 import { createMcpBridgeTransport } from './bridge';
+import { McpTransportError } from './common';
 import { createMcpHttpTransport, createMcpStreamableHttpTransport } from './http';
 import { createMcpNativeMessagingTransport } from './native';
 import { createMcpSseTransport } from './sse';
@@ -51,6 +52,10 @@ export function createMcpTransport(server: McpServerConfig): McpProtocolTranspor
     case 'native_messaging':
       return createMcpNativeMessagingTransport(server);
     default:
-      return createMcpStreamableHttpTransport(server);
+      throw new McpTransportError(
+        'mcp_transport_unsupported',
+        'Unsupported MCP transport.',
+        { retryable: false },
+      );
   }
 }

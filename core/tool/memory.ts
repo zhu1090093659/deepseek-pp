@@ -4,7 +4,6 @@ import type {
   JsonValue,
   ToolCall,
   ToolDescriptor,
-  ToolProvider,
   ToolProviderIdentity,
   ToolResult,
 } from './types';
@@ -135,21 +134,6 @@ export const MEMORY_TOOL_DESCRIPTORS: ToolDescriptor[] = createMemoryToolDescrip
 
 export function isMemoryToolName(name: string): name is MemoryToolName {
   return (MEMORY_TOOL_NAMES as readonly string[]).includes(name);
-}
-
-export function createMemoryToolProvider(
-  runtime: MemoryToolRuntime,
-  locale: SupportedLocale = DEFAULT_LOCALE,
-): ToolProvider {
-  return {
-    identity: createMemoryToolProviderIdentity(locale),
-    async listTools() {
-      return createMemoryToolDescriptors(locale);
-    },
-    execute(call) {
-      return executeMemoryToolCall(runtime, call, locale);
-    },
-  };
 }
 
 export async function executeMemoryToolCall(

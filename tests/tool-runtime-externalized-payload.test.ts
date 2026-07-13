@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeRuntimeToolCall } from '../core/tool/runtime';
-import { getArtifact } from '../core/artifact';
+import { executeRuntimeToolCall } from './helpers/production-tool-runtime';
+import { getArtifact, getArtifacts } from '../core/artifact';
 import {
   appendExternalizedToolPayloadChunk,
   chainExternalizedPayloadWrite,
@@ -67,5 +67,42 @@ describe('runtime externalized tool payloads', () => {
     expect(output.filename).toBe('reports/long.md');
     const record = await getArtifact(output.artifactId);
     expect(record?.content.startsWith('# Report')).toBe(true);
+  });
+
+  it('returns a retryable parse result without provider I/O when the payload chunk is missing', async () => {
+    const callId = 'call-artifact-missing';
+
+    const result = await executeRuntimeToolCall({
+      id: callId,
+      name: 'artifact_create',
+      invocationName: 'artifact_create',
+      payload: createExternalizedToolPayload(callId, 'artifact_create'),
+      raw: '<artifact_create>...[payload externalized]</artifact_create>',
+    } satisfies ToolCall, 'manual_chat', 'en');
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'tool_call_external_payload_missing', retryable: true },
+    });
+    expect(await getArtifacts()).toEqual([]);
+  });
+
+  it('returns the released external-payload parse code without provider I/O for malformed chunks', async () => {
+    const callId = 'call-artifact-malformed';
+    appendExternalizedToolPayloadChunk(callId, 'artifact_create', '{"filename":');
+
+    const result = await executeRuntimeToolCall({
+      id: callId,
+      name: 'artifact_create',
+      invocationName: 'artifact_create',
+      payload: createExternalizedToolPayload(callId, 'artifact_create'),
+      raw: '<artifact_create>...[payload externalized]</artifact_create>',
+    } satisfies ToolCall, 'manual_chat', 'en');
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'tool_call_external_payload_invalid', retryable: false },
+    });
+    expect(await getArtifacts()).toEqual([]);
   });
 });

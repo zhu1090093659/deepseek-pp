@@ -3,6 +3,7 @@ import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME } from '../core/shell';
 
 vi.mock('../core/mcp/store', () => ({
   getAllMcpServers: vi.fn(),
+  getMcpToolCache: vi.fn(),
   updateMcpServer: vi.fn(),
 }));
 
@@ -13,7 +14,7 @@ vi.mock('../core/mcp/discovery', () => ({
 }));
 
 import { executeMcpToolCall, getMcpToolDescriptors, refreshMcpServerDiscovery } from '../core/mcp/discovery';
-import { getAllMcpServers, updateMcpServer } from '../core/mcp/store';
+import { getAllMcpServers, getMcpToolCache, updateMcpServer } from '../core/mcp/store';
 import type { McpServerConfig, McpToolCacheEntry } from '../core/mcp/types';
 import {
   importLocalSkillSource as importLocalSkillSourceWithRuntime,
@@ -64,6 +65,10 @@ beforeEach(() => {
     allowlist: patch.allowlist ?? shellServer.allowlist,
   }));
   vi.mocked(refreshMcpServerDiscovery).mockResolvedValue({} as never);
+  vi.mocked(getMcpToolCache).mockResolvedValue(createShellDiscovery([
+    'local_skill_preview',
+    'local_folder_pick',
+  ]));
   vi.mocked(getMcpToolDescriptors).mockResolvedValue([]);
   vi.mocked(executeMcpToolCall).mockResolvedValue(createLocalSkillToolResult());
 });

@@ -85,12 +85,10 @@ import {
   clearExternalizedToolPayloadNamespace,
 } from '../core/tool/externalized-payload';
 import {
-  executeRuntimeToolCall,
-  getRuntimeAuthorizationDescriptors,
-  getRuntimeToolDescriptors,
-  refreshRuntimeToolDescriptors,
+  createRuntimeToolRuntime,
   type RuntimeToolCallOptions,
 } from '../core/tool/runtime';
+import { createProductionToolProviderRegistry } from './background/tool-provider-composition';
 import {
   authorizeExternalToolPayloadChunk,
   closeToolAuthorization,
@@ -297,6 +295,12 @@ let chatParentMessageId: number | null = null;
 let officialApiChatMessages: OfficialDeepSeekMessage[] = [];
 const conversationExportControllers = new Map<string, AbortController>();
 const externalPayloadAuthorizationCache = new ExternalPayloadAuthorizationCache();
+const {
+  executeToolCall: executeRuntimeToolCall,
+  getAuthorizationDescriptors: getRuntimeAuthorizationDescriptors,
+  getToolDescriptors: getRuntimeToolDescriptors,
+  refreshToolDescriptors: refreshRuntimeToolDescriptors,
+} = createRuntimeToolRuntime(createProductionToolProviderRegistry());
 let currentBackgroundLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
@@ -1492,11 +1496,6 @@ async function handleLegacyMessage(
 }
 
 async function executeLocalSkillImporterToolCall(call: ToolCall): Promise<ToolResult> {
-  const hasDescriptor = (await getRuntimeAuthorizationDescriptors(currentBackgroundLocale))
-    .some((descriptor) => descriptor.id === call.descriptorId);
-  if (!hasDescriptor && call.provider?.kind === 'mcp') {
-    await refreshMcpServerDiscovery(call.provider.id);
-  }
   return executeBackgroundRuntimeToolCall(call, 'manual_chat');
 }
 

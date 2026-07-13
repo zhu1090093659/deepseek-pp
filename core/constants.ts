@@ -1,9 +1,3 @@
-import {
-  DEFAULT_TOOL_DESCRIPTORS,
-  createToolInvocationCatalog,
-  createXmlToolCallRegex,
-} from './tool/invocation';
-
 export { DEEPSEEK_API_URL } from './deepseek/contracts';
 
 export const MEMORY_TOKEN_BUDGET = 1500;
@@ -15,9 +9,6 @@ export const MSG_PREFIX = 'DEEPSEEK_PP';
 export const DPP_MANAGED_AGENT_PROMPT_MARKER = '<!-- deepseek-pp-managed-agent-runner:v1 -->';
 
 export const DSML = '｜DSML｜';
-
-export const TOOL_NAMES = DEFAULT_TOOL_DESCRIPTORS.map((tool) => tool.invocationName);
-export type ToolName = string;
 
 export const MEMORY_SAVE_SCHEMA = '{"type": "function", "function": {"name": "memory_save", "description": "保存一条新的长期记忆", "parameters": {"type": "object", "properties": {"type": {"type": "string", "enum": ["user", "feedback", "topic", "reference"], "description": "记忆类型：user=身份角色偏好, feedback=行为纠正, topic=讨论要点, reference=外部资源链接"}, "name": {"type": "string", "description": "简短标题"}, "content": {"type": "string", "description": "要保存的内容"}, "tags": {"type": "array", "items": {"type": "string"}, "description": "标签列表"}}, "required": ["type", "name", "content", "tags"]}}}';
 
@@ -126,8 +117,5 @@ export const STOP_WORDS = new Set([
   'him', 'know', 'take', 'into', 'your', 'some', 'could', 'them', 'than',
   'other', 'been', 'has', 'its', 'use', 'two', 'how', 'our', 'way',
 ]);
-
-// XML-style tool call regex: <tool_name>JSON</tool_name>
-export const TOOL_CALL_REGEX = createXmlToolCallRegex(createToolInvocationCatalog(DEFAULT_TOOL_DESCRIPTORS));
 
 export const SKILL_TRIGGER_REGEX = /^\/(\S+)\s*([\s\S]*)$/;

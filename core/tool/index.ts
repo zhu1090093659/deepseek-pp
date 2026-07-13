@@ -19,7 +19,6 @@ export type {
   ToolExecutionMode,
   ToolExecutionTrigger,
   ToolPayload,
-  ToolProvider,
   ToolProviderId,
   ToolProviderIdentity,
   ToolProviderKind,
@@ -37,11 +36,25 @@ export {
   MEMORY_TOOL_NAMES,
   MEMORY_TOOL_PROVIDER,
   createMemoryToolDescriptors,
-  createMemoryToolProvider,
   createMemoryToolProviderIdentity,
   executeMemoryToolCall,
   isMemoryToolName,
 } from './memory';
+
+export {
+  ToolProviderRegistry,
+  ToolProviderRegistryError,
+  type RuntimeToolProvider,
+  type ToolProviderDescriptorContext,
+  type ToolProviderExecutionContext,
+  type ToolProviderRegistration,
+} from './provider-registry';
+
+export {
+  createRuntimeToolRuntime,
+  type RuntimeToolCallOptions,
+  type RuntimeToolRuntime,
+} from './runtime';
 
 export {
   WEB_SEARCH_TOOL_DESCRIPTORS,

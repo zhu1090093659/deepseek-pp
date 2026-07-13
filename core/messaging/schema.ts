@@ -8,6 +8,7 @@ export const BRIDGE_READY_TYPE = 'DPP_BRIDGE_READY';
 
 export const BRIDGE_MESSAGE_TYPES = [
   'SYNC_HOOK_STATE',
+  'SYNC_HOOK_STATE_REQUEST',
   'AUGMENT_REQUEST_BODY',
   'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT',
   'AUGMENT_REQUEST_BODY_RESULT',
@@ -35,6 +36,7 @@ export const BRIDGE_HANDSHAKE_TYPES = {
 
 export const BRIDGE_TYPE_SOURCES = {
   SYNC_HOOK_STATE: BRIDGE_SOURCES.content,
+  SYNC_HOOK_STATE_REQUEST: BRIDGE_SOURCES.mainWorld,
   AUGMENT_REQUEST_BODY: BRIDGE_SOURCES.mainWorld,
   AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT: BRIDGE_SOURCES.content,
   AUGMENT_REQUEST_BODY_RESULT: BRIDGE_SOURCES.content,
@@ -200,6 +202,7 @@ const BRIDGE_PAYLOAD_VALIDATORS: Record<
     message.skillSummaries.every(isSkillSummary) &&
     (message.skillPopupCopy === undefined || isSkillPopupCopy(message.skillPopupCopy))
   ),
+  SYNC_HOOK_STATE_REQUEST: () => true,
   AUGMENT_REQUEST_BODY: (message) => (
     isNonEmptyString(message.id) &&
     typeof message.body === 'string' &&
