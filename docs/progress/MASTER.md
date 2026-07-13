@@ -31,7 +31,7 @@
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 5 |
-| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 6 | 0 | 6 |
+| 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 5 | 1 | 6 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 |
@@ -46,7 +46,7 @@
 | T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | closed |
 | T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | closed |
 | T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | closed |
-| T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | open |
+| T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | closed |
 | T2.2 | [#317](https://github.com/zhu1090093659/deepseek-pp/issues/317) | Bind tool execution authorization context | open |
 | T2.3 | [#318](https://github.com/zhu1090093659/deepseek-pp/issues/318) | Minimize Android WebView native bridge | open |
 | T2.4 | [#319](https://github.com/zhu1090093659/deepseek-pp/issues/319) | Make sync uploads generation-atomic | open |
@@ -92,7 +92,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 ## Phase Checklist
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
-- [ ] Phase 2: Critical Boundaries and Failure Safety (0/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
+- [ ] Phase 2: Critical Boundaries and Failure Safety (1/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
@@ -102,11 +102,11 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 2 — Critical Boundaries and Failure Safety (in progress)
 
-**Active Task**: T2.1 / [Issue #316](https://github.com/zhu1090093659/deepseek-pp/issues/316) — Harden extension runtime message boundary.
+**Active Task**: T2.2 / [Issue #317](https://github.com/zhu1090093659/deepseek-pp/issues/317) — Bind tool execution authorization context.
 
-**Execution Branch**: `codex/316-runtime-message-boundary`
+**Execution Branch**: `codex/317-tool-authorization-context`
 
-**Blockers**: None. T2.1 runs in an isolated worktree so the original repository's user-owned changes remain untouched.
+**Blockers**: None. T2.2 runs in an isolated worktree so the original repository's user-owned changes remain untouched.
 
 **Baseline Evidence**: Phase 1 closed at merge `91dbe45` with 74 test files / 475 tests, compile, prompt freeze, Chrome/Edge/Firefox builds, manifest policy, UTF-8 policy, production audit, PoW/MCP/mock/Shell smoke, and Android asset staging passing. Android runtime validation was unavailable because this machine lacked a usable JDK/Gradle.
 
@@ -156,13 +156,22 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Shape-valid calls from the current bridge remain routing claims; descriptor/provider/mode/risk/call/session authorization, replay, and cross-session rejection are owned by T2.2 / Issue #317 rather than a second content-side authorization path.
 - Full `npm run ci:quality` passed: 75 files / 527 tests, seven prompt goldens, compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, 84-file UTF-8 and manifest policy, and release-asset verification. The 60-second full-test run left no orphan Vitest/Vite process.
 
+**T2.2 Evidence (implementation complete; closure pending)**:
+
+- Added one background-owned authorization state for request, receiver-owned document/chat session, advertised descriptor/provider/mode/risk/schema digest, payload fingerprint, expiry, and atomic call reservation. New-chat grants bind once to their assigned chat; cross-document/session, stale, disabled, replayed, forged, and mismatched calls fail before tool-provider execution.
+- Content now generates the authoritative request identity, returns a per-request descriptor catalog to MAIN, registers externalized tool work before awaiting payload writes, and revokes grants after request-scoped tasks settle on completion, cancel, abort, timeout, network failure, no-body response, bridge disconnect, or agent completion.
+- Provider routing now selects MCP versus local before matching tool names; MCP execution requires the authorized descriptor. Production local-Skill imports inject the runtime executor instead of retaining a direct MCP default. The released `web_fetch` permission retry is limited to one identical-payload retry.
+- Session storage uses strict version-1 nested decoding, compact SHA-256 schema and call digests, and enforced 32-grant / 128-call / 4 MiB limits. The first external-payload chunk persists its collection binding; later exact receiver-bound chunks use an expiry-bounded in-memory proof, with full persisted revalidation after a service-worker restart. Reservation writes fail closed; post-provider completion-write failures retain the replay barrier and preserve the real result/history with an explicit error.
+- The bridge contract adds the additive `REQUEST_TERMINAL` event and request-owned augmentation metadata, moving the executable bridge inventory from 13 to 14 types. Prompt-visible tool ordering and legal `ToolCall`, `ToolResult`, history, and manual/high-risk mode semantics remain unchanged.
+- Full `npm run ci:quality` passed: 83 files / 583 tests, seven prompt goldens, TypeScript compile, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. A separate 60-second full-test run passed, `git diff --check` is clean, and three independent contract reviews found no remaining blocker after the response-terminal, retry-state, provider-identity, and cache-expiry fixes. PR closure remains pending.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
 
-**Claude Code instruction surface**: unavailable / not used; root `CLAUDE.md` is absent and must not be restored as a parallel truth source.
+**Claude Code instruction surface**: unavailable / not used; no live `CLAUDE.md` remains and root `CLAUDE.md` must not be restored as a parallel truth source.
 
-**Other platform rule surfaces**: none. `.claude/settings.local.json` is local permission configuration only.
+**Scoped instruction surfaces**: `videos/deepseek-pp-promo/AGENTS.md` remains the subtree authority; its byte-identical `CLAUDE.md` duplicate was removed. The archival `docs/archives/**/AGENTS.md` is historical material, not live governance. `.claude/settings.local.json` is local permission configuration only.
 
 **Memory surface**: unavailable; no repo fallback approved or created.
 
@@ -177,9 +186,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Review the final T2.1 diff for duplicated validators, hidden fallbacks, behavior drift, and security regressions.
-2. Open the Issue #316 PR and wait for all required checks.
-3. Record T2.1 telemetry, merge the PR, advance Milestone #44 to 1/6, and continue with T2.2.
+1. Complete the second independent review of T2.2 and resolve every merge-blocking finding.
+2. Run the full 60-second test suite, compile, prompt freeze, cross-browser builds, manifest/UTF-8 policy, production audit, and applicable smoke checks.
+3. Open the Issue #317 PR, wait for required checks, record telemetry, merge it, advance Milestone #44 to 2/6, and continue with T2.3.
 
 ## Session Log
 
@@ -203,3 +212,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T1.5 closure | Merged PR #341 at `91dbe45`, closed Issue #315, completed Milestone #43 at 5/5 tasks with zero cumulative drift, and advanced to Phase 2. |
 | 2026-07-13 | T2.1 execution start | Opened isolated branch `codex/316-runtime-message-boundary` from `91dbe45` and audited runtime sender, MAIN/content, tool-record, sandbox Port, and opaque frame trust boundaries. |
 | 2026-07-13 | T2.1 implementation | Added browser-owned runtime context and content allowlisting, direction-specific bridge/tool codecs, background-only tab RPC/Port gates, shared sandbox normalization, strict frame/result decoding, and negative sender/source/payload tests without changing released legal wire records. |
+| 2026-07-13 | T2.1 closure | Merged PR #342 at `85f5991`, closed Issue #316, recorded task telemetry, and advanced Milestone #44 to 1/6 completed with zero cumulative drift. |
+| 2026-07-13 | T2.2 execution start | Opened isolated branch `codex/317-tool-authorization-context` from `85f5991` and audited tool descriptors, runtime dispatch, MCP, externalized payloads, content request lifecycle, local-Skill import, session persistence, and replay boundaries. |
+| 2026-07-13 | T2.2 implementation | Added background-owned request grants, content-owned request IDs, per-request descriptor snapshots, one-way chat binding, payload-bound replay protection, provider-first routing, terminal cleanup, compact strict session state, and regression tests; three independent reviews drove structural fixes before closure. |

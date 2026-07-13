@@ -1,6 +1,6 @@
 # Persistence and Sync Compatibility Contracts
 
-Baseline: v1.10.0, commit `165ec46`. The production code owns 35 fixed `chrome.storage.local` keys, one fixed `chrome.storage.session` key, and two IndexedDB databases. `core/platform/browser.ts` exposes an arbitrary-key adapter but has no production consumer; it is not approval for new unregistered keys.
+Baseline: v1.10.0, commit `165ec46`. The production code owns 35 fixed `chrome.storage.local` keys, two fixed `chrome.storage.session` keys, and two IndexedDB databases. `core/platform/browser.ts` exposes an arbitrary-key adapter but has no production consumer; it is not approval for new unregistered keys.
 
 For unversioned single-key records, the minimum future rule is: keep the key, preserve readable historical values, reject corrupt or explicitly future-versioned data before writing, and never overwrite original data with defaults merely because decoding failed. A table row calling out current defaulting/filtering describes present behavior, not permission to repeat silent loss.
 
@@ -56,11 +56,12 @@ For unversioned single-key records, the minimum future rule is: keep the key, pr
 | `LS-034` `deepseek_pp_whats_new_pending_version` | Version string; only current version means pending update. | Unknown/old strings are ignored. | No error surface beyond panel state. | Set/remove one key. | `core/whats-new.ts` |
 | `LS-035` `pendingChatText` | Expected historical/current value is a string; Side Panel consumes and removes this best-effort single-slot mailbox, while storage and runtime delivery can race. | Persisted input is only truthiness-checked and cast, not runtime-validated. Do not turn this into a durable queue without a versioned protocol. | Fallback write/remove failures are swallowed. | No deduplication or replay guarantee; text can be lost or delivered more than once across the two paths. | `entrypoints/background.ts`; `entrypoints/sidepanel/App.tsx` |
 
-## Fixed `chrome.storage.session` Key
+## Fixed `chrome.storage.session` Keys
 
 | ID / key | Historical input | Current output | Unknown/future behavior | Failure visibility | Recovery/rollback | Evidence |
 |:--|:--|:--|:--|:--|:--|:--|
 | `SS-001` `deepseek_pp_active_chat_loop` | `{active:true,startedAt,provider?}`; missing provider means `web`. | Writes provider `web|official-api`; records older than 15 seconds are deleted and reported as interrupted. | Invalid values return no active loop. New providers need explicit normalization. | Storage errors reject; stale recovery is returned to caller. | Session-scoped only; clear removes marker, browser/session loss naturally resets it. | `core/chat/active-loop.ts`; `tests/chat-active-loop.test.ts` |
+| `SS-002` `deepseek_pp_tool_authorizations` | Versioned, session-scoped background grants binding content-owned request identity, receiver-owned document/session, compact descriptor security digests, expiry, and payload-bound call reservation state. | Writes version 1; grants expire after 30 minutes, are capped at 32 active grants and 128 calls per grant, and the serialized state has a 4 MiB ceiling. Request terminal paths and agent completion explicitly close grants. The first external-payload chunk persists its collection binding; later exact receiver-bound chunks reuse an expiry-bounded in-memory proof, while a service-worker restart safely returns to the persisted check. | Missing state starts empty. Malformed, nested-corrupt, over-capacity, oversized, or unknown state fails visibly instead of being normalized or rewritten. A new-chat receiver can bind once to its assigned session; owner-document close still works after SPA route change. | Reservation write errors reject before provider execution. A completion write error retains the already-persisted `executing` replay barrier, logs explicitly, and does not replace the real provider result or skip history. | Browser-session loss clears all grants. Closed/expired grants and cached collection proofs fail closed; only an identical `web_fetch` permission precondition can retry once, after which the call is consumed. | `core/tool/authorization.ts`; `tests/tool-authorization.test.ts` |
 
 `userToken` is DeepSeek page `localStorage`, not extension storage. `deepseek_pp_automation_wake` is an alarm name and `deepseek_pp_sync` is a multipart boundary; neither is counted as a storage key.
 

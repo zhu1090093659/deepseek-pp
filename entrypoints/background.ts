@@ -70,13 +70,25 @@ import {
   validateSyncMemory,
 } from '../core/sync/schema';
 import { clearToolCallHistory, getToolCallHistory } from '../core/tool/history';
-import { appendExternalizedToolPayloadChunk } from '../core/tool/externalized-payload';
+import {
+  appendExternalizedToolPayloadChunk,
+  clearExternalizedToolPayloadNamespace,
+} from '../core/tool/externalized-payload';
 import {
   executeRuntimeToolCall,
+  getRuntimeAuthorizationDescriptors,
   getRuntimeToolDescriptors,
   refreshRuntimeToolDescriptors,
   type RuntimeToolCallOptions,
 } from '../core/tool/runtime';
+import {
+  authorizeExternalToolPayloadChunk,
+  closeToolAuthorization,
+  createToolAuthorization,
+  createToolAuthorizationResult,
+  ToolAuthorizationError,
+} from '../core/tool/authorization';
+import { ExternalPayloadAuthorizationCache } from '../core/tool/external-payload-authorization-cache';
 import {
   browserControlService,
   getBrowserControlSettings,
@@ -258,7 +270,7 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
+import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, ProjectContextState, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
 import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
@@ -272,6 +284,7 @@ let chatSessionId: string | null = null;
 let chatParentMessageId: number | null = null;
 let officialApiChatMessages: OfficialDeepSeekMessage[] = [];
 const conversationExportControllers = new Map<string, AbortController>();
+const externalPayloadAuthorizationCache = new ExternalPayloadAuthorizationCache();
 let currentBackgroundLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
@@ -651,16 +664,23 @@ async function handleMessage(
 
     case 'PREVIEW_LOCAL_SKILL_SOURCE': {
       const { rootPath } = message.payload as { rootPath: string };
-      return previewLocalSkillSource(rootPath);
+      return previewLocalSkillSource(rootPath, { executeToolCall: executeLocalSkillImporterToolCall });
     }
 
     case 'PICK_LOCAL_SKILL_FOLDER': {
       const { defaultPath } = (message.payload ?? {}) as { defaultPath?: string };
-      return { path: await pickLocalSkillFolder(defaultPath) };
+      return {
+        path: await pickLocalSkillFolder(defaultPath, {
+          executeToolCall: executeLocalSkillImporterToolCall,
+        }),
+      };
     }
 
     case 'IMPORT_LOCAL_SKILL_SOURCE': {
-      const result = await importLocalSkillSource(message.payload as LocalSkillImportRequest);
+      const result = await importLocalSkillSource(
+        message.payload as LocalSkillImportRequest,
+        { executeToolCall: executeLocalSkillImporterToolCall },
+      );
       if (!result.ok) return result;
       await broadcastStateUpdate(context.tabId);
       return result;
@@ -920,18 +940,120 @@ async function handleMessage(
       return tools;
     }
 
+    case 'CREATE_TOOL_AUTHORIZATION': {
+      if (context.surface !== 'deepseek_content') {
+        return { ok: false, error: 'tool_authorization_requires_content_runtime' };
+      }
+      const payload = message.payload as {
+        requestId?: unknown;
+        trigger?: unknown;
+        chatSessionId?: unknown;
+        runId?: unknown;
+        descriptorIds?: unknown;
+      };
+      if (
+        typeof payload.requestId !== 'string' ||
+        (payload.trigger !== 'manual_chat' && payload.trigger !== 'agent_run') ||
+        (payload.chatSessionId !== undefined && payload.chatSessionId !== null && typeof payload.chatSessionId !== 'string') ||
+        (payload.runId !== undefined && typeof payload.runId !== 'string') ||
+        (payload.descriptorIds !== undefined && (
+          !Array.isArray(payload.descriptorIds) ||
+          !payload.descriptorIds.every((id) => typeof id === 'string')
+        ))
+      ) {
+        return { ok: false, error: 'invalid_tool_authorization_request' };
+      }
+
+      const currentDescriptors = await getRuntimeToolDescriptors(currentBackgroundLocale);
+      const requestedDescriptorIds = payload.descriptorIds
+        ? new Set(payload.descriptorIds as string[])
+        : null;
+      const descriptors = requestedDescriptorIds
+        ? currentDescriptors.filter((descriptor) => requestedDescriptorIds.has(descriptor.id))
+        : currentDescriptors;
+      if (requestedDescriptorIds && descriptors.length !== requestedDescriptorIds.size) {
+        return { ok: false, error: 'unknown_tool_authorization_descriptor' };
+      }
+
+      return createToolAuthorization({
+        requestId: payload.requestId,
+        trigger: payload.trigger,
+        chatSessionId: payload.chatSessionId as string | null | undefined,
+        runId: payload.runId as string | undefined,
+        subject: createToolAuthorizationSubject(context),
+        descriptors,
+      });
+    }
+
+    case 'CLOSE_TOOL_AUTHORIZATION': {
+      const { authorizationId } = (message.payload as { authorizationId?: unknown } | undefined) ?? {};
+      if (typeof authorizationId !== 'string') return { ok: false, error: 'invalid_tool_authorization_id' };
+      await closeToolAuthorization(authorizationId, createToolAuthorizationSubject(context));
+      externalPayloadAuthorizationCache.deleteGrant(authorizationId);
+      clearExternalizedToolPayloadNamespace(authorizationId);
+      return { ok: true };
+    }
+
     case 'APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK': {
-      const payload = message.payload as { callId?: string; invocationName?: string; chunk?: string };
-      if (typeof payload.callId !== 'string' || typeof payload.invocationName !== 'string' || typeof payload.chunk !== 'string') {
+      const payload = message.payload as {
+        authorizationId?: string;
+        callId?: string;
+        invocationName?: string;
+        chunk?: string;
+      };
+      if (
+        typeof payload.authorizationId !== 'string' ||
+        typeof payload.callId !== 'string' ||
+        typeof payload.invocationName !== 'string' ||
+        typeof payload.chunk !== 'string'
+      ) {
         return { ok: false, error: 'invalid_external_payload_chunk' };
       }
-      appendExternalizedToolPayloadChunk(payload.callId, payload.invocationName, payload.chunk);
+      try {
+        const subject = createToolAuthorizationSubject(context);
+        const binding = {
+          grantId: payload.authorizationId,
+          subject,
+          callId: payload.callId,
+          invocationName: payload.invocationName,
+        };
+        if (!externalPayloadAuthorizationCache.has(binding)) {
+          const chunkAuthorization = await authorizeExternalToolPayloadChunk({
+            ...binding,
+            currentDescriptors: await getRuntimeAuthorizationDescriptors(currentBackgroundLocale),
+          });
+          externalPayloadAuthorizationCache.remember(binding, chunkAuthorization.expiresAt);
+        }
+        appendExternalizedToolPayloadChunk(
+          payload.callId,
+          payload.invocationName,
+          payload.chunk,
+          payload.authorizationId,
+        );
+      } catch (error) {
+        if (!(error instanceof ToolAuthorizationError)) throw error;
+        return createToolAuthorizationResult(error);
+      }
       return { ok: true };
     }
 
     case 'EXECUTE_TOOL_CALL': {
-      const call = message.payload as ToolCall;
-      const result = await executeBackgroundRuntimeToolCall(call, call.source?.trigger ?? 'manual_chat');
+      const payload = message.payload as ToolCall & { authorizationId?: unknown };
+      const { authorizationId, ...call } = payload;
+      if (typeof authorizationId === 'string' && typeof call.id === 'string') {
+        externalPayloadAuthorizationCache.deleteCall(authorizationId, call.id);
+      }
+      const result = context.surface === 'deepseek_content'
+        ? await executeRuntimeToolCall(
+          call,
+          {
+            kind: 'grant',
+            grantId: typeof authorizationId === 'string' ? authorizationId : '',
+            subject: createToolAuthorizationSubject(context),
+          },
+          currentBackgroundLocale,
+        )
+        : await executeBackgroundRuntimeToolCall(call, 'manual_chat');
       await broadcastToolCallHistoryUpdate(context.tabId);
       return result;
     }
@@ -1339,6 +1461,15 @@ async function handleMessage(
   }
 }
 
+async function executeLocalSkillImporterToolCall(call: ToolCall): Promise<ToolResult> {
+  const hasDescriptor = (await getRuntimeAuthorizationDescriptors(currentBackgroundLocale))
+    .some((descriptor) => descriptor.id === call.descriptorId);
+  if (!hasDescriptor && call.provider?.kind === 'mcp') {
+    await refreshMcpServerDiscovery(call.provider.id);
+  }
+  return executeBackgroundRuntimeToolCall(call, 'manual_chat');
+}
+
 async function broadcastToTabs(payload: Record<string, unknown>, excludeTabId?: number) {
   await broadcastRuntimeUpdate(payload, excludeTabId, {
     tabUrlPattern: DEEPSEEK_TAB_URL_PATTERN,
@@ -1559,7 +1690,37 @@ async function executeBackgroundRuntimeToolCall(
   source: ToolExecutionTrigger,
   options?: RuntimeToolCallOptions,
 ): Promise<ToolResult> {
-  return executeRuntimeToolCall(call, source, currentBackgroundLocale, options);
+  return executeRuntimeToolCall(call, {
+    kind: 'trusted',
+    trigger: source,
+    requestId: call.source?.requestId ??
+      call.source?.automationRunId ??
+      call.source?.runId ??
+      crypto.randomUUID(),
+    chatSessionId: call.source?.chatSessionId ?? null,
+    taskId: call.source?.taskId,
+    runId: call.source?.runId,
+    automationId: call.source?.automationId,
+    automationRunId: call.source?.automationRunId,
+  }, currentBackgroundLocale, options);
+}
+
+function createToolAuthorizationSubject(
+  context: RuntimeMessageContext,
+): ToolAuthorizationSubject {
+  // Firefox may omit MessageSender.documentId. Keep the receiver-owned
+  // tab/frame identity stable across DeepSeek SPA route changes; a full
+  // navigation destroys the content runtime and revokes its in-memory grant.
+  const documentSessionId = context.documentId
+    ? context.documentSessionId
+    : `${context.surface}:${context.tabId ?? 'extension'}:${context.frameId ?? 'extension'}`;
+  return {
+    surface: context.surface,
+    documentSessionId,
+    tabId: context.tabId,
+    frameId: context.frameId,
+    chatSessionId: context.chatSessionId ?? null,
+  };
 }
 
 async function analyzeMultimodalMedia(

@@ -12,6 +12,7 @@ import type {
   ToolCall,
   ToolCardResult,
   ToolCallRestoreRecord,
+  ToolAuthorizationGrantSummary,
   ToolDescriptor,
   ToolExecutionRecord,
 } from '../core/types';
@@ -30,6 +31,10 @@ import { createRestoredArtifactToolResult } from '../core/artifact';
 import type { ResponseCompletePayload, ResponseTokenSpeedPayload } from '../core/interceptor/fetch-hook';
 import { shouldIgnoreEmptyTokenSpeedProgress } from '../core/interceptor/token-speed';
 import { runInlineAgentLoop } from '../core/inline-agent/loop';
+import {
+  INCOMPLETE_TOOL_CALL_ERROR_CODE,
+  selectContinuableToolExecutions,
+} from '../core/inline-agent/execution-policy';
 import {
   INLINE_AGENT_CONTINUATION_PLACEHOLDER,
   isInlineAgentContinuationRequest,
@@ -81,12 +86,16 @@ import {
   sanitizeToolExecutionForRestoreStorage,
 } from '../core/tool/execution-restore';
 import {
+  chainExternalizedPayloadWrite,
   isExternalizedToolPayloadCall,
 } from '../core/tool/externalized-payload';
 import {
   createToolRestoreBlockId,
   createToolRestoreBlockUrl,
 } from '../core/tool/restore-block';
+import { PendingRequestRegistry } from '../core/tool/pending-request-registry';
+import { PendingAuthorizationCorrelations } from '../core/tool/pending-authorization-correlations';
+import { shouldRequestWebFetchPermission } from '../core/tool/web-fetch-permission';
 import {
   BRIDGE_HANDSHAKE_TYPES,
   BRIDGE_READY_TYPE,
@@ -244,6 +253,11 @@ interface ActiveToolBlockSession {
   updatedAt: number;
 }
 
+interface PendingStartedToolCall {
+  call: ToolCall;
+  session: ActiveToolBlockSession;
+}
+
 interface PendingMultimodalMedia {
   id: string;
   kind: MultimodalMediaKind;
@@ -262,6 +276,11 @@ let activeToolBlockSessionId: string | null = null;
 let activeStreamingToolCount = 0;
 const activeToolBlockSessions = new Map<string, ActiveToolBlockSession>();
 const pendingExternalToolPayloadWrites = new Map<string, Promise<void>>();
+const activeToolAuthorizations = new Map<string, ToolAuthorizationGrantSummary>();
+const toolAuthorizationRequestAliases = new Map<string, string>();
+const pendingToolAuthorizationCorrelations = new PendingAuthorizationCorrelations();
+const pendingToolExecutionTasksByRequest = new Map<string, Set<Promise<ToolCardResult>>>();
+const pendingStartedToolCallsByRequest = new PendingRequestRegistry<PendingStartedToolCall>();
 let responseGeneration = 0;
 let tokenSpeedEl: HTMLElement | null = null;
 let tokenSpeedBootstrapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -473,11 +492,8 @@ export default defineContentScript({
             break;
           }
           case 'TOOL_CALL': {
-            const call = data.data as ToolCall;
+            const call = ensureToolCallId(data.data as ToolCall);
             setPetState('working');
-            if (isExternalizedToolPayloadCall(call) && call.id) {
-              await waitForExternalToolPayloadWrites(call.id);
-            }
             void runToolExecution(call);
             break;
           }
@@ -502,7 +518,8 @@ export default defineContentScript({
             const complete = normalizeResponseCompletePayload(data.payload, data.text);
             const gen = ++responseGeneration;
             activeStreamingToolCount = 0;
-            await waitForPendingToolExecutions();
+            await waitForPendingToolExecutions(complete.requestId);
+            await finalizeInterruptedToolStarts(complete.requestId);
             if (gen !== responseGeneration) break;
             const session = getActiveToolBlockSessionForComplete(complete);
             const completedExecutions = session ? [...session.executions] : [...toolExecutions];
@@ -529,6 +546,23 @@ export default defineContentScript({
             schedulePetIdle();
             break;
           }
+          case 'REQUEST_TERMINAL': {
+            const requestId = data.payload?.requestId;
+            if (typeof requestId === 'string') {
+              if (
+                activeToolAuthorizations.has(requestId) ||
+                toolAuthorizationRequestAliases.has(requestId)
+              ) {
+                pendingToolAuthorizationCorrelations.terminate(requestId);
+                await waitForPendingToolExecutions(requestId);
+                await finalizeInterruptedToolStarts(requestId);
+                await closeContentToolAuthorization(requestId);
+              } else {
+                pendingToolAuthorizationCorrelations.terminate(requestId);
+              }
+            }
+            break;
+          }
           case 'RESPONSE_TOKEN_SPEED': {
             const progress = normalizeResponseTokenSpeedPayload(data.payload);
             if (progress) {
@@ -541,6 +575,8 @@ export default defineContentScript({
       } catch (error) {
         if (isExtensionInvalidatedError(error)) {
           invalidateExtensionContext();
+        } else {
+          console.error('[DeepSeek++] main-world message handling failed', error);
         }
       }
     };
@@ -729,20 +765,43 @@ async function handleMainWorldPortMessage(
 
 function disconnectMainWorldPort(bridgeSession?: BridgeSessionContext): void {
   if (!mainWorldBridgeSessions?.close(bridgeSession)) return;
+  pendingToolAuthorizationCorrelations.terminateAll();
+  void closeAllContentToolAuthorizations().catch((error) => {
+    console.error('[DeepSeek++] failed to close tool authorizations on bridge disconnect', error);
+  });
   mainWorldPort?.close();
   mainWorldPort = null;
   mainWorldBridgeReady = false;
   pendingMainWorldMessages.length = 0;
 }
 
-async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }): Promise<void> {
+async function handleAugmentRequestBody(data: {
+  id?: unknown;
+  requestId?: unknown;
+  body?: unknown;
+}): Promise<void> {
   const id = typeof data.id === 'string' ? data.id : '';
+  const mainRequestId = typeof data.requestId === 'string' ? data.requestId : '';
   if (!id) return;
 
+  let authorization: ToolAuthorizationGrantSummary | null = null;
+  let requestId = '';
+  let tracksPendingAlias = false;
   try {
     if (typeof data.body !== 'string') {
       throw new Error('Request body must be a string.');
     }
+    if (!mainRequestId) {
+      throw new Error('Request authorization identity is missing.');
+    }
+    if (
+      toolAuthorizationRequestAliases.has(mainRequestId) ||
+      !pendingToolAuthorizationCorrelations.begin(mainRequestId)
+    ) {
+      throw new Error('Request authorization correlation is already active.');
+    }
+    tracksPendingAlias = true;
+    requestId = crypto.randomUUID();
 
     const bodyWithMultimodalMedia = await consumePendingMultimodalMediaForRequest(data.body, {
       onLongRunning(timeoutMs) {
@@ -753,6 +812,13 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
         });
       },
     });
+    authorization = await createContentToolAuthorization({
+      requestId,
+      trigger: 'manual_chat',
+      chatSessionId: readRequestChatSessionId(bodyWithMultimodalMedia),
+    });
+    activeToolAuthorizations.set(requestId, authorization);
+    toolAuthorizationRequestAliases.set(mainRequestId, requestId);
     const project = await resolveProjectContextForRequestBody(bodyWithMultimodalMedia);
     const result = augmentRequestBody(bodyWithMultimodalMedia, {
       memories: currentMemories,
@@ -761,7 +827,7 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       projectContext: project?.context ?? null,
       projectId: project?.projectId ?? null,
       modelType: currentModelType,
-      toolDescriptors: currentToolDescriptors,
+      toolDescriptors: authorization.descriptors,
       messageCount: currentRequestMessageCount,
       locale: currentContentLocale,
       promptSettings: currentPromptSettings,
@@ -772,6 +838,14 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       if (result.usedMemoryIds.length > 0) {
         await sendRuntimeMessage({ type: 'TOUCH_MEMORIES', payload: { ids: result.usedMemoryIds } });
       }
+    } else {
+      await closeContentToolAuthorization(requestId);
+    }
+
+    const requestAlreadyEnded = pendingToolAuthorizationCorrelations.activate(mainRequestId);
+    tracksPendingAlias = false;
+    if (requestAlreadyEnded) {
+      throw new Error('Request ended before its tool authorization became active.');
     }
 
     postToMainWorld({
@@ -779,10 +853,16 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       id,
       ok: true,
       result: result
-        ? { body: result.body, agentTaskPrompt: result.agentTaskPrompt }
+        ? {
+            body: result.body,
+            agentTaskPrompt: result.agentTaskPrompt,
+            requestId,
+            toolDescriptors: authorization.descriptors,
+          }
         : null,
     });
   } catch (error) {
+    if (authorization) await closeContentToolAuthorization(requestId);
     if (isExtensionInvalidatedError(error)) {
       invalidateExtensionContext();
       postToMainWorld({
@@ -800,6 +880,10 @@ async function handleAugmentRequestBody(data: { id?: unknown; body?: unknown }):
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    if (tracksPendingAlias) {
+      pendingToolAuthorizationCorrelations.finish(mainRequestId);
+    }
   }
 }
 
@@ -829,6 +913,72 @@ async function resolveProjectContextForRequestBody(bodyStr: string): Promise<Res
     },
   });
   return project ?? null;
+}
+
+function readRequestChatSessionId(bodyStr: string): string | null {
+  try {
+    const body = JSON.parse(bodyStr) as { chat_session_id?: unknown };
+    return typeof body.chat_session_id === 'string' && body.chat_session_id.trim()
+      ? body.chat_session_id.trim()
+      : getCurrentChatSessionId();
+  } catch {
+    return getCurrentChatSessionId();
+  }
+}
+
+async function createContentToolAuthorization(input: {
+  requestId: string;
+  trigger: 'manual_chat' | 'agent_run';
+  chatSessionId: string | null;
+  runId?: string;
+  descriptorIds?: string[];
+}): Promise<ToolAuthorizationGrantSummary> {
+  return sendRuntimeMessageStrict<ToolAuthorizationGrantSummary>({
+    type: 'CREATE_TOOL_AUTHORIZATION',
+    payload: input,
+  });
+}
+
+async function closeContentToolAuthorization(requestId: string): Promise<void> {
+  const authoritativeRequestId = activeToolAuthorizations.has(requestId)
+    ? requestId
+    : toolAuthorizationRequestAliases.get(requestId);
+  if (!authoritativeRequestId) return;
+  const authorization = activeToolAuthorizations.get(authoritativeRequestId);
+  if (!authorization) return;
+  if (!hasLiveExtensionContext()) {
+    removeLocalToolAuthorization(authoritativeRequestId, authorization.id);
+    return;
+  }
+  try {
+    await sendRuntimeMessageStrict({
+      type: 'CLOSE_TOOL_AUTHORIZATION',
+      payload: { authorizationId: authorization.id },
+    });
+    removeLocalToolAuthorization(authoritativeRequestId, authorization.id);
+  } catch (error) {
+    if (!isExtensionInvalidatedError(error)) throw error;
+    invalidateExtensionContext();
+    removeLocalToolAuthorization(authoritativeRequestId, authorization.id);
+  }
+}
+
+function removeLocalToolAuthorization(requestId: string, authorizationId: string): void {
+  activeToolAuthorizations.delete(requestId);
+  for (const key of pendingExternalToolPayloadWrites.keys()) {
+    if (key.startsWith(`${authorizationId}:`)) pendingExternalToolPayloadWrites.delete(key);
+  }
+  for (const [alias, target] of toolAuthorizationRequestAliases) {
+    if (target === requestId) toolAuthorizationRequestAliases.delete(alias);
+  }
+}
+
+async function closeAllContentToolAuthorizations(): Promise<void> {
+  await Promise.all([...activeToolAuthorizations.keys()].map(async (requestId) => {
+    await waitForPendingToolExecutions(requestId);
+    await finalizeInterruptedToolStarts(requestId);
+    await closeContentToolAuthorization(requestId);
+  }));
 }
 
 function postToMainWorld(message: Record<string, unknown>): void {
@@ -2948,15 +3098,7 @@ function startInlineAgentIfNeeded(
 
   // Collect executions that should trigger a continuation:
   // MCP tools + local web and browser-control tools.
-  const continuableExecutions = executions.filter(
-    (e) =>
-      e.provider?.kind === 'mcp' ||
-      e.provider?.id === 'web' ||
-      e.provider?.id === 'browser_control' ||
-      e.name === 'web_search' ||
-      e.name === 'web_fetch' ||
-      e.name.startsWith('browser_'),
-  );
+  const continuableExecutions = selectContinuableToolExecutions(executions);
   if (continuableExecutions.length === 0) return;
   if (!complete.chatSessionId || complete.assistantMessageId == null) return;
 
@@ -3122,20 +3264,43 @@ async function startInlineAgentLoop(payload: InlineAgentStartPayload): Promise<v
   const abort = new AbortController();
   activeAgentAbort = abort;
 
+  const authorizationRequestId = `agent:${payload.loopId}`;
+  let authorization: ToolAuthorizationGrantSummary;
+  try {
+    authorization = await createContentToolAuthorization({
+      requestId: authorizationRequestId,
+      trigger: 'agent_run',
+      chatSessionId: payload.chatSessionId,
+      runId: payload.loopId,
+      descriptorIds: payload.toolDescriptors.map((descriptor) => descriptor.id),
+    });
+    activeToolAuthorizations.set(authorizationRequestId, authorization);
+  } catch (error) {
+    handleAgentLoopError({
+      loopId: payload.loopId,
+      stepIndex: 0,
+      totalTools: payload.toolExecutions.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (activeAgentAbort === abort) activeAgentAbort = null;
+    return;
+  }
+
   const post = (type: string, data: unknown) => {
     handleInlineAgentLoopEvent(type, data);
   };
 
   const executeTool = async (call: ToolCall): Promise<ToolExecutionRecord> => {
-    const enrichedCall: ToolCall = {
+    const enrichedCall: ToolCall = ensureToolCallId({
       ...call,
       source: {
         trigger: 'agent_run',
+        requestId: authorizationRequestId,
         chatSessionId: payload.chatSessionId,
         runId: payload.loopId,
       },
-    };
-    const result = await executeToolCall(enrichedCall);
+    });
+    const result = await executeToolCall(enrichedCall, authorization.id);
     return {
       name: call.name,
       result: {
@@ -3151,8 +3316,15 @@ async function startInlineAgentLoop(payload: InlineAgentStartPayload): Promise<v
     };
   };
 
-  await runInlineAgentLoop(payload, { post, executeTool, signal: abort.signal });
-  if (activeAgentAbort === abort) activeAgentAbort = null;
+  try {
+    await runInlineAgentLoop({
+      ...payload,
+      toolDescriptors: authorization.descriptors,
+    }, { post, executeTool, signal: abort.signal });
+  } finally {
+    await closeContentToolAuthorization(authorizationRequestId);
+    if (activeAgentAbort === abort) activeAgentAbort = null;
+  }
 }
 
 function handleInlineAgentLoopEvent(type: string, data: unknown): void {
@@ -3373,7 +3545,12 @@ function handleAgentLoopError(msg: InlineAgentLoopErrorMsg): void {
 function runToolExecution(call: ToolCall): Promise<ToolCardResult> {
   const session = getOrCreateActiveToolBlockSession(call);
   if (activeStreamingToolCount > 0) activeStreamingToolCount--;
-  const task = executeToolCall(call)
+  const task = (async () => {
+    if (isExternalizedToolPayloadCall(call)) {
+      await waitForExternalToolPayloadWrites(call);
+    }
+    return executeToolCall(call);
+  })()
     .catch((err): ToolCardResult => ({
       ok: false,
       summary: contentT('content.toolBlock.summaries.failed'),
@@ -3392,10 +3569,40 @@ function runToolExecution(call: ToolCall): Promise<ToolCardResult> {
     });
 
   pendingToolExecutionTasks.add(task);
+  const requestId = call.source?.requestId;
+  if (requestId) {
+    const requestTasks = pendingToolExecutionTasksByRequest.get(requestId) ?? new Set();
+    requestTasks.add(task);
+    pendingToolExecutionTasksByRequest.set(requestId, requestTasks);
+  }
   void task.finally(() => {
     pendingToolExecutionTasks.delete(task);
+    if (!requestId) return;
+    const requestTasks = pendingToolExecutionTasksByRequest.get(requestId);
+    requestTasks?.delete(task);
+    if (requestTasks?.size === 0) pendingToolExecutionTasksByRequest.delete(requestId);
   });
   return task;
+}
+
+function ensureToolCallId(call: ToolCall): ToolCall {
+  if (call.id) return call;
+  const identity = JSON.stringify({
+    requestId: call.source?.requestId ?? null,
+    descriptorId: call.descriptorId ?? null,
+    providerId: call.provider?.id ?? null,
+    name: call.name,
+    invocationName: call.invocationName ?? null,
+    raw: call.raw,
+  });
+  return { ...call, id: `legacy:${hashString(identity)}` };
+}
+
+function getToolAuthorizationForCall(
+  call: ToolCall,
+): ToolAuthorizationGrantSummary | undefined {
+  const requestId = call.source?.requestId;
+  return requestId ? activeToolAuthorizations.get(requestId) : undefined;
 }
 
 function showPendingToolExecution(call: ToolCall): void {
@@ -3414,6 +3621,7 @@ function showPendingToolExecution(call: ToolCall): void {
     },
   });
   session.updatedAt = Date.now();
+  registerPendingToolStart(call, session);
   activeToolBlockSessionId = session.id;
   toolExecutions = session.executions;
   setPetState('working');
@@ -3425,6 +3633,63 @@ function removePendingToolExecution(session: ActiveToolBlockSession, call: ToolC
   const index = session.executions.findIndex((execution) => isMatchingPendingToolExecution(execution, call));
   if (index >= 0) {
     session.executions.splice(index, 1);
+  }
+  unregisterPendingToolStart(call);
+}
+
+function registerPendingToolStart(call: ToolCall, session: ActiveToolBlockSession): void {
+  const requestId = call.source?.requestId;
+  if (!requestId) return;
+  pendingStartedToolCallsByRequest.set(
+    requestId,
+    createPendingToolStartKey(call),
+    { call, session },
+  );
+}
+
+function unregisterPendingToolStart(call: ToolCall): void {
+  const requestId = call.source?.requestId;
+  if (!requestId) return;
+  pendingStartedToolCallsByRequest.delete(requestId, createPendingToolStartKey(call));
+}
+
+function createPendingToolStartKey(call: ToolCall): string {
+  return call.id ?? `${call.descriptorId ?? ''}:${call.name}:${call.raw}`;
+}
+
+async function finalizeInterruptedToolStarts(requestId: string): Promise<void> {
+  const authoritativeRequestId = activeToolAuthorizations.has(requestId)
+    ? requestId
+    : toolAuthorizationRequestAliases.get(requestId) ?? requestId;
+  const pending = pendingStartedToolCallsByRequest.drain(authoritativeRequestId);
+  if (pending.length === 0) return;
+
+  for (const { call, session } of pending) {
+    removePendingToolExecution(session, call);
+    const result: ToolCardResult = {
+      ok: false,
+      summary: contentT('content.toolBlock.summaries.failed'),
+      detail: contentT('tool.runtime.incomplete'),
+      error: {
+        code: INCOMPLETE_TOOL_CALL_ERROR_CODE,
+        message: contentT('tool.runtime.incomplete'),
+        retryable: false,
+      },
+    };
+    session.executions.push({
+      callId: call.id,
+      name: call.name,
+      provider: call.provider,
+      descriptorId: call.descriptorId,
+      result,
+    });
+    session.updatedAt = Date.now();
+    activeStreamingToolCount = Math.max(0, activeStreamingToolCount - 1);
+    activeToolBlockSessionId = session.id;
+    toolExecutions = session.executions;
+    renderToolBlock(session);
+    await persistToolBlockSession(session);
+    showPetResult(result);
   }
 }
 
@@ -3439,9 +3704,13 @@ function showPetResult(result: ToolCardResult): void {
   schedulePetIdle(PET_FEEDBACK_DELAY_MS);
 }
 
-async function waitForPendingToolExecutions() {
-  while (pendingToolExecutionTasks.size > 0) {
-    await Promise.allSettled(Array.from(pendingToolExecutionTasks));
+async function waitForPendingToolExecutions(requestId?: string) {
+  while (true) {
+    const tasks = requestId
+      ? pendingToolExecutionTasksByRequest.get(requestId)
+      : pendingToolExecutionTasks;
+    if (!tasks || tasks.size === 0) return;
+    await Promise.allSettled(Array.from(tasks));
   }
 }
 
@@ -4386,34 +4655,46 @@ function getToolRecordSignature(record: ToolCallRestoreRecord): string | null {
 }
 
 async function appendExternalToolPayloadChunk(chunk: ToolCallPayloadChunk): Promise<void> {
-  const previous = pendingExternalToolPayloadWrites.get(chunk.id) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(async () => {
-      await sendRuntimeMessage({
+  const authorization = chunk.requestId
+    ? activeToolAuthorizations.get(chunk.requestId)
+    : undefined;
+  if (!authorization) {
+    throw new Error('Externalized tool payload has no active authorization context.');
+  }
+  const pendingKey = `${authorization.id}:${chunk.id}`;
+  const previous = pendingExternalToolPayloadWrites.get(pendingKey) ?? Promise.resolve();
+  const next = chainExternalizedPayloadWrite(previous, async () => {
+      await sendRuntimeMessageStrict({
         type: 'APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK',
         payload: {
+          authorizationId: authorization.id,
           callId: chunk.id,
           invocationName: chunk.invocationName,
           chunk: chunk.chunk,
         },
       });
     });
-  pendingExternalToolPayloadWrites.set(chunk.id, next);
+  pendingExternalToolPayloadWrites.set(pendingKey, next);
   await next;
 }
 
-async function waitForExternalToolPayloadWrites(callId: string): Promise<void> {
-  const pending = pendingExternalToolPayloadWrites.get(callId);
+async function waitForExternalToolPayloadWrites(call: ToolCall): Promise<void> {
+  const authorization = getToolAuthorizationForCall(call);
+  const pendingKey = authorization ? `${authorization.id}:${call.id}` : call.id;
+  if (!pendingKey) return;
+  const pending = pendingExternalToolPayloadWrites.get(pendingKey);
   if (!pending) return;
   try {
     await pending;
   } finally {
-    pendingExternalToolPayloadWrites.delete(callId);
+    pendingExternalToolPayloadWrites.delete(pendingKey);
   }
 }
 
-async function executeToolCall(call: ToolCall): Promise<ToolCardResult> {
+async function executeToolCall(
+  call: ToolCall,
+  authorizationId?: string,
+): Promise<ToolCardResult> {
   if (call.parseError) {
     return {
       ok: false,
@@ -4423,15 +4704,16 @@ async function executeToolCall(call: ToolCall): Promise<ToolCardResult> {
     };
   }
 
-  const result = await sendRuntimeToolCallMessage(call);
+  const authorization = authorizationId ?? getToolAuthorizationForCall(call)?.id;
+  const result = await sendRuntimeToolCallMessage(call, authorization);
   const normalized = normalizeRuntimeToolCallResult(result);
 
   if (normalized) {
-    if (shouldAutoRequestPermission(call, normalized)) {
+    if (shouldRequestWebFetchPermission(call, normalized)) {
       const url = call.payload?.url;
       const granted = typeof url === 'string' ? await requestWebFetchPermission(url) : false;
       if (granted) {
-        const retryResult = await sendRuntimeToolCallMessage(call);
+        const retryResult = await sendRuntimeToolCallMessage(call, authorization);
         const retryNormalized = normalizeRuntimeToolCallResult(retryResult);
         if (retryNormalized) return retryNormalized;
       }
@@ -4449,19 +4731,17 @@ async function executeToolCall(call: ToolCall): Promise<ToolCardResult> {
   return createInvalidRuntimeToolResult(call, result);
 }
 
-function shouldAutoRequestPermission(call: ToolCall, result: ToolCardResult): boolean {
-  return (
-    call.name === 'web_fetch' &&
-    !result.ok &&
-    result.error?.code === 'fetch_permission_denied'
-  );
-}
-
-async function sendRuntimeToolCallMessage(call: ToolCall): Promise<unknown> {
+async function sendRuntimeToolCallMessage(
+  call: ToolCall,
+  authorizationId?: string,
+): Promise<unknown> {
   if (!hasLiveExtensionContext()) return undefined;
 
   try {
-    return await chrome.runtime.sendMessage({ type: 'EXECUTE_TOOL_CALL', payload: call });
+    return await chrome.runtime.sendMessage({
+      type: 'EXECUTE_TOOL_CALL',
+      payload: { ...call, authorizationId },
+    });
   } catch (error) {
     if (isExtensionInvalidatedError(error)) {
       invalidateExtensionContext();

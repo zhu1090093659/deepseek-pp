@@ -24,8 +24,8 @@ import { normalizeMcpToolDescriptor, type McpServerConfig } from '../core/mcp';
 const legalCases = Object.values(LEGAL_BRIDGE_CASES).flat();
 const malformedPayloadCases = Object.values(MALFORMED_BRIDGE_PAYLOAD_CASES).flat();
 describe('bridge message compatibility contract', () => {
-  it('keeps one exhaustive authority for all 13 port message types', () => {
-    expect(BRIDGE_MESSAGE_TYPES).toHaveLength(13);
+  it('keeps one exhaustive authority for all 14 port message types', () => {
+    expect(BRIDGE_MESSAGE_TYPES).toHaveLength(14);
     expect(new Set(BRIDGE_MESSAGE_TYPES).size).toBe(BRIDGE_MESSAGE_TYPES.length);
     expect(Object.keys(LEGAL_BRIDGE_CASES).sort()).toEqual([...BRIDGE_MESSAGE_TYPES].sort());
     expect(Object.keys(MALFORMED_BRIDGE_PAYLOAD_CASES).sort()).toEqual([...BRIDGE_MESSAGE_TYPES].sort());

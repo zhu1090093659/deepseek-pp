@@ -47,7 +47,8 @@ describe('MCP execution policy', () => {
       },
     });
 
-    const result = await executeMcpToolCall(createMcpCall(server.id));
+    const descriptor = createMcpDescriptor(server);
+    const result = await executeMcpToolCall(createMcpCall(server.id, descriptor), descriptor);
 
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('mcp_execution_disabled');
@@ -176,7 +177,7 @@ describe('MCP execution policy', () => {
       },
     });
 
-    const result = await executeMcpToolCall(createMcpCall(server.id, descriptor));
+    const result = await executeMcpToolCall(createMcpCall(server.id, descriptor), descriptor);
 
     expect(result.ok).toBe(true);
     expect(requests.map((request) => request.method)).toEqual([

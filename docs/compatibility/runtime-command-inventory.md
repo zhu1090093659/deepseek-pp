@@ -4,14 +4,14 @@ Baseline: v1.10.0, commit `165ec46`. This annex is the name-level authority for 
 
 ## Invariants
 
-- The live router has 119 unique string-literal cases in `entrypoints/background.ts::handleMessage`.
-- `core/types.ts::MessageAction` declares 89 unique command names.
-- Eighty-seven names are shared, 32 are live-router-only, and two are declared-only.
+- The live router has 121 unique string-literal cases in `entrypoints/background.ts::handleMessage`.
+- `core/types.ts::MessageAction` declares 91 unique command names.
+- Eighty-nine names are shared, 32 are live-router-only, and two are declared-only.
 - A live name and its legal behavior remain compatible until an explicit migration changes the contract.
 - `TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` have no live background case. This registry does not invent a response for them.
 - T1.3 adds request/response/error fixtures. T3.1 replaces this split with one exhaustive command map and one registration path.
 
-## Live Background Router — 119
+## Live Background Router — 121
 
 ```text
 GET_MEMORIES
@@ -72,6 +72,8 @@ DIAGNOSE_WEB_SEARCH
 REQUEST_HOST_PERMISSION
 GET_TOOL_DESCRIPTORS
 REFRESH_TOOL_DESCRIPTORS
+CREATE_TOOL_AUTHORIZATION
+CLOSE_TOOL_AUTHORIZATION
 APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK
 EXECUTE_TOOL_CALL
 RUN_ARTIFACT_CODE
@@ -135,7 +137,7 @@ RUN_AUTOMATION_NOW
 SCENARIOS_UPDATED
 ```
 
-## Declared `MessageAction` Union — 89
+## Declared `MessageAction` Union — 91
 
 ```text
 GET_MEMORIES
@@ -187,6 +189,8 @@ CLEAR_MULTIMODAL_SETTINGS
 ANALYZE_MULTIMODAL_MEDIA
 GET_TOOL_DESCRIPTORS
 REFRESH_TOOL_DESCRIPTORS
+CREATE_TOOL_AUTHORIZATION
+CLOSE_TOOL_AUTHORIZATION
 APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK
 EXECUTE_TOOL_CALL
 RUN_ARTIFACT_CODE
@@ -275,4 +279,4 @@ MEMORIES_UPDATED
 
 ## Validation Method
 
-`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive literal `case` labels inside `handleMessage`, literal `type` fields and payload presence in `MessageAction`, payload reads, and direct payload casts. It compares those results with this inventory and the frozen `119/89/87/32/2` plus `75/44/69` topology. A 121-entry data-only registry records each name's live/declared surface, payload access/presence, observed response family, and listener-error family; representative serializable specimens cover each response family without creating a second production router. Exhaustive decoded request/response schemas remain T3.1 work.
+`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive literal `case` labels inside `handleMessage`, literal `type` fields and payload presence in `MessageAction`, payload reads, and direct payload casts. It compares those results with this inventory and the frozen `121/91/89/32/2` plus `77/44/71` topology. A 123-entry data-only registry records each name's live/declared surface, payload access/presence, observed response family, and listener-error family; representative serializable specimens cover each response family without creating a second production router. Exhaustive decoded request/response schemas remain T3.1 work.

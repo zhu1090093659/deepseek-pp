@@ -30,6 +30,7 @@ export interface ToolCallPayloadChunk {
   id: string;
   invocationName: string;
   chunk: string;
+  requestId?: string;
 }
 
 export function createStreamingToolCallParser(

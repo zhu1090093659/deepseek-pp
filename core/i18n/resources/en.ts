@@ -1039,6 +1039,8 @@ export const en = {
     runtime: {
       invalidFormat: 'Invalid tool format',
       unknownTool: 'Unknown tool',
+      authorizationRejected: 'Tool authorization rejected',
+      incomplete: 'The response ended before this tool call completed.',
     },
     memory: {
       providerName: 'DeepSeek++ Memory',

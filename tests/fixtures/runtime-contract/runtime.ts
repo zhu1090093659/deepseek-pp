@@ -1,12 +1,12 @@
 export const RUNTIME_TOPOLOGY = {
-  liveCommands: 119,
-  declaredActions: 89,
-  shared: 87,
+  liveCommands: 121,
+  declaredActions: 91,
+  shared: 89,
   liveOnly: 32,
   declaredOnly: 2,
-  readsPayload: 75,
+  readsPayload: 77,
   ignoresPayload: 44,
-  directPayloadCasts: 69,
+  directPayloadCasts: 71,
 } as const;
 
 export type RuntimeRequestBoundary = 'none' | 'payload-cast' | 'payload-delegated';
@@ -103,6 +103,8 @@ export const RUNTIME_COMMAND_CONTRACTS = {
   REQUEST_HOST_PERMISSION: command('payload-cast', 'status-or-domain-error', 'background-error', 'live-only'),
   GET_TOOL_DESCRIPTORS: command('none', 'value'),
   REFRESH_TOOL_DESCRIPTORS: command('none', 'value'),
+  CREATE_TOOL_AUTHORIZATION: command('payload-cast', 'value-or-domain-error'),
+  CLOSE_TOOL_AUTHORIZATION: command('payload-cast', 'ack'),
   APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK: command('payload-cast', 'status-or-domain-error'),
   EXECUTE_TOOL_CALL: command('payload-cast', 'tool-result', 'tool-error'),
   RUN_ARTIFACT_CODE: command('payload-cast', 'tool-result'),

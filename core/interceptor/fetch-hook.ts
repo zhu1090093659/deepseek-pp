@@ -46,7 +46,7 @@ const initialHookStateReady = new Promise<void>((resolve) => {
 
 interface HookState {
   toolDescriptors: ToolDescriptor[];
-  onRequestBody: (body: string) => Promise<RequestBodyModification | null>;
+  onRequestBody: (body: string, requestId: string) => Promise<RequestBodyModification | null>;
   onHeadersCaptured: (headers: Record<string, string> | null) => void;
   onToolCallStarted: (call: ToolCall) => void;
   onToolCall: (call: ToolCall) => void;
@@ -54,6 +54,7 @@ interface HookState {
   onToolCallsRestored: (records: ToolCallRestoreRecord[]) => void;
   onResponseTokenSpeed: (progress: ResponseTokenSpeedPayload) => void;
   onResponseComplete: (complete: ResponseCompletePayload) => void;
+  onRequestTerminal: (terminal: RequestTerminalPayload) => void;
   onMemoriesUsed: (ids: number[]) => void;
 }
 
@@ -67,6 +68,7 @@ let hookState: HookState = {
   onToolCallsRestored: () => {},
   onResponseTokenSpeed: () => {},
   onResponseComplete: () => {},
+  onRequestTerminal: () => {},
   onMemoriesUsed: () => {},
 };
 
@@ -99,9 +101,13 @@ export interface ResponseCompletePayload {
   };
 }
 
+export interface RequestTerminalPayload {
+  requestId: string;
+}
+
 export type { ResponseTokenSpeedPayload } from './token-speed';
 
-interface RequestContext {
+export interface RequestContext {
   requestId: string;
   originalPrompt: string;
   agentTaskPrompt: string;
@@ -109,17 +115,21 @@ interface RequestContext {
   parentMessageId: number | null;
   promptOptions: ResponseCompletePayload['promptOptions'];
   suppressPageEvents: boolean;
+  toolDescriptors: ToolDescriptor[];
 }
 
 interface RequestContextOverrides {
   requestId?: string;
   originalPrompt?: string;
   agentTaskPrompt?: string;
+  toolDescriptors?: ToolDescriptor[];
 }
 
 export interface RequestBodyModification {
   body: string;
   agentTaskPrompt: string;
+  requestId?: string;
+  toolDescriptors?: ToolDescriptor[];
 }
 
 function hookFetch() {
@@ -143,12 +153,21 @@ function hookFetch() {
     await waitForInitialHookState();
     hookState.onHeadersCaptured(captureDeepSeekClientHeaders(init.headers));
     const originalContext = createRequestContext(init.body);
-    const modified = await hookState.onRequestBody(init.body);
+    const fallbackToolDescriptors = [...hookState.toolDescriptors];
+    let modified: RequestBodyModification | null;
+    try {
+      modified = await hookState.onRequestBody(init.body, originalContext.requestId);
+    } catch (error) {
+      hookState.onRequestTerminal({ requestId: originalContext.requestId });
+      throw error;
+    }
     const requestBody = modified?.body ?? init.body;
     const requestContext = createRequestContext(requestBody, {
       requestId: originalContext.requestId,
+      ...(modified?.requestId ? { requestId: modified.requestId } : {}),
       originalPrompt: originalContext.originalPrompt,
       agentTaskPrompt: modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
+      toolDescriptors: modified?.toolDescriptors ?? fallbackToolDescriptors,
     });
     const requestInit = modified ? { ...init, body: modified.body } : init;
     return interceptFetchResponse(originalFetch.call(this, input, requestInit), requestContext);
@@ -179,22 +198,33 @@ function hookXHR() {
     if (url && isChatStreamURL(url) && typeof body === 'string') {
       const xhr = this;
       const sendChatRequest = async () => {
-        hookState.onHeadersCaptured(captureDeepSeekClientHeaders(xhrHeaders.get(xhr)));
         const originalContext = createRequestContext(body);
-        const modified = await hookState.onRequestBody(body);
-        const requestBody = modified?.body ?? body;
-        setupXHRResponseInterceptor(xhr, createRequestContext(requestBody, {
-          requestId: originalContext.requestId,
-          originalPrompt: originalContext.originalPrompt,
-          agentTaskPrompt: modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-        }));
-        return origSend.call(xhr, requestBody);
+        try {
+          hookState.onHeadersCaptured(captureDeepSeekClientHeaders(xhrHeaders.get(xhr)));
+          const fallbackToolDescriptors = [...hookState.toolDescriptors];
+          const modified = await hookState.onRequestBody(body, originalContext.requestId);
+          const requestBody = modified?.body ?? body;
+          setupXHRResponseInterceptor(xhr, createRequestContext(requestBody, {
+            requestId: originalContext.requestId,
+            ...(modified?.requestId ? { requestId: modified.requestId } : {}),
+            originalPrompt: originalContext.originalPrompt,
+            agentTaskPrompt: modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
+            toolDescriptors: modified?.toolDescriptors ?? fallbackToolDescriptors,
+          }));
+          return origSend.call(xhr, requestBody);
+        } catch (error) {
+          hookState.onRequestTerminal({ requestId: originalContext.requestId });
+          throw error;
+        }
+      };
+      const reportSendFailure = (error: unknown) => {
+        console.error('[DeepSeek++] intercepted XHR request failed', error);
       };
       if (initialHookStateWaitComplete) {
-        void sendChatRequest();
+        void sendChatRequest().catch(reportSendFailure);
         return;
       }
-      void waitForInitialHookState().then(sendChatRequest);
+      void waitForInitialHookState().then(sendChatRequest).catch(reportSendFailure);
       return;
     }
     if (url && isDeepSeekHistoryUrl(url)) {
@@ -256,7 +286,7 @@ async function waitForInitialHookState(): Promise<void> {
   initialHookStateWaitComplete = true;
 }
 
-function createRequestContext(bodyStr: string, overrides: RequestContextOverrides = {}): RequestContext {
+export function createRequestContext(bodyStr: string, overrides: RequestContextOverrides = {}): RequestContext {
   const requestId = overrides.requestId ?? crypto.randomUUID();
   try {
     const body = JSON.parse(bodyStr) as Record<string, unknown>;
@@ -279,6 +309,7 @@ function createRequestContext(bodyStr: string, overrides: RequestContextOverride
         refFileIds: Array.isArray(body.ref_file_ids) ? body.ref_file_ids.filter((item): item is string => typeof item === 'string') : [],
       },
       suppressPageEvents: isInlineAgentContinuationRequest(originalPrompt, overrides.agentTaskPrompt ?? bodyPrompt),
+      toolDescriptors: overrides.toolDescriptors ?? [...hookState.toolDescriptors],
     };
   } catch {
     return {
@@ -294,6 +325,7 @@ function createRequestContext(bodyStr: string, overrides: RequestContextOverride
         refFileIds: [],
       },
       suppressPageEvents: isInlineAgentContinuationRequest(overrides.originalPrompt ?? '', overrides.agentTaskPrompt ?? ''),
+      toolDescriptors: overrides.toolDescriptors ?? [...hookState.toolDescriptors],
     };
   }
 }
@@ -345,6 +377,7 @@ function createStreamingResponseToolState(
   const notifiedToolSignatures = new Set<string>();
   let fallbackText = '';
   let fallbackTextTruncated = false;
+  let legacyCallIndex = 0;
 
   const emitStarted = (call: ToolCall) => {
     const callWithSource = { ...call, source: getSource() };
@@ -360,7 +393,7 @@ function createStreamingResponseToolState(
   };
 
   const emitChunk = (chunk: ToolCallPayloadChunk) => {
-    hookState.onToolCallChunk(chunk);
+    hookState.onToolCallChunk({ ...chunk, requestId: getSource().requestId });
   };
 
   return {
@@ -395,7 +428,12 @@ function createStreamingResponseToolState(
   function notifyLegacyFallbackToolCalls() {
     if (fallbackTextTruncated || !fallbackText.includes('｜DSML｜')) return;
     for (const call of extractToolCalls(fallbackText, { descriptors })) {
-      const callWithSource = { ...call, source: getSource() };
+      const source = getSource();
+      const callWithSource = {
+        ...call,
+        id: call.id ?? `legacy:${source.requestId ?? 'request'}:${legacyCallIndex++}`,
+        source,
+      };
       const signature = createToolCallNotificationSignature(callWithSource);
       if (notifiedToolSignatures.has(signature)) continue;
       notifiedToolSignatures.add(signature);
@@ -965,16 +1003,31 @@ export function createBufferedSSEParser(
   };
 }
 
-async function interceptFetchResponse(
+export async function interceptFetchResponse(
   responsePromise: Promise<Response>,
   requestContext: RequestContext,
 ): Promise<Response> {
-  const response = await responsePromise;
-  if (!response.body) return response;
+  let terminalSent = false;
+  const notifyTerminal = () => {
+    if (terminalSent) return;
+    terminalSent = true;
+    hookState.onRequestTerminal({ requestId: requestContext.requestId });
+  };
+  let response: Response;
+  try {
+    response = await responsePromise;
+  } catch (error) {
+    notifyTerminal();
+    throw error;
+  }
+  if (!response.body) {
+    notifyTerminal();
+    return response;
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const toolDescriptors = hookState.toolDescriptors;
+  const toolDescriptors = requestContext.toolDescriptors;
   const filter = new XmlToolStreamFilter(toolDescriptors, requestContext.originalPrompt);
   let assistantMessageId: number | null = null;
   const responseToolState = createStreamingResponseToolState(
@@ -1025,16 +1078,10 @@ async function interceptFetchResponse(
           fullTextParser.append(chunk);
           filter.processChunk(chunk, controller);
         }
-      } finally {
-        speedTracker.finish();
-      }
-
-      if (cancelled) return;
-
-      try {
+        if (cancelled) return;
         responseToolState.finish();
 
-        if (!cancelled && !requestContext.suppressPageEvents) {
+        if (!requestContext.suppressPageEvents) {
           hookState.onResponseComplete({
             requestId: requestContext.requestId,
             text: responseToolState.getVisibleText(),
@@ -1046,13 +1093,16 @@ async function interceptFetchResponse(
             promptOptions: requestContext.promptOptions,
           });
         }
+        controller.close();
       } finally {
-        if (!cancelled) controller.close();
+        speedTracker.finish();
+        notifyTerminal();
       }
     },
     cancel() {
       cancelled = true;
       speedTracker.finish();
+      notifyTerminal();
       reader.cancel().catch(() => {});
     },
   });
@@ -1083,7 +1133,7 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
   let completed = false;
   let filteredResponse = '';
   let assistantMessageId: number | null = null;
-  const toolDescriptors = hookState.toolDescriptors;
+  const toolDescriptors = requestContext.toolDescriptors;
   const filter = new XmlToolStreamFilter(toolDescriptors, requestContext.originalPrompt);
   const responseToolState = createStreamingResponseToolState(
     toolDescriptors,
@@ -1101,22 +1151,34 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
     TOKEN_SPEED_EMIT_INTERVAL_MS,
   );
 
+  let terminalSent = false;
+  const notifyTerminal = () => {
+    if (terminalSent) return;
+    terminalSent = true;
+    hookState.onRequestTerminal({ requestId: requestContext.requestId });
+  };
+
   const finalizeIfNeeded = () => {
     if (completed) return;
     completed = true;
     responseToolState.finish();
     speedTracker.finish();
-    if (requestContext.suppressPageEvents) return;
-    hookState.onResponseComplete({
-      requestId: requestContext.requestId,
-      text: responseToolState.getVisibleText(),
-      originalPrompt: requestContext.originalPrompt,
-      agentTaskPrompt: requestContext.agentTaskPrompt,
-      chatSessionId: requestContext.chatSessionId,
-      parentMessageId: requestContext.parentMessageId,
-      assistantMessageId,
-      promptOptions: requestContext.promptOptions,
-    });
+    try {
+      if (!requestContext.suppressPageEvents) {
+        hookState.onResponseComplete({
+          requestId: requestContext.requestId,
+          text: responseToolState.getVisibleText(),
+          originalPrompt: requestContext.originalPrompt,
+          agentTaskPrompt: requestContext.agentTaskPrompt,
+          chatSessionId: requestContext.chatSessionId,
+          parentMessageId: requestContext.parentMessageId,
+          assistantMessageId,
+          promptOptions: requestContext.promptOptions,
+        });
+      }
+    } finally {
+      notifyTerminal();
+    }
   };
 
   const origResponseTextDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText') ||
@@ -1161,6 +1223,9 @@ function setupXHRResponseInterceptor(xhr: XMLHttpRequest, requestContext: Reques
       finalizeIfNeeded();
     }
   });
+  xhr.addEventListener('abort', notifyTerminal, { once: true });
+  xhr.addEventListener('error', notifyTerminal, { once: true });
+  xhr.addEventListener('timeout', notifyTerminal, { once: true });
 
   Object.defineProperty(xhr, 'responseText', {
     get() { return filteredResponse; },

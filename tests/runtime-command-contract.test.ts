@@ -45,7 +45,7 @@ describe('runtime command compatibility contract', () => {
     expectSortedEqual(declaredOnly, readInventoryList('Declared Only'));
     expectSortedEqual(registryLive, live);
     expectSortedEqual(registryDeclared, declared);
-    expect(registryEntries).toHaveLength(121);
+    expect(registryEntries).toHaveLength(123);
     for (const contract of liveContracts) {
       const registered = RUNTIME_COMMAND_CONTRACTS[contract.type as keyof typeof RUNTIME_COMMAND_CONTRACTS];
       expect(registered.request.access).toBe(contract.requestAccess);

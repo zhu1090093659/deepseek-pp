@@ -1039,6 +1039,8 @@ export const zhCN = {
     runtime: {
       invalidFormat: '工具格式错误',
       unknownTool: '未知工具',
+      authorizationRejected: '工具授权被拒绝',
+      incomplete: '响应已结束，但该工具调用尚未完成。',
     },
     memory: {
       providerName: 'DeepSeek++ Memory',

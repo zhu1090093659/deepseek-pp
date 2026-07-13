@@ -70,7 +70,13 @@ export const LEGAL_BRIDGE_CASES = {
   AUGMENT_REQUEST_BODY: [{
     name: 'main requests body augmentation',
     expectedSource: MAIN,
-    message: { source: MAIN, type: 'AUGMENT_REQUEST_BODY', id: 'augment-1', body: '{"prompt":"hello"}' },
+    message: {
+      source: MAIN,
+      type: 'AUGMENT_REQUEST_BODY',
+      id: 'augment-1',
+      requestId: 'request-contract-1',
+      body: '{"prompt":"hello"}',
+    },
   }],
   AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT: [{
     name: 'content extends an augmentation timeout',
@@ -85,7 +91,21 @@ export const LEGAL_BRIDGE_CASES = {
       type: 'AUGMENT_REQUEST_BODY_RESULT',
       id: 'augment-1',
       ok: true,
-      result: { body: '{"prompt":"augmented"}', agentTaskPrompt: 'hello' },
+      result: {
+        body: '{"prompt":"augmented"}',
+        agentTaskPrompt: 'hello',
+        requestId: 'request-authorized-1',
+        toolDescriptors: [{
+          id: 'mcp:browser-tools:capture_page',
+          provider: TOOL_PROVIDER,
+          name: 'capture_page',
+          invocationName: 'mcp_browser_tools_capture_page',
+          title: 'Capture page',
+          description: 'Capture a page.',
+          inputSchema: { type: 'object', properties: {} },
+          execution: { mode: 'auto', enabled: true, risk: 'medium' },
+        }],
+      },
     },
   }],
   TOOL_CALL_STARTED: [{
@@ -99,7 +119,12 @@ export const LEGAL_BRIDGE_CASES = {
     message: {
       source: MAIN,
       type: 'TOOL_CALL_CHUNK',
-      data: { id: 'call-artifact-1', invocationName: 'artifact_create', chunk: '{"filename":"report.md","content":"' },
+      data: {
+        id: 'call-artifact-1',
+        invocationName: 'artifact_create',
+        requestId: 'request-contract-1',
+        chunk: '{"filename":"report.md","content":"',
+      },
     },
   }],
   TOOL_CALL: [{
@@ -148,6 +173,15 @@ export const LEGAL_BRIDGE_CASES = {
           refFileIds: [],
         },
       },
+    },
+  }],
+  REQUEST_TERMINAL: [{
+    name: 'main reports a terminal request lifecycle',
+    expectedSource: MAIN,
+    message: {
+      source: MAIN,
+      type: 'REQUEST_TERMINAL',
+      payload: { requestId: 'request-contract-1' },
     },
   }],
   RESPONSE_TOKEN_SPEED: [{
@@ -209,6 +243,7 @@ export const REJECTED_BRIDGE_CASES: ReadonlyArray<{
   { name: 'unknown type', message: { source: MAIN, type: 'DPP_UNKNOWN' } },
   { name: 'non-string id', message: { source: MAIN, type: 'AUGMENT_REQUEST_BODY', id: 7, body: '{}' } },
   { name: 'non-string body', message: { source: MAIN, type: 'AUGMENT_REQUEST_BODY', id: 'augment-1', body: {} } },
+  { name: 'non-string request id', message: { source: MAIN, type: 'AUGMENT_REQUEST_BODY', id: 'augment-1', requestId: 7, body: '{}' } },
   { name: 'non-boolean ok', message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_RESULT', id: 'augment-1', ok: 'yes' } },
   { name: 'non-string error', message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_RESULT', id: 'augment-1', ok: false, error: {} } },
   { name: 'non-positive timeout', message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT', id: 'augment-1', timeoutMs: 0 } },
@@ -246,6 +281,17 @@ export const MALFORMED_BRIDGE_PAYLOAD_CASES = {
     expectedSource: CONTENT,
     message: { source: CONTENT, type: 'AUGMENT_REQUEST_BODY_RESULT', id: 'augment-1', result: 'not-a-result' },
     target: 'reject-at-T2.1-boundary',
+  }, {
+    name: 'augmentation result has a malformed request tool catalog',
+    expectedSource: CONTENT,
+    message: {
+      source: CONTENT,
+      type: 'AUGMENT_REQUEST_BODY_RESULT',
+      id: 'augment-1',
+      ok: true,
+      result: { body: '{}', agentTaskPrompt: 'hello', toolDescriptors: [{}] },
+    },
+    target: 'reject-at-T2.1-boundary',
   }],
   TOOL_CALL_STARTED: [{
     name: 'started tool event has a non-record call',
@@ -275,6 +321,12 @@ export const MALFORMED_BRIDGE_PAYLOAD_CASES = {
     name: 'response completion has an invalid nested payload',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'RESPONSE_COMPLETE', payload: { requestId: 7, text: null } },
+    target: 'reject-at-T2.1-boundary',
+  }],
+  REQUEST_TERMINAL: [{
+    name: 'request terminal event has no correlation identity',
+    expectedSource: MAIN,
+    message: { source: MAIN, type: 'REQUEST_TERMINAL', payload: { requestId: '' } },
     target: 'reject-at-T2.1-boundary',
   }],
   RESPONSE_TOKEN_SPEED: [{

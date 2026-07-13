@@ -21,6 +21,16 @@ type ExternalizedToolPayloadEntry = {
 
 const payloadEntries = new Map<string, ExternalizedToolPayloadEntry>();
 
+export function chainExternalizedPayloadWrite(
+  previous: Promise<void>,
+  write: () => Promise<void>,
+): Promise<void> {
+  // A missing middle chunk can still leave syntactically valid JSON. Keep the
+  // first failure sticky so execution observes it and never rehydrates a
+  // silently truncated payload.
+  return previous.then(write);
+}
+
 export function createExternalizedToolPayload(ref: string, invocationName: string): ExternalizedToolPayload {
   return {
     [EXTERNALIZED_TOOL_PAYLOAD_MARKER]: true,
@@ -45,28 +55,49 @@ export function isExternalizedToolPayloadCall(call: ToolCall): boolean {
   return isExternalizedToolPayload(call.payload);
 }
 
-export function appendExternalizedToolPayloadChunk(ref: string, invocationName: string, chunk: string): void {
+export function appendExternalizedToolPayloadChunk(
+  ref: string,
+  invocationName: string,
+  chunk: string,
+  namespace?: string,
+): void {
   pruneExpiredExternalizedPayloads();
-  const existing = payloadEntries.get(ref);
+  const key = createPayloadEntryKey(ref, namespace);
+  const existing = payloadEntries.get(key);
   if (existing) {
+    if (existing.invocationName !== invocationName) {
+      throw new Error(`Externalized tool payload ${ref} is already bound to another invocation.`);
+    }
     existing.chunks.push(chunk);
     return;
   }
 
-  payloadEntries.set(ref, {
+  payloadEntries.set(key, {
     invocationName,
     chunks: [chunk],
     createdAt: Date.now(),
   });
 }
 
-export function takeExternalizedToolPayloadText(ref: string, invocationName: string): string | null {
+export function takeExternalizedToolPayloadText(
+  ref: string,
+  invocationName: string,
+  namespace?: string,
+): string | null {
   pruneExpiredExternalizedPayloads();
-  const entry = payloadEntries.get(ref);
+  const key = createPayloadEntryKey(ref, namespace);
+  const entry = payloadEntries.get(key);
   if (!entry) return null;
-  payloadEntries.delete(ref);
+  payloadEntries.delete(key);
   if (entry.invocationName !== invocationName) return null;
   return entry.chunks.join('');
+}
+
+export function clearExternalizedToolPayloadNamespace(namespace: string): void {
+  const prefix = `${namespace}\u0000`;
+  for (const key of payloadEntries.keys()) {
+    if (key.startsWith(prefix)) payloadEntries.delete(key);
+  }
 }
 
 export function parseExternalizedToolPayload(
@@ -116,4 +147,8 @@ function pruneExpiredExternalizedPayloads(): void {
       payloadEntries.delete(ref);
     }
   }
+}
+
+function createPayloadEntryKey(ref: string, namespace?: string): string {
+  return namespace ? `${namespace}\u0000${ref}` : ref;
 }

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeRuntimeToolCall } from '../core/tool/runtime';
 import { getArtifact } from '../core/artifact';
-import { appendExternalizedToolPayloadChunk, createExternalizedToolPayload } from '../core/tool/externalized-payload';
+import {
+  appendExternalizedToolPayloadChunk,
+  chainExternalizedPayloadWrite,
+  createExternalizedToolPayload,
+} from '../core/tool/externalized-payload';
 import type { ToolCall } from '../core/tool/types';
 
 let storage: Record<string, unknown>;
@@ -30,6 +34,15 @@ afterEach(() => {
 });
 
 describe('runtime externalized tool payloads', () => {
+  it('keeps an intermediate chunk failure sticky and skips later writes', async () => {
+    const failure = Promise.reject(new Error('middle chunk failed'));
+    const laterWrite = vi.fn(async () => undefined);
+
+    await expect(chainExternalizedPayloadWrite(failure, laterWrite))
+      .rejects.toThrow('middle chunk failed');
+    expect(laterWrite).not.toHaveBeenCalled();
+  });
+
   it('rehydrates and executes large artifact payloads from chunk storage', async () => {
     const callId = 'call-artifact-1';
     const payloadText = JSON.stringify({

@@ -16,6 +16,7 @@ export const BRIDGE_MESSAGE_TYPES = [
   'TOOL_CALL',
   'RESTORE_TOOL_CALLS',
   'RESPONSE_COMPLETE',
+  'REQUEST_TERMINAL',
   'RESPONSE_TOKEN_SPEED',
   'MEMORIES_USED',
   'HEADERS_CAPTURED',
@@ -42,6 +43,7 @@ export const BRIDGE_TYPE_SOURCES = {
   TOOL_CALL: BRIDGE_SOURCES.mainWorld,
   RESTORE_TOOL_CALLS: BRIDGE_SOURCES.mainWorld,
   RESPONSE_COMPLETE: BRIDGE_SOURCES.mainWorld,
+  REQUEST_TERMINAL: BRIDGE_SOURCES.mainWorld,
   RESPONSE_TOKEN_SPEED: BRIDGE_SOURCES.mainWorld,
   MEMORIES_USED: BRIDGE_SOURCES.mainWorld,
   HEADERS_CAPTURED: BRIDGE_SOURCES.mainWorld,
@@ -199,7 +201,9 @@ const BRIDGE_PAYLOAD_VALIDATORS: Record<
     (message.skillPopupCopy === undefined || isSkillPopupCopy(message.skillPopupCopy))
   ),
   AUGMENT_REQUEST_BODY: (message) => (
-    isNonEmptyString(message.id) && typeof message.body === 'string'
+    isNonEmptyString(message.id) &&
+    typeof message.body === 'string' &&
+    (message.requestId === undefined || isNonEmptyString(message.requestId))
   ),
   AUGMENT_REQUEST_BODY_EXTEND_TIMEOUT: (message) => (
     isNonEmptyString(message.id) && isPositiveFiniteNumber(message.timeoutMs)
@@ -210,13 +214,17 @@ const BRIDGE_PAYLOAD_VALIDATORS: Record<
     isPlainRecord(message.data) &&
     isNonEmptyString(message.data.id) &&
     isNonEmptyString(message.data.invocationName) &&
-    typeof message.data.chunk === 'string'
+    typeof message.data.chunk === 'string' &&
+    (message.data.requestId === undefined || isNonEmptyString(message.data.requestId))
   ),
   TOOL_CALL: (message) => isToolCallRecord(message.data),
   RESTORE_TOOL_CALLS: (message) => (
     Array.isArray(message.records) && message.records.every(isToolCallRestoreRecord)
   ),
   RESPONSE_COMPLETE: (message) => isResponseCompletePayload(message.payload),
+  REQUEST_TERMINAL: (message) => (
+    isPlainRecord(message.payload) && isNonEmptyString(message.payload.requestId)
+  ),
   RESPONSE_TOKEN_SPEED: (message) => isResponseTokenSpeedPayload(message.payload),
   MEMORIES_USED: (message) => (
     Array.isArray(message.ids) &&
@@ -234,7 +242,15 @@ function isAugmentResult(message: Record<string, unknown>): boolean {
     return message.result === null || (
       isPlainRecord(message.result) &&
       typeof message.result.body === 'string' &&
-      typeof message.result.agentTaskPrompt === 'string'
+      typeof message.result.agentTaskPrompt === 'string' &&
+      (message.result.requestId === undefined || isNonEmptyString(message.result.requestId)) &&
+      (
+        message.result.toolDescriptors === undefined ||
+        (
+          Array.isArray(message.result.toolDescriptors) &&
+          message.result.toolDescriptors.every(isToolDescriptorRecord)
+        )
+      )
     );
   }
   return typeof message.error === 'string';

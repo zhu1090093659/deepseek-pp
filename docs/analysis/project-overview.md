@@ -13,7 +13,7 @@
 3. **Compatibility**：保留全部现有用户功能、prompt 输出、storage keys、IndexedDB、sync/MCP/runtime message/Native Host 契约和 Chrome/Edge/Firefox 支持；任何 schema 变化必须有显式 migration，不允许静默丢弃旧数据。
 4. **Testing policy**：不把建设完整 E2E、coverage 或 performance 基础设施作为独立项目目标；但任何行为、数据、安全、schema、routing、permission、persistence 或 caching 变更都必须增加或更新相应自动化测试，并通过现有相关质量门。
 5. **Tracking**：使用 `GITHUB_STANDARD` 的 Issues + Milestones + PR；不创建 Project board。安全敏感任务的公开 Issue 只描述修复目标和可公开验收条件，详细信任边界证据保留在本地分析中。
-6. **Governance**：`AGENTS.md` 是唯一项目级 agent instruction truth source。根 `CLAUDE.md` 不再使用；若存在则先把仍有效内容合并进 `AGENTS.md` 后删除。当前根 `CLAUDE.md` 已不存在，因此只需把现有 `AGENTS.md` 从生成镜像改为可直接维护的 Codex 主规则面。
+6. **Governance**：`AGENTS.md` 是唯一 agent instruction truth source。根 `CLAUDE.md` 不再使用；若存在则先把仍有效内容合并进 `AGENTS.md` 后删除。当前根 `CLAUDE.md` 已不存在；`videos/deepseek-pp-promo/CLAUDE.md` 与同目录 `AGENTS.md` 完全相同，已保留后者并删除重复文件。
 7. **Deferred**：Android 全功能 parity、任意全局 coverage 数字、独立的大型测试平台建设，以及没有现有消费者的预留 abstraction。
 
 ## Analysis Snapshot

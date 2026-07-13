@@ -5,6 +5,11 @@ export type {
   ToolCallHistoryRecord,
   ToolCallId,
   ToolCallSource,
+  ToolAuthorizationDescriptorSnapshot,
+  ToolAuthorizationGrantSummary,
+  ToolAuthorizationId,
+  ToolAuthorizationSubject,
+  ToolAuthorizationSurface,
   ToolDescriptor,
   ToolDescriptorExecution,
   ToolDescriptorId,
@@ -21,6 +26,9 @@ export type {
   ToolRegistrySnapshot,
   ToolResult,
   ToolRiskLevel,
+  RuntimeToolAuthorizationContext,
+  ToolGrantExecutionContext,
+  TrustedToolExecutionContext,
   ToolTransportKind,
 } from './types';
 
@@ -44,6 +52,13 @@ export {
   executeWebSearchToolCall,
   isWebSearchToolName,
 } from './web-search';
+
+export {
+  WEB_FETCH_DESCRIPTOR_ID,
+  WEB_FETCH_PERMISSION_ERROR_CODE,
+  isRetryableWebFetchPermissionPrecondition,
+  shouldRequestWebFetchPermission,
+} from './web-fetch-permission';
 
 export {
   ARTIFACT_TOOL_NAMES,

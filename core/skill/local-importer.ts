@@ -1,4 +1,4 @@
-import { executeMcpToolCall, getMcpToolDescriptors, refreshMcpServerDiscovery } from '../mcp/discovery';
+import { getMcpToolDescriptors, refreshMcpServerDiscovery } from '../mcp/discovery';
 import { getAllMcpServers, updateMcpServer } from '../mcp/store';
 import { buildShellAllowlistUpgrade, isShellMcpServer } from '../shell';
 import type {
@@ -14,6 +14,7 @@ import type {
 } from '../types';
 import type { McpServerConfig } from '../mcp/types';
 import type { JsonValue, ToolResult } from '../tool/types';
+import type { ToolCall } from '../tool/types';
 import {
   getAllSkillSources,
   getSkillLibrary,
@@ -93,16 +94,27 @@ interface ExistingSkillContext {
   bySourcePath: Map<string, Skill>;
 }
 
-export async function previewLocalSkillSource(rootPath: string): Promise<LocalSkillPreview> {
-  return (await loadLocalSkillSource(rootPath)).preview;
+export interface LocalSkillImporterDeps {
+  executeToolCall(call: ToolCall): Promise<ToolResult>;
 }
 
-export async function pickLocalSkillFolder(defaultPath?: string): Promise<string> {
+export async function previewLocalSkillSource(
+  rootPath: string,
+  deps: LocalSkillImporterDeps,
+): Promise<LocalSkillPreview> {
+  return (await loadLocalSkillSource(rootPath, undefined, undefined, deps)).preview;
+}
+
+export async function pickLocalSkillFolder(
+  defaultPath?: string,
+  deps?: LocalSkillImporterDeps,
+): Promise<string> {
+  if (!deps) throw new Error('Local Skill importer runtime executor is required.');
   const server = await getShellMcpServer();
   const result = await executeShellMcpTool(server, 'local_folder_pick', {
     title: 'Choose a local Skill folder',
     ...(defaultPath ? { defaultPath } : {}),
-  });
+  }, deps);
 
   if (!result.ok) {
     throw new Error(formatToolFailure(result));
@@ -112,6 +124,7 @@ export async function pickLocalSkillFolder(defaultPath?: string): Promise<string
 
 export async function importLocalSkillSource(
   request: LocalSkillImportRequest,
+  deps: LocalSkillImporterDeps,
 ): Promise<LocalSkillImportResponse> {
   if (request.selectedPaths.length === 0) {
     throw new Error('Select at least one local Skill before importing.');
@@ -124,6 +137,7 @@ export async function importLocalSkillSource(
       request.rootPath,
       new Set(request.selectedPaths),
       selectedImportNames,
+      deps,
     );
   } catch (error) {
     if (error instanceof LocalSkillImportBlockedError) {
@@ -181,8 +195,10 @@ async function loadLocalSkillSource(
   rootPath: string,
   selectedPaths?: Set<string>,
   selectedImportNames?: ReadonlyMap<string, string>,
+  deps?: LocalSkillImporterDeps,
 ): Promise<LoadedLocalSource> {
-  const { bundle, onDemandResourceBlock } = await readLocalSkillBundle(rootPath, selectedPaths);
+  if (!deps) throw new Error('Local Skill importer runtime executor is required.');
+  const { bundle, onDemandResourceBlock } = await readLocalSkillBundle(rootPath, selectedPaths, deps);
   if (bundle.skills.length === 0) {
     throw new Error('No SKILL.md was found under this local directory.');
   }
@@ -339,12 +355,16 @@ async function createExistingSkillContext(sourceId: string): Promise<ExistingSki
   };
 }
 
-async function readLocalSkillBundle(rootPath: string, selectedPaths?: Set<string>): Promise<LocalSkillBundleReadResult> {
+async function readLocalSkillBundle(
+  rootPath: string,
+  selectedPaths: Set<string> | undefined,
+  deps: LocalSkillImporterDeps,
+): Promise<LocalSkillBundleReadResult> {
   const server = await getShellMcpServer();
   const result = await executeShellMcpTool(server, 'local_skill_preview', {
     rootPath,
     ...(selectedPaths ? { selectedPaths: [...selectedPaths] } : {}),
-  });
+  }, deps);
 
   if (!result.ok) {
     throw new Error(formatToolFailure(result));
@@ -413,6 +433,7 @@ async function executeShellMcpTool(
   server: McpServerConfig,
   name: 'local_skill_preview' | 'local_folder_pick',
   payload: Record<string, unknown>,
+  deps: LocalSkillImporterDeps,
 ): Promise<ToolResult> {
   const call = {
     name,
@@ -427,10 +448,10 @@ async function executeShellMcpTool(
     raw: '',
     source: { trigger: 'manual_chat' as const },
   };
-  const result = await executeMcpToolCall(call);
+  const result = await deps.executeToolCall(call);
   if (result.ok || result.error?.code !== 'mcp_tool_not_found') return result;
   await refreshMcpServerDiscovery(server.id);
-  return executeMcpToolCall(call);
+  return deps.executeToolCall(call);
 }
 
 async function getShellMcpServer(): Promise<McpServerConfig> {

@@ -129,7 +129,7 @@ describe('runtime sender and envelope boundary', () => {
   it('authorizes only the frozen content command surface before routing', () => {
     const extensionContext = createRuntimeMessageContext(EXTENSION_SENDER, POLICY);
     const contentContext = createRuntimeMessageContext(DEEPSEEK_SENDER, POLICY);
-    expect(DEEPSEEK_CONTENT_RUNTIME_COMMANDS.size).toBe(28);
+    expect(DEEPSEEK_CONTENT_RUNTIME_COMMANDS.size).toBe(30);
     expect(() => authorizeRuntimeMessage({ type: 'GET_MEMORIES' }, contentContext)).not.toThrow();
     expect(() => authorizeRuntimeMessage({ type: 'GET_SYNC_CONFIG' }, contentContext))
       .toThrow('not authorized for DeepSeek content');

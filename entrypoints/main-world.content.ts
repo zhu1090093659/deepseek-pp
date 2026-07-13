@@ -2,6 +2,7 @@ import {
   installFetchHook,
   updateHookState,
   type RequestBodyModification,
+  type RequestTerminalPayload,
   type ResponseCompletePayload,
   type ResponseTokenSpeedPayload,
 } from '../core/interceptor/fetch-hook';
@@ -85,6 +86,9 @@ export default defineContentScript({
       },
       onResponseComplete(complete: ResponseCompletePayload) {
         postToContent({ type: 'RESPONSE_COMPLETE', payload: complete });
+      },
+      onRequestTerminal(terminal: RequestTerminalPayload) {
+        postToContent({ type: 'REQUEST_TERMINAL', payload: terminal });
       },
       onResponseTokenSpeed(progress: ResponseTokenSpeedPayload) {
         postToContent({ type: 'RESPONSE_TOKEN_SPEED', payload: progress });
@@ -201,7 +205,10 @@ function disconnectContentPort(bridgeSession?: BridgeSessionContext): void {
   pendingAugmentRequests.clear();
 }
 
-function requestAugmentedBody(body: string): Promise<RequestBodyModification | null> {
+function requestAugmentedBody(
+  body: string,
+  requestId: string,
+): Promise<RequestBodyModification | null> {
   if (!contentPort) {
     return Promise.resolve(null);
   }
@@ -214,7 +221,7 @@ function requestAugmentedBody(body: string): Promise<RequestBodyModification | n
     }, REQUEST_TIMEOUT_MS);
 
     pendingAugmentRequests.set(id, { resolve, reject, timeout });
-    postToContent({ type: 'AUGMENT_REQUEST_BODY', id, body });
+    postToContent({ type: 'AUGMENT_REQUEST_BODY', id, requestId, body });
   });
 }
 

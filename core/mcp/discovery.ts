@@ -1,4 +1,5 @@
 import type { ToolCall, ToolDescriptor, ToolResult } from '../tool';
+import { haveEquivalentToolDescriptorSecurity } from '../tool/authorization';
 import { applyMcpToolPolicy, callMcpTool, createMcpProtocolClient, initializeMcpServer } from './client';
 import {
   getAllMcpServers,
@@ -80,11 +81,12 @@ export interface McpToolExecutionOptions {
 
 export async function executeMcpToolCall(
   call: ToolCall,
+  authorizedDescriptor: ToolDescriptor,
   options: McpToolExecutionOptions = {},
 ): Promise<ToolResult> {
-  const serverId = call.provider?.kind === 'mcp'
-    ? call.provider.id
-    : call.provider?.id || call.descriptorId?.split(':')[1];
+  const serverId = authorizedDescriptor.provider.kind === 'mcp'
+    ? authorizedDescriptor.provider.id
+    : null;
   if (!serverId) {
     return {
       ok: false,
@@ -131,7 +133,7 @@ export async function executeMcpToolCall(
 
   const cache = await ensureMcpServerDiscovery(server.id);
   const descriptors = applyMcpToolPolicy(cache.descriptors, server);
-  const descriptor = descriptors.find((item) => item.id === call.descriptorId || item.invocationName === call.invocationName || item.name === call.name);
+  const descriptor = descriptors.find((item) => item.id === authorizedDescriptor.id);
   if (!descriptor) {
     return {
       ok: false,
@@ -158,6 +160,21 @@ export async function executeMcpToolCall(
       error: {
         code: 'mcp_tool_disabled',
         message: `MCP tool ${descriptor.name} is disabled by server policy.`,
+        retryable: false,
+      },
+    };
+  }
+  if (!await haveEquivalentToolDescriptorSecurity(authorizedDescriptor, descriptor)) {
+    return {
+      ok: false,
+      summary: 'MCP 工具授权已过期',
+      detail: `MCP tool ${authorizedDescriptor.name} changed after it was authorized.`,
+      name: authorizedDescriptor.name,
+      provider: authorizedDescriptor.provider,
+      descriptorId: authorizedDescriptor.id,
+      error: {
+        code: 'mcp_tool_authorization_stale',
+        message: `MCP tool ${authorizedDescriptor.name} changed after it was authorized.`,
         retryable: false,
       },
     };

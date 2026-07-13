@@ -15,12 +15,30 @@ vi.mock('../core/mcp/discovery', () => ({
 import { executeMcpToolCall, getMcpToolDescriptors, refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import { getAllMcpServers, updateMcpServer } from '../core/mcp/store';
 import type { McpServerConfig, McpToolCacheEntry } from '../core/mcp/types';
-import { importLocalSkillSource, pickLocalSkillFolder, previewLocalSkillSource } from '../core/skill/local-importer';
+import {
+  importLocalSkillSource as importLocalSkillSourceWithRuntime,
+  pickLocalSkillFolder as pickLocalSkillFolderWithRuntime,
+  previewLocalSkillSource as previewLocalSkillSourceWithRuntime,
+} from '../core/skill/local-importer';
 import type { LocalSkillImportResponse, LocalSkillImportResult } from '../core/types';
+import type { ToolCall, ToolResult } from '../core/types';
 
 const SKILL_STORAGE_KEY = 'deepseek_pp_skills';
 
 let storage: Record<string, unknown>;
+
+const importerDeps = {
+  executeToolCall: (call: ToolCall) => (
+    executeMcpToolCall as unknown as (value: ToolCall) => Promise<ToolResult>
+  )(call),
+};
+
+const previewLocalSkillSource = (rootPath: string) =>
+  previewLocalSkillSourceWithRuntime(rootPath, importerDeps);
+const pickLocalSkillFolder = (defaultPath?: string) =>
+  pickLocalSkillFolderWithRuntime(defaultPath, importerDeps);
+const importLocalSkillSource = (request: Parameters<typeof importLocalSkillSourceWithRuntime>[0]) =>
+  importLocalSkillSourceWithRuntime(request, importerDeps);
 
 beforeEach(() => {
   storage = {};
