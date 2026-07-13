@@ -73,6 +73,12 @@ export function validateStoredMemory(value: unknown, path = 'memory'): Omit<Memo
   };
 }
 
+export function validateSyncMemory(value: unknown, path = 'memory'): Omit<Memory, 'id'> {
+  if (!value || typeof value !== 'object') throw new Error(`${path} must be an object`);
+  const { id: _id, ...memory } = value as Record<string, unknown>;
+  return validateStoredMemory(memory, path);
+}
+
 export function validateImportedMemory(value: unknown, path = 'memory'): NewMemory {
   const stored = validateStoredMemory(value, path);
   return {

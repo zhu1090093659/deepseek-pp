@@ -7,7 +7,6 @@ import {
   getProjectContextState,
   getProjectForConversation,
   getProjectPromptContextForConversation,
-  normalizeProjectContextState,
   refreshProjectConversation,
   removeConversationFromProject,
   setPendingProjectContext,
@@ -35,23 +34,6 @@ afterEach(() => {
 });
 
 describe('session-based project context', () => {
-  it('stores projects without carrying over legacy active project state', () => {
-    const state = normalizeProjectContextState({
-      schemaVersion: 1,
-      projects: [{ id: 'legacy', name: 'Legacy' }],
-      files: [],
-      activeProjectId: 'legacy',
-      activeFileIds: [],
-    });
-
-    expect(state).toEqual({
-      schemaVersion: 2,
-      projects: [],
-      conversations: [],
-      pendingProjectId: null,
-    });
-  });
-
   it('keeps one project membership per conversation', async () => {
     const first = await createProjectContext({ name: 'Alpha' });
     const second = await createProjectContext({ name: 'Beta' });

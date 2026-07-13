@@ -15,6 +15,7 @@ export {
   getSavedItemsState,
   normalizeSavedItem,
   normalizeSavedItemsState,
+  SAVED_ITEMS_STORAGE_KEY,
   replaceAllSavedItems,
   saveSavedItem,
 } from './store';

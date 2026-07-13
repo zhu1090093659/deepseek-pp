@@ -10,7 +10,7 @@ import type {
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
 import { PROJECT_UNTITLED_CONVERSATION, isPlaceholderProjectConversationTitle } from './title';
 
-const STORAGE_KEY = 'deepseek_pp_project_context';
+export const PROJECT_CONTEXT_STORAGE_KEY = 'deepseek_pp_project_context';
 
 const DEFAULT_STATE: ProjectContextState = {
   schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
@@ -20,12 +20,14 @@ const DEFAULT_STATE: ProjectContextState = {
 };
 
 export async function getProjectContextState(): Promise<ProjectContextState> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  return normalizeProjectContextState(data[STORAGE_KEY]);
+  const data = await chrome.storage.local.get(PROJECT_CONTEXT_STORAGE_KEY) as Record<string, unknown>;
+  return normalizeProjectContextState(data[PROJECT_CONTEXT_STORAGE_KEY]);
 }
 
 export async function saveProjectContextState(state: ProjectContextState): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: normalizeProjectContextState(state) });
+  await chrome.storage.local.set({
+    [PROJECT_CONTEXT_STORAGE_KEY]: normalizeProjectContextState(state),
+  });
 }
 
 export async function createProjectContext(input: ProjectContextCreateInput): Promise<ProjectContext> {

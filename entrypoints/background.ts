@@ -49,6 +49,11 @@ import { getPetConfig, savePetConfig, clearPetConfig } from '../core/pet/store';
 import { clearUsageRecords, getUsageSummary, recordUsageTurn } from '../core/usage/store';
 import { getExtensionVersion } from '../core/version';
 import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
+import {
+  OPTIONAL_SYNC_FILE_KEYS,
+  REQUIRED_SYNC_FILE_KEYS,
+  SYNC_FILE_KEYS,
+} from '../core/sync/contracts';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
 import { createStorageBackend, type StorageBackend } from '../core/sync/storage-backend';
 import { authorizeGDrive } from '../core/sync/gdrive-client';
@@ -62,7 +67,7 @@ import {
   validateSavedItemsState,
   validateSkillImportSource,
   validateSkill,
-  validateStoredMemory,
+  validateSyncMemory,
 } from '../core/sync/schema';
 import { clearToolCallHistory, getToolCallHistory } from '../core/tool/history';
 import { appendExternalizedToolPayloadChunk } from '../core/tool/externalized-payload';
@@ -2054,53 +2059,47 @@ async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
 
 async function uploadSyncDataSnapshot(backend: StorageBackend, snapshot: SyncDataSnapshot): Promise<void> {
   await Promise.all([
-    backend.put('memories.json', JSON.stringify(snapshot.memories)),
-    backend.put('skills.json', JSON.stringify(snapshot.skills)),
-    backend.put('skill-sources.json', JSON.stringify(snapshot.skillSources)),
-    backend.put('presets.json', JSON.stringify(snapshot.presets)),
+    backend.put(SYNC_FILE_KEYS.memories, JSON.stringify(snapshot.memories)),
+    backend.put(SYNC_FILE_KEYS.skills, JSON.stringify(snapshot.skills)),
+    backend.put(SYNC_FILE_KEYS.skillSources, JSON.stringify(snapshot.skillSources)),
+    backend.put(SYNC_FILE_KEYS.presets, JSON.stringify(snapshot.presets)),
     snapshot.projectContext
-      ? backend.put('project-context.json', JSON.stringify(snapshot.projectContext))
+      ? backend.put(SYNC_FILE_KEYS.projectContext, JSON.stringify(snapshot.projectContext))
       : Promise.resolve(),
     snapshot.savedItems
-      ? backend.put('saved-items.json', JSON.stringify(snapshot.savedItems))
+      ? backend.put(SYNC_FILE_KEYS.savedItems, JSON.stringify(snapshot.savedItems))
       : Promise.resolve(),
   ]);
 }
 
 async function getRemoteSyncDataSnapshot(backend: StorageBackend): Promise<SyncDataSnapshot> {
-  const [remoteMemJson, remoteSkillJson, remotePresetJson, remoteSkillSourceJson, remoteProjectContextJson, remoteSavedItemsJson] = await Promise.all([
-    backendGetRequired(backend, 'memories.json'),
-    backendGetRequired(backend, 'skills.json'),
-    backendGetRequired(backend, 'presets.json'),
-    backend.get('skill-sources.json'),
-    backend.get('project-context.json'),
-    backend.get('saved-items.json'),
+  const [requiredFiles, optionalFiles] = await Promise.all([
+    Promise.all(REQUIRED_SYNC_FILE_KEYS.map((file) => backendGetRequired(backend, file))),
+    Promise.all(OPTIONAL_SYNC_FILE_KEYS.map((file) => backend.get(file))),
   ]);
+  const [remoteMemJson, remoteSkillJson, remotePresetJson] = requiredFiles;
+  const [remoteSkillSourceJson, remoteProjectContextJson, remoteSavedItemsJson] = optionalFiles;
 
-  const memories = parseValidatedArray('memories.json', remoteMemJson, (item, path) => {
-    if (!item || typeof item !== 'object') throw new Error(`${path} must be an object`);
-    const { id: _id, ...memory } = item as Memory;
-    return validateStoredMemory(memory, path);
-  });
+  const memories = parseValidatedArray(SYNC_FILE_KEYS.memories, remoteMemJson, validateSyncMemory);
 
-  const skills = parseValidatedArray('skills.json', remoteSkillJson, validateSkill)
+  const skills = parseValidatedArray(SYNC_FILE_KEYS.skills, remoteSkillJson, validateSkill)
     .filter(isSyncableSkill);
   const skillSources = remoteSkillSourceJson === null
     ? []
-    : parseValidatedArray('skill-sources.json', remoteSkillSourceJson, validateSkillImportSource)
+    : parseValidatedArray(SYNC_FILE_KEYS.skillSources, remoteSkillSourceJson, validateSkillImportSource)
       .filter(isSyncableSkillSource);
 
   return {
     memories,
     skills,
     skillSources,
-    presets: parseValidatedArray('presets.json', remotePresetJson, validatePreset),
+    presets: parseValidatedArray(SYNC_FILE_KEYS.presets, remotePresetJson, validatePreset),
     projectContext: remoteProjectContextJson === null
       ? null
-      : parseValidatedJson('project-context.json', remoteProjectContextJson, validateProjectContextState),
+      : parseValidatedJson(SYNC_FILE_KEYS.projectContext, remoteProjectContextJson, validateProjectContextState),
     savedItems: remoteSavedItemsJson === null
       ? null
-      : parseValidatedJson('saved-items.json', remoteSavedItemsJson, validateSavedItemsState),
+      : parseValidatedJson(SYNC_FILE_KEYS.savedItems, remoteSavedItemsJson, validateSavedItemsState),
   };
 }
 

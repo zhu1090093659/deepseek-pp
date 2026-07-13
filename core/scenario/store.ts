@@ -1,6 +1,6 @@
 import type { ScenarioConfig } from '../types';
 
-const STORAGE_KEY = 'scenarioConfigs';
+export const SCENARIO_STORAGE_KEY = 'scenarioConfigs';
 
 const BUILT_IN_SCENARIOS: ScenarioConfig[] = [
   { id: 'summarize', label: '总结', template: '请用简洁的语言总结以下内容：\n\n{text}', builtIn: true, enabled: true },
@@ -14,8 +14,8 @@ export function getDefaultScenarios(): ScenarioConfig[] {
 
 export async function getAllScenarios(): Promise<ScenarioConfig[]> {
   try {
-    const data = await chrome.storage.local.get(STORAGE_KEY);
-    const custom = (data[STORAGE_KEY] as ScenarioConfig[] | undefined) ?? [];
+    const data = await chrome.storage.local.get(SCENARIO_STORAGE_KEY);
+    const custom = (data[SCENARIO_STORAGE_KEY] as ScenarioConfig[] | undefined) ?? [];
     return [
       ...BUILT_IN_SCENARIOS.map((s) => {
         const saved = custom.find((c) => c.id === s.id);
@@ -65,7 +65,7 @@ export function buildContextMenuLabel(scenario: ScenarioConfig): string {
 }
 
 async function saveAllScenarios(scenarios: ScenarioConfig[]): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: scenarios });
+  await chrome.storage.local.set({ [SCENARIO_STORAGE_KEY]: scenarios });
 }
 
 export function applyScenarioTemplate(template: string, selectedText: string): string {

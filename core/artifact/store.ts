@@ -1,16 +1,13 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { ArtifactFile, ArtifactRecord, ArtifactView } from './types';
+import { ARTIFACT_PERSISTENCE_CONTRACT, isArtifactRecord } from './schema';
 
-const STORAGE_KEY = 'deepseek_pp_artifacts';
-const MAX_ARTIFACTS = 50;
-const DB_NAME = 'DeepSeekPPArtifacts';
-
-const db = new Dexie(DB_NAME) as Dexie & {
+const db = new Dexie(ARTIFACT_PERSISTENCE_CONTRACT.databaseName) as Dexie & {
   artifacts: EntityTable<ArtifactRecord, 'id'>;
 };
 
-db.version(1).stores({
-  artifacts: 'id, createdAt',
+db.version(ARTIFACT_PERSISTENCE_CONTRACT.databaseVersion).stores({
+  [ARTIFACT_PERSISTENCE_CONTRACT.tableName]: ARTIFACT_PERSISTENCE_CONTRACT.tableSchema,
 });
 
 let legacyMigrationPromise: Promise<void> | null = null;
@@ -37,7 +34,7 @@ export async function saveArtifact(input: {
   }
 
   const records = await getLegacyArtifacts();
-  await setLegacyArtifacts([record, ...records].slice(0, MAX_ARTIFACTS));
+  await setLegacyArtifacts([record, ...records].slice(0, ARTIFACT_PERSISTENCE_CONTRACT.maxRecords));
   return record;
 }
 
@@ -59,7 +56,7 @@ export async function getArtifacts(): Promise<ArtifactRecord[]> {
   if (shouldUseIndexedDbArtifacts()) {
     await ensureLegacyArtifactsMigrated();
     try {
-      return await db.artifacts.orderBy('createdAt').reverse().limit(MAX_ARTIFACTS).toArray();
+      return await db.artifacts.orderBy('createdAt').reverse().limit(ARTIFACT_PERSISTENCE_CONTRACT.maxRecords).toArray();
     } catch (error) {
       console.warn('[DeepSeek++] artifact IndexedDB list failed, falling back to storage.local', error);
     }
@@ -121,7 +118,7 @@ async function pruneArtifactDb(): Promise<void> {
   const staleIds = await db.artifacts
     .orderBy('createdAt')
     .reverse()
-    .offset(MAX_ARTIFACTS)
+    .offset(ARTIFACT_PERSISTENCE_CONTRACT.maxRecords)
     .primaryKeys() as string[];
   if (staleIds.length === 0) return;
   await db.artifacts.bulkDelete(staleIds);
@@ -130,8 +127,8 @@ async function pruneArtifactDb(): Promise<void> {
 async function getLegacyArtifacts(): Promise<ArtifactRecord[]> {
   const storage = getChromeLocalStorage();
   if (!storage) return [];
-  const data = await storage.get(STORAGE_KEY) as Record<string, unknown>;
-  const value = data[STORAGE_KEY];
+  const data = await storage.get(ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey) as Record<string, unknown>;
+  const value = data[ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey];
   if (!Array.isArray(value)) return [];
   return value.filter(isArtifactRecord);
 }
@@ -139,13 +136,13 @@ async function getLegacyArtifacts(): Promise<ArtifactRecord[]> {
 async function setLegacyArtifacts(records: ArtifactRecord[]): Promise<void> {
   const storage = getChromeLocalStorage();
   if (!storage) return;
-  await storage.set({ [STORAGE_KEY]: records });
+  await storage.set({ [ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey]: records });
 }
 
 async function clearLegacyArtifacts(): Promise<void> {
   const storage = getChromeLocalStorage();
   if (!storage || typeof storage.remove !== 'function') return;
-  await storage.remove(STORAGE_KEY);
+  await storage.remove(ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey);
 }
 
 function getChromeLocalStorage(): chrome.storage.LocalStorageArea | null {
@@ -156,16 +153,4 @@ function getChromeLocalStorage(): chrome.storage.LocalStorageArea | null {
   } catch {
     return null;
   }
-}
-
-function isArtifactRecord(value: unknown): value is ArtifactRecord {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as ArtifactRecord;
-  return typeof record.id === 'string' &&
-    (record.kind === 'file' || record.kind === 'bundle') &&
-    typeof record.filename === 'string' &&
-    typeof record.mimeType === 'string' &&
-    typeof record.content === 'string' &&
-    typeof record.sizeBytes === 'number' &&
-    typeof record.createdAt === 'number';
 }

@@ -21,6 +21,7 @@ export {
   getProjectForConversation,
   getProjectPromptContextForConversation,
   normalizeProjectContextState,
+  PROJECT_CONTEXT_STORAGE_KEY,
   refreshProjectConversation,
   removeConversationFromProject,
   saveProjectContextState,

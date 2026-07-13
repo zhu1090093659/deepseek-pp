@@ -11,6 +11,11 @@ export type {
 export { ARTIFACT_SCHEMA_VERSION } from './types';
 
 export {
+  ARTIFACT_PERSISTENCE_CONTRACT,
+  isArtifactRecord,
+} from './schema';
+
+export {
   bytesToBase64,
   createStoredZip,
 } from './zip';

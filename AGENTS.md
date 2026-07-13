@@ -65,6 +65,7 @@ Run applicable validation in this order:
 3. `npm run prompt:freeze` when prompt, tool, Skill, memory, project, or inline-agent behavior may be affected.
    Update prompt goldens only through `npm run prompt:freeze:update`, after the active Issue explicitly authorizes the byte change and the generated diff has been reviewed.
    Keep runtime, bridge, tool-record, and sandbox contract fixtures synchronized with every cross-runtime contract change. Label malformed behavior that is merely accepted today as a `current-gap` with its owning follow-up; never promote it to a legal fixture without an explicit compatibility decision.
+   Keep historical IndexedDB, local-storage, and sync fixtures synchronized with every persistence contract change. Data-loss, silent-default, filtered-row, partial-commit, and future-version behavior must remain labeled migration gaps with an owning follow-up; never treat those paths as successful compatibility.
 4. Affected browser builds; use `npm run build:all` for cross-browser or closure tasks.
 5. `npm run verify:manifest-policy` and `npm run verify:extension-utf8` when manifests, assets, permissions, or build output change.
 6. The narrow smoke test for the changed runtime, followed by `npm run ci:quality` at compatibility/release closure.

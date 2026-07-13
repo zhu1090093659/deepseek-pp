@@ -30,7 +30,7 @@
 
 | Phase | Name | Milestone URL | Open | Closed | Total |
 |:--:|:--|:--|--:|--:|--:|
-| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 3 | 2 | 5 |
+| 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 2 | 3 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 6 | 0 | 6 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 0 | 5 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 5 | 0 | 5 |
@@ -43,7 +43,7 @@
 |:--|:--|:--|:--|
 | T1.1 | [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311) | Establish compatibility contract registry | closed |
 | T1.2 | [#312](https://github.com/zhu1090093659/deepseek-pp/issues/312) | Freeze prompt, tool XML, and inline-agent output | closed |
-| T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | open |
+| T1.3 | [#313](https://github.com/zhu1090093659/deepseek-pp/issues/313) | Freeze runtime, bridge, tool, and sandbox contracts | closed |
 | T1.4 | [#314](https://github.com/zhu1090093659/deepseek-pp/issues/314) | Freeze persistence and sync compatibility fixtures | open |
 | T1.5 | [#315](https://github.com/zhu1090093659/deepseek-pp/issues/315) | Freeze external runtime capability contracts | open |
 | T2.1 | [#316](https://github.com/zhu1090093659/deepseek-pp/issues/316) | Harden extension runtime message boundary | open |
@@ -91,7 +91,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Phase Checklist
 
-- [ ] Phase 1: Compatibility Firewall (2/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
+- [ ] Phase 1: Compatibility Firewall (3/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [ ] Phase 2: Critical Boundaries and Failure Safety (0/6 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [ ] Phase 3: Authoritative Contracts and Real Ports (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
@@ -102,9 +102,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 1 — Compatibility Firewall (in progress)
 
-**Active Task**: T1.3 / [Issue #313](https://github.com/zhu1090093659/deepseek-pp/issues/313) — Freeze runtime, bridge, tool, and sandbox contracts.
+**Active Task**: T1.4 / [Issue #314](https://github.com/zhu1090093659/deepseek-pp/issues/314) — Freeze persistence and sync compatibility fixtures.
 
-**Execution Branch**: `codex/313-runtime-contract-freeze`
+**Execution Branch**: `codex/314-persistence-sync-freeze`
 
 **Blockers**: None for Phase 1. The current working tree contains user-owned floating-chat compatibility changes; they are an overlap guard for T4.3, not a blocker for earlier phases.
 
@@ -133,6 +133,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Added legal and malformed fixtures for runtime requests/responses/errors, bridge traffic, tool wire records, and sandbox multi-hop traffic; permissive shallow envelopes and other unsafe accepted behavior remain labeled `current-gap` with T2.1, T2.2, or T3.1 owners.
 - Preserved current legal behavior and error text while removing duplicated boundary normalization. Targeted validation passed 4 files / 71 tests; the full suite passed 66 files / 433 tests, compile, prompt freeze, and Chrome/Edge/Firefox builds passed, and no test child process remained.
 
+**T1.4 Evidence**:
+
+- Centralized the released Memory and Artifact database identities, schemas, retention limit, and legacy key in contract modules consumed by the production stores; centralized Project, Saved Items, Scenario, sync-config, and six remote sync keys without changing their values.
+- Added raw fixtures for Memory v1-v3, Artifact legacy storage, released Project v1/v2, Saved Items legacy/v1/future, Scenario storage, and every required/optional sync JSON file.
+- Executed Memory v1→v3 and v2→v3 upgrades, v3 project-scope reopen, and Artifact legacy migration through the production Dexie stores with fake IndexedDB. Project v1 reset, malformed Artifact filtering, Saved Items future-version downgrade, Scenario read fallback, and sync partial commits remain labeled gaps owned by T2.4, T2.5, or T3.3.
+- Targeted validation passed 11 files / 49 tests; the full suite passed 69 files / 441 tests, TypeScript compile and prompt freeze passed, Chrome/Edge/Firefox builds passed, and no Vitest/WXT/TypeScript child process remained. Builds emitted only the existing Pyodide `node:*` externalization warnings.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
@@ -154,9 +161,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Commit and open the Issue #313 PR with the completed compatibility evidence.
-2. Wait for required checks, record Issue #313 execution telemetry, and merge without changing the frozen legal behavior.
-3. Advance Milestone #43 and start T1.4 persistence/sync compatibility fixtures.
+1. Complete T1.4 closure validation and review the final compatibility diff for behavior drift or duplicated contract truth.
+2. Open the Issue #314 PR and wait for all required checks.
+3. Record T1.4 telemetry, merge the PR, and advance Milestone #43 after the checks pass.
 
 ## Session Log
 
@@ -171,3 +178,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | T1.2 closure | Merged PR #338 at `0551eef`, closed Issue #312, recorded task telemetry, and advanced Milestone #43 to 2/5 completed with zero cumulative drift. |
 | 2026-07-13 | T1.3 execution start | Opened isolated branch `codex/313-runtime-contract-freeze` from `0551eef` and started cross-runtime contract characterization for Issue #313. |
 | 2026-07-13 | T1.3 implementation | Added executable runtime, bridge, tool-record, and sandbox fixtures; centralized real bridge/sandbox boundary authorities without hardening current gaps; passed targeted, full-suite, compile, prompt-freeze, cross-browser build, diff, and orphan-process checks. |
+| 2026-07-13 | T1.3 closure | Merged PR #339 at `59e431c`, closed Issue #313, recorded task telemetry, and advanced Milestone #43 to 3/5 completed with zero cumulative drift. |
+| 2026-07-13 | T1.4 execution start | Opened isolated branch `codex/314-persistence-sync-freeze` from `59e431c` and started historical persistence and sync compatibility characterization for Issue #314. |
+| 2026-07-13 | T1.4 implementation | Centralized persistence identities used by production stores, added raw Memory/Artifact/Project/Saved Items/Scenario/sync fixtures, executed historical IndexedDB upgrades through production code, and kept known loss and partial-commit behavior classified as owned migration gaps. |

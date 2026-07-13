@@ -1,37 +1,44 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Memory, NewMemory } from '../types';
+import {
+  MEMORY_DATABASE_NAME,
+  MEMORY_TABLE_NAME,
+  MEMORY_TABLE_SCHEMAS,
+  migrateMemoryV1RecordToV2,
+  migrateMemoryV2RecordToV3,
+} from './schema';
 
-const db = new Dexie('DeepSeekPP') as Dexie & {
+const db = new Dexie(MEMORY_DATABASE_NAME) as Dexie & {
   memories: EntityTable<Memory, 'id'>;
 };
 
 db.version(1).stores({
-  memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt',
+  [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[1],
 });
 
 db.version(2)
   .stores({
-    memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId',
+    [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[2],
   })
   .upgrade((tx) => {
     return tx
-      .table('memories')
+      .table(MEMORY_TABLE_NAME)
       .toCollection()
       .modify((memory: Record<string, unknown>) => {
-        memory.syncId = crypto.randomUUID();
+        Object.assign(memory, migrateMemoryV1RecordToV2(memory, crypto.randomUUID()));
       });
   });
 
 db.version(3)
   .stores({
-    memories: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId, scope, projectId',
+    [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
   })
   .upgrade((tx) => {
     return tx
-      .table('memories')
+      .table(MEMORY_TABLE_NAME)
       .toCollection()
       .modify((memory: Record<string, unknown>) => {
-        memory.scope = 'global';
+        Object.assign(memory, migrateMemoryV2RecordToV3(memory));
         delete memory.projectId;
       });
   });

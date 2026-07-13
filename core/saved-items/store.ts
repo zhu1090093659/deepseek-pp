@@ -5,11 +5,11 @@ import {
   type SavedItemsState,
 } from './types';
 
-const STORAGE_KEY = 'deepseek_pp_saved_items';
+export const SAVED_ITEMS_STORAGE_KEY = 'deepseek_pp_saved_items';
 
 export async function getSavedItemsState(): Promise<SavedItemsState> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  return normalizeSavedItemsState(data[STORAGE_KEY]);
+  const data = await chrome.storage.local.get(SAVED_ITEMS_STORAGE_KEY) as Record<string, unknown>;
+  return normalizeSavedItemsState(data[SAVED_ITEMS_STORAGE_KEY]);
 }
 
 export async function getAllSavedItems(): Promise<SavedItem[]> {
@@ -35,7 +35,7 @@ export async function saveSavedItem(input: SavedItemInput): Promise<SavedItem> {
     item,
   ].sort((a, b) => b.updatedAt - a.updatedAt);
   await chrome.storage.local.set({
-    [STORAGE_KEY]: {
+    [SAVED_ITEMS_STORAGE_KEY]: {
       schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
       items: nextItems,
     } satisfies SavedItemsState,
@@ -46,7 +46,7 @@ export async function saveSavedItem(input: SavedItemInput): Promise<SavedItem> {
 export async function deleteSavedItem(id: string): Promise<void> {
   const state = await getSavedItemsState();
   await chrome.storage.local.set({
-    [STORAGE_KEY]: {
+    [SAVED_ITEMS_STORAGE_KEY]: {
       schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
       items: state.items.filter((item) => item.id !== id),
     } satisfies SavedItemsState,
@@ -55,7 +55,7 @@ export async function deleteSavedItem(id: string): Promise<void> {
 
 export async function replaceAllSavedItems(items: SavedItem[]): Promise<void> {
   await chrome.storage.local.set({
-    [STORAGE_KEY]: {
+    [SAVED_ITEMS_STORAGE_KEY]: {
       schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
       items: items.map(normalizeSavedItem),
     } satisfies SavedItemsState,
