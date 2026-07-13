@@ -267,6 +267,8 @@ import {
   type RuntimeMessageContext,
   type RuntimeMessageEnvelope,
 } from '../core/messaging/runtime-boundary';
+import { createRuntimeCommandRegistry } from '../core/messaging/runtime-command-registry';
+import { createBootstrapRuntimeHandlers } from './background/bootstrap-handlers';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -318,6 +320,14 @@ const SANDBOX_OFFSCREEN_URL = 'sandbox-offscreen.html';
 const browserSandboxRuntime: SandboxToolRuntime = {
   runSandbox: (request) => runBrowserSandboxToolResult(request),
 };
+const runtimeCommandRegistry = createRuntimeCommandRegistry({
+  typedHandlers: createBootstrapRuntimeHandlers({
+    getVersion: getExtensionVersion,
+    dismissWhatsNew,
+    refreshWhatsNewBadge,
+  }),
+  handleLegacy: handleLegacyMessage,
+});
 
 function backgroundT(key: LocaleMessageKey, params?: MessageParams): string {
   return currentBackgroundTranslator.t(key, params);
@@ -586,6 +596,13 @@ function reportBackgroundStartupError(code: string, error: unknown) {
 }
 
 async function handleMessage(
+  message: RuntimeMessageEnvelope,
+  context: RuntimeMessageContext,
+) {
+  return runtimeCommandRegistry.dispatch(message, context);
+}
+
+async function handleLegacyMessage(
   message: { type: string; payload?: unknown },
   context: RuntimeMessageContext,
 ) {
@@ -1180,15 +1197,6 @@ async function handleMessage(
       return artifact ? { ok: true, artifact } : { ok: false, error: 'artifact_not_found' };
     }
 
-    case 'GET_CONFIG':
-      return { version: getExtensionVersion() };
-
-    case 'WHATS_NEW_DISMISSED': {
-      await dismissWhatsNew();
-      await refreshWhatsNewBadge();
-      return { ok: true };
-    }
-
     case 'GET_DEEPSEEK_API_KEY_STATUS':
       return { ok: true, configured: await hasDeepSeekApiKey() };
 
@@ -1479,7 +1487,7 @@ async function handleMessage(
       return { ok: true };
 
     default:
-      return null;
+      throw new Error(`Legacy runtime command owner is missing: ${message.type}`);
   }
 }
 

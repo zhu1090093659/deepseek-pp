@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { dismissWhatsNew, getWhatsNewState, WHATS_NEW_ITEMS, type WhatsNewState } from '../../../core/whats-new';
+import { createBootstrapRuntimeClient } from '../../../core/messaging/bootstrap-client';
 import { useI18n } from '../i18n';
+
+const bootstrapRuntimeClient = createBootstrapRuntimeClient(
+  (message) => chrome.runtime.sendMessage(message),
+);
 
 export default function WhatsNewPanel() {
   const { t } = useI18n();
@@ -25,7 +30,7 @@ export default function WhatsNewPanel() {
       if (e.key === 'Escape') {
         setState((current) => current ? { ...current, visible: false, pendingUpdate: false } : current);
         void dismissWhatsNew()
-          .then(() => chrome.runtime.sendMessage({ type: 'WHATS_NEW_DISMISSED' }))
+          .then(() => bootstrapRuntimeClient.dismissWhatsNew())
           .catch((error) => console.error('Failed to dismiss whats-new panel', error));
       }
     };
@@ -38,7 +43,7 @@ export default function WhatsNewPanel() {
   const handleDismiss = () => {
     setState((current) => current ? { ...current, visible: false, pendingUpdate: false } : current);
     dismissWhatsNew()
-      .then(() => chrome.runtime.sendMessage({ type: 'WHATS_NEW_DISMISSED' }))
+      .then(() => bootstrapRuntimeClient.dismissWhatsNew())
       .catch((error) => {
         console.error('Failed to dismiss whats-new panel', error);
       });

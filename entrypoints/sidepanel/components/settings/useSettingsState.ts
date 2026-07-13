@@ -28,6 +28,7 @@ import type {
 } from '../../../../core/types';
 import { validateImportedMemory } from '../../../../core/sync/schema';
 import { getOptionalRedirectUri } from '../../../../core/sync/oauth-client';
+import { createBootstrapRuntimeClient } from '../../../../core/messaging/bootstrap-client';
 
 /**
  * Central settings state + handlers.
@@ -62,6 +63,10 @@ const DEFAULT_ONEDRIVE_CONFIG: OneDriveSyncConfig = {
   refreshToken: undefined,
   lastSyncAt: null,
 };
+
+const bootstrapRuntimeClient = createBootstrapRuntimeClient(
+  (message) => chrome.runtime.sendMessage(message),
+);
 
 function defaultConfigForProvider(provider: SyncProvider): SyncConfig {
   if (provider === 'gdrive') return { ...DEFAULT_GDRIVE_CONFIG };
@@ -209,7 +214,7 @@ export function useSettingsState() {
         chrome.runtime.sendMessage({ type: 'GET_DEEPSEEK_API_KEY_STATUS' }).catch(() => undefined),
         chrome.runtime.sendMessage({ type: 'GET_MULTIMODAL_SETTINGS_STATUS' }).catch(() => undefined),
         chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }).catch(() => [] as Memory[]),
-        chrome.runtime.sendMessage({ type: 'GET_CONFIG' }).catch(() => undefined),
+        bootstrapRuntimeClient.getConfig().catch(() => undefined),
         chrome.runtime.sendMessage({ type: 'GET_SYNC_CONFIG' }).catch(() => null),
         chrome.runtime.sendMessage({ type: 'GET_MODEL_TYPE' }).catch(() => null),
         chrome.runtime.sendMessage({ type: 'GET_BACKGROUND' }).catch(() => null),
@@ -222,7 +227,7 @@ export function useSettingsState() {
       const mm = mmStatus as ({ ok?: boolean } & MultimodalSettingsStatus) | undefined;
       if (mm?.ok) syncMultimodalStatus(mm);
       setMemoryCount((memories as Memory[])?.length ?? 0);
-      setVersion((cfg as { version?: string } | undefined)?.version ?? '');
+      setVersion(cfg && 'version' in cfg ? cfg.version : '');
       if (syncCfg) setSyncConfig(normalizeLoadedConfig(syncCfg));
       setModelTypeState(modelType === 'expert' || modelType === 'vision' ? modelType : null);
       const normalizedBg = normalizeBackgroundConfig(bgCfg as BackgroundConfig | null);

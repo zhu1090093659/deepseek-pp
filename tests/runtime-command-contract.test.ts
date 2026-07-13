@@ -2,29 +2,54 @@ import { readFileSync } from 'node:fs';
 import * as ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
+import {
+  RUNTIME_COMMAND_CONTRACTS,
+  type RuntimeErrorFamily,
+  type RuntimePayloadPresence,
+  type RuntimeRequestBoundary,
+} from '../core/messaging/runtime-command-contracts';
+import {
+  CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
+  LEGACY_RUNTIME_COMMAND_TYPES,
+  TYPED_RUNTIME_COMMAND_TYPES,
+  createUnknownRuntimeCommandResponse,
+  getRuntimeCommandOwner,
+} from '../core/messaging/runtime-command-registry';
 import { decodeRuntimeMessageEnvelope } from '../core/messaging/runtime-boundary';
 import {
   RUNTIME_CURRENT_GAPS,
-  RUNTIME_COMMAND_CONTRACTS,
   RUNTIME_ERROR_FIXTURES,
   RUNTIME_NOTIFICATION_TYPES,
   RUNTIME_REQUEST_FIXTURES,
   RUNTIME_RESOLVED_BOUNDARY_CASES,
+  RUNTIME_RESOLVED_ROUTING_CASES,
   RUNTIME_RESPONSE_FIXTURES,
   RUNTIME_TAB_RPC_TYPES,
   RUNTIME_TOPOLOGY,
-  type RuntimeErrorFamily,
-  type RuntimePayloadPresence,
-  type RuntimeRequestBoundary,
 } from './fixtures/runtime-contract/runtime';
 
 const backgroundSource = readFileSync('entrypoints/background.ts', 'utf8');
 const typesSource = readFileSync('core/types.ts', 'utf8');
 const inventorySource = readFileSync('docs/compatibility/runtime-command-inventory.md', 'utf8');
+const CUTOVER_LEDGER_SECTIONS = [
+  ['R3.1 / #351 — Typed seam bootstrap (2)', 2],
+  ['R4.1 / #360 — Persistence, library, and local preferences (57)', 57],
+  ['R4.2 / #361 — MCP, tool, browser control, and sandbox (29)', 29],
+  ['R4.3 / #362 — DeepSeek, chat, multimodal, and export (16)', 16],
+  ['R4.4 / #363 — Sync, automation, usage, scenario, and lifecycle closure (17)', 17],
+] as const;
 
 describe('runtime command compatibility contract', () => {
   it('matches the live router, MessageAction union, and checked-in human inventory', () => {
-    const liveContracts = extractHandleMessageContracts(backgroundSource);
+    const legacyContracts = extractLegacyMessageContracts(backgroundSource);
+    const typedContracts: RuntimeCaseContract[] = TYPED_RUNTIME_COMMAND_TYPES.map((type) => ({
+      type,
+      readsPayload: false,
+      directPayloadCast: false,
+      requestAccess: 'none',
+      error: 'background-error',
+    }));
+    const liveContracts = [...legacyContracts, ...typedContracts];
     const live = liveContracts.map((contract) => contract.type);
     const declaredContracts = extractMessageActionContracts(typesSource);
     const declared = declaredContracts.map((contract) => contract.type);
@@ -45,9 +70,21 @@ describe('runtime command compatibility contract', () => {
     expectSortedEqual(declaredOnly, readInventoryList('Declared Only'));
     expectSortedEqual(registryLive, live);
     expectSortedEqual(registryDeclared, declared);
+    expectSortedEqual(legacyContracts.map((contract) => contract.type), LEGACY_RUNTIME_COMMAND_TYPES);
+    expectSortedEqual(typedContracts.map((contract) => contract.type), TYPED_RUNTIME_COMMAND_TYPES);
+    expectSortedEqual(declaredOnly, CLIENT_ONLY_RUNTIME_COMMAND_TYPES);
+    const cutoverLedger = CUTOVER_LEDGER_SECTIONS.flatMap(([heading, count]) => {
+      const commands = readInventoryList(heading, 3);
+      expect(commands, heading).toHaveLength(count);
+      return commands;
+    });
+    expect(cutoverLedger).toHaveLength(121);
+    expect(new Set(cutoverLedger).size).toBe(cutoverLedger.length);
+    expectSortedEqual(cutoverLedger, live);
     expect(registryEntries).toHaveLength(123);
     for (const contract of liveContracts) {
       const registered = RUNTIME_COMMAND_CONTRACTS[contract.type as keyof typeof RUNTIME_COMMAND_CONTRACTS];
+      expect(registered.owner).toBe(getRuntimeCommandOwner(contract.type));
       expect(registered.request.access).toBe(contract.requestAccess);
       expect(registered.error).toBe(contract.error);
     }
@@ -67,6 +104,7 @@ describe('runtime command compatibility contract', () => {
     }).toEqual(RUNTIME_TOPOLOGY);
     expect(new Set(live).size).toBe(live.length);
     expect(new Set(declared).size).toBe(declared.length);
+    for (const type of live) expect(getRuntimeCommandOwner(type)).toBeDefined();
   });
 
   it('freezes serializable request and response families without creating a second router', () => {
@@ -113,13 +151,18 @@ describe('runtime command compatibility contract', () => {
       .toEqual(generic.response);
   });
 
-  it('characterizes malformed routing gaps without treating them as target behavior', () => {
+  it('characterizes the remaining payload-decoding gap and resolved routing behavior', () => {
     expect(RUNTIME_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
-      'explicit-rejection-after-T3.1',
-      'decoded-command-contract-after-T3.1',
-      'single-exhaustive-command-map-after-T3.1',
+      'decoded-command-contract-during-R4.1-R4.4',
     ]);
-    expect(extractHandleMessageDefaultReturnsNull(backgroundSource)).toBe(true);
+    expect(extractLegacyDefaultThrows(backgroundSource)).toBe(true);
+    for (const resolved of RUNTIME_RESOLVED_ROUTING_CASES) {
+      expect(resolved.target).toBe('explicit-rejection-at-R3.1-registry');
+      expect(createUnknownRuntimeCommandResponse()).toEqual(resolved.response);
+      expect(getRuntimeCommandOwner(resolved.input.type)).toBe(
+        resolved.input.type === 'UNKNOWN_COMMAND' ? undefined : 'client-only',
+      );
+    }
     for (const resolved of RUNTIME_RESOLVED_BOUNDARY_CASES) {
       expect(resolved.target).toBe('explicit-rejection-at-T2.1-boundary');
       expect(() => decodeRuntimeMessageEnvelope(resolved.input)).toThrow();
@@ -150,19 +193,19 @@ interface RuntimeCaseContract {
   error: RuntimeErrorFamily;
 }
 
-function extractHandleMessageContracts(source: string): RuntimeCaseContract[] {
+function extractLegacyMessageContracts(source: string): RuntimeCaseContract[] {
   const sourceFile = ts.createSourceFile('background.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  let handleMessage: ts.FunctionDeclaration | undefined;
+  let handleLegacyMessage: ts.FunctionDeclaration | undefined;
 
   sourceFile.forEachChild((node) => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === 'handleMessage') {
-      handleMessage = node;
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'handleLegacyMessage') {
+      handleLegacyMessage = node;
     }
   });
-  if (!handleMessage?.body) throw new Error('handleMessage function not found');
+  if (!handleLegacyMessage?.body) throw new Error('handleLegacyMessage function not found');
 
-  const switchStatement = handleMessage.body.statements.find(ts.isSwitchStatement);
-  if (!switchStatement) throw new Error('handleMessage switch not found');
+  const switchStatement = handleLegacyMessage.body.statements.find(ts.isSwitchStatement);
+  if (!switchStatement) throw new Error('handleLegacyMessage switch not found');
 
   return switchStatement.caseBlock.clauses.flatMap((clause) => {
     if (!ts.isCaseClause(clause) || !ts.isStringLiteral(clause.expression)) return [];
@@ -222,22 +265,20 @@ function extractMessageActionContracts(source: string): MessageActionContract[] 
   });
 }
 
-function extractHandleMessageDefaultReturnsNull(source: string): boolean {
+function extractLegacyDefaultThrows(source: string): boolean {
   const sourceFile = ts.createSourceFile('background.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  let returnsNull = false;
+  let throws = false;
   const inspect = (node: ts.Node) => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === 'handleMessage' && node.body) {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'handleLegacyMessage' && node.body) {
       const switchStatement = node.body.statements.find(ts.isSwitchStatement);
       const defaultClause = switchStatement?.caseBlock.clauses.find(ts.isDefaultClause);
-      returnsNull = Boolean(defaultClause?.statements.some(
-        (statement) => ts.isReturnStatement(statement) && statement.expression?.kind === ts.SyntaxKind.NullKeyword,
-      ));
+      throws = Boolean(defaultClause?.statements.some(ts.isThrowStatement));
       return;
     }
     ts.forEachChild(node, inspect);
   };
   inspect(sourceFile);
-  return returnsNull;
+  return throws;
 }
 
 function isMessagePayloadAccess(node: ts.Node): node is ts.PropertyAccessExpression {
@@ -247,11 +288,11 @@ function isMessagePayloadAccess(node: ts.Node): node is ts.PropertyAccessExpress
     node.name.text === 'payload';
 }
 
-function readInventoryList(heading: string): string[] {
+function readInventoryList(heading: string, level = 2): string[] {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const fence = '`'.repeat(3);
   const block = inventorySource.match(
-    new RegExp(`## ${escapedHeading}[^\\n]*\\n\\n${fence}text\\n([\\s\\S]*?)\\n${fence}`),
+    new RegExp(`${'#'.repeat(level)} ${escapedHeading}[^\\n]*\\n\\n${fence}text\\n([\\s\\S]*?)\\n${fence}`),
   )?.[1];
   if (!block) throw new Error(`Inventory block not found: ${heading}`);
   return block.split('\n').filter(Boolean);
