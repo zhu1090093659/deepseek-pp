@@ -114,7 +114,15 @@ import {
   getVoiceSettings,
   saveVoiceSettings,
 } from '../core/voice/settings';
-import type { SandboxExecutionResult, SandboxRunRequest, SandboxToolRuntime } from '../core/sandbox';
+import {
+  normalizeSandboxExecutionResult,
+  parseSandboxEnvelope,
+  SANDBOX_MESSAGE_TYPES,
+  SANDBOX_OFFSCREEN_PORT,
+  type SandboxExecutionResult,
+  type SandboxRunRequest,
+  type SandboxToolRuntime,
+} from '../core/sandbox';
 import { getCurrentBrowserExtensionEnvironment } from '../core/platform';
 import { readOptionalChromeApi } from '../core/platform/chrome-api';
 import {
@@ -222,6 +230,7 @@ import { normalizeConversationExportRequest } from '../core/export/schema';
 import { buildPromptAugmentation } from '../core/prompt';
 import { extractToolCalls } from '../core/interceptor/tool-parser';
 import { broadcastRuntimeUpdate } from '../core/messaging/broadcast';
+import { createBackgroundErrorResponse } from '../core/messaging/background-error';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -252,7 +261,6 @@ let currentBackgroundLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
 const SANDBOX_OFFSCREEN_URL = 'sandbox-offscreen.html';
-const SANDBOX_OFFSCREEN_PORT = 'sandbox-offscreen';
 const browserSandboxRuntime: SandboxToolRuntime = {
   runSandbox: (request) => runBrowserSandboxToolResult(request),
 };
@@ -311,7 +319,11 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
       .then(sendResponse)
-      .catch((error) => sendResponse(createBackgroundErrorResponse(message, error)));
+      .catch((error) => sendResponse(createBackgroundErrorResponse(
+        message,
+        error,
+        backgroundT('content.toolBlock.summaries.backgroundFailed'),
+      )));
     return true;
   });
 
@@ -495,36 +507,6 @@ async function ensureShellMcpCompatibility(server: McpServerConfig) {
 function reportBackgroundStartupError(code: string, error: unknown) {
   const detail = error instanceof Error ? error.message : String(error);
   console.error(`[DeepSeek++] ${code}: ${detail}`, error);
-}
-
-function createBackgroundErrorResponse(
-  message: { type?: string } | unknown,
-  error: unknown,
-): ToolResult | { ok: false; error: string } | null {
-  const detail = error instanceof Error ? error.message : String(error);
-
-  if (!message || typeof message !== 'object') {
-    return null;
-  }
-
-  const type = (message as { type?: string }).type;
-
-  if (type === 'EXECUTE_TOOL_CALL') {
-    return {
-      ok: false,
-      summary: backgroundT('content.toolBlock.summaries.backgroundFailed'),
-      detail,
-      error: {
-        code: 'background_tool_execution_failed',
-        message: detail,
-        retryable: true,
-      },
-    };
-  }
-
-  // Sidepanel sync handlers check result?.ok; content scripts use sendRuntimeMessage
-  // which guards against error responses. Return structured error for both.
-  return { ok: false, error: detail };
 }
 
 async function handleMessage(
@@ -1822,11 +1804,9 @@ function sendSandboxRunToOffscreen(request: SandboxRunRequest): Promise<SandboxE
     }, timeoutMs);
 
     port.onMessage.addListener((message: unknown) => {
-      const value = message && typeof message === 'object'
-        ? message as { type?: unknown; requestId?: unknown; result?: unknown }
-        : {};
-      if (value.type !== 'OFFSCREEN_SANDBOX_RESULT' || value.requestId !== requestId) return;
-      settle(normalizeSandboxExecutionResult(value.result));
+      const envelope = parseSandboxEnvelope(message, SANDBOX_MESSAGE_TYPES.offscreenResult, requestId);
+      if (!envelope) return;
+      settle(normalizeSandboxExecutionResult(envelope.result));
     });
 
     port.onDisconnect.addListener(() => {
@@ -1836,26 +1816,11 @@ function sendSandboxRunToOffscreen(request: SandboxRunRequest): Promise<SandboxE
     });
 
     port.postMessage({
-      type: 'OFFSCREEN_SANDBOX_RUN',
+      type: SANDBOX_MESSAGE_TYPES.offscreenRun,
       requestId,
       payload: request,
     });
   });
-}
-
-function normalizeSandboxExecutionResult(value: unknown): SandboxExecutionResult {
-  const result = value && typeof value === 'object' ? value as Partial<SandboxExecutionResult> : {};
-  return {
-    ok: result.ok === true,
-    stdout: typeof result.stdout === 'string' ? result.stdout : '',
-    stderr: typeof result.stderr === 'string' ? result.stderr : '',
-    result: typeof result.result === 'string' ? result.result : undefined,
-    html: typeof result.html === 'string' ? result.html : undefined,
-    previewText: typeof result.previewText === 'string' ? result.previewText : undefined,
-    durationMs: typeof result.durationMs === 'number' && Number.isFinite(result.durationMs) ? result.durationMs : 0,
-    truncated: result.truncated === true,
-    error: typeof result.error === 'string' ? result.error : undefined,
-  };
 }
 
 function createSandboxFailure(message: string, code: string, durationMs = 0): SandboxExecutionResult {

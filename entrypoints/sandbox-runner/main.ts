@@ -1,5 +1,12 @@
 import { runWorkerSandbox } from '../../core/sandbox/worker-runner';
-import type { SandboxExecutionResult, SandboxRunRequest } from '../../core/sandbox';
+import {
+  normalizeSandboxBoundaryRequest,
+  parseSandboxEnvelope,
+  SANDBOX_FRAME_TARGET_ORIGIN,
+  SANDBOX_MESSAGE_TYPES,
+  type SandboxExecutionResult,
+  type SandboxRunRequest,
+} from '../../core/sandbox';
 
 type SandboxRunnerRequest = SandboxRunRequest & {
   pyodideBaseUrl?: string;
@@ -11,12 +18,10 @@ const HTML_OUTPUT_LIMIT = 12_000;
 window.addEventListener('message', (event) => {
   if (event.source !== parent) return;
 
-  const value = event.data && typeof event.data === 'object'
-    ? event.data as { type?: unknown; requestId?: unknown; payload?: unknown }
-    : {};
-  if (value.type !== 'DPP_SANDBOX_RUN' || typeof value.requestId !== 'string') return;
+  const envelope = parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.frameRun);
+  if (!envelope) return;
 
-  void runApprovedCode(value.requestId, value.payload);
+  void runApprovedCode(envelope.requestId, envelope.payload);
 });
 
 async function runApprovedCode(requestId: string, payload: unknown): Promise<void> {
@@ -31,10 +36,14 @@ async function runApprovedCode(requestId: string, payload: unknown): Promise<voi
         timeoutMs: request.timeoutMs,
         pyodideBaseUrl: request.pyodideBaseUrl,
       });
-    parent.postMessage({ type: 'DPP_SANDBOX_RESULT', requestId, result }, '*');
+    parent.postMessage({
+      type: SANDBOX_MESSAGE_TYPES.frameResult,
+      requestId,
+      result,
+    }, SANDBOX_FRAME_TARGET_ORIGIN);
   } catch (error) {
     parent.postMessage({
-      type: 'DPP_SANDBOX_RESULT',
+      type: SANDBOX_MESSAGE_TYPES.frameResult,
       requestId,
       result: {
         ok: false,
@@ -44,32 +53,16 @@ async function runApprovedCode(requestId: string, payload: unknown): Promise<voi
         truncated: false,
         error: 'sandbox_request_invalid',
       },
-    }, '*');
+    }, SANDBOX_FRAME_TARGET_ORIGIN);
   }
 }
 
 function validateRequest(payload: unknown): SandboxRunnerRequest {
-  const value = payload && typeof payload === 'object' ? payload as Partial<SandboxRunnerRequest> : {};
-  if (
-    value.language !== 'javascript' &&
-    value.language !== 'typescript' &&
-    value.language !== 'python' &&
-    value.language !== 'html'
-  ) {
-    throw new Error('Sandbox runner only supports JavaScript, TypeScript, Python, and HTML.');
-  }
-  if (typeof value.code !== 'string' || value.code.trim().length === 0) {
-    throw new Error('Sandbox code must be a non-empty string.');
-  }
-  return {
-    language: value.language,
-    code: value.code,
-    input: typeof value.input === 'string' ? value.input : undefined,
-    timeoutMs: typeof value.timeoutMs === 'number' && Number.isFinite(value.timeoutMs)
-      ? Math.max(1_000, Math.min(15_000, Math.floor(value.timeoutMs)))
-      : value.language === 'python' ? 15_000 : 5_000,
-    pyodideBaseUrl: typeof value.pyodideBaseUrl === 'string' ? value.pyodideBaseUrl : undefined,
-  };
+  return normalizeSandboxBoundaryRequest(payload, {
+    invalidLanguage: 'Sandbox runner only supports JavaScript, TypeScript, Python, and HTML.',
+    invalidCode: 'Sandbox code must be a non-empty string.',
+    includePyodideBaseUrl: true,
+  });
 }
 
 function runHtmlSandbox(request: SandboxRunnerRequest): Promise<SandboxExecutionResult> {
@@ -115,17 +108,17 @@ function runHtmlSandbox(request: SandboxRunnerRequest): Promise<SandboxExecution
         ? event.data as { type?: unknown; requestId?: unknown; level?: unknown; values?: unknown; html?: unknown; text?: unknown; title?: unknown; message?: unknown }
         : {};
       if (value.requestId !== htmlRequestId) return;
-      if (value.type === 'DPP_HTML_LOG') {
+      if (value.type === SANDBOX_MESSAGE_TYPES.htmlLog) {
         const level = typeof value.level === 'string' ? value.level : 'log';
         const values = Array.isArray(value.values) ? value.values : [];
         logs.push(`[${level}] ${values.map(formatHtmlValue).join(' ')}`);
         return;
       }
-      if (value.type === 'DPP_HTML_ERROR') {
+      if (value.type === SANDBOX_MESSAGE_TYPES.htmlError) {
         errors.push(typeof value.message === 'string' ? value.message : 'HTML runtime error.');
         return;
       }
-      if (value.type === 'DPP_HTML_DONE') {
+      if (value.type === SANDBOX_MESSAGE_TYPES.htmlDone) {
         const stdout = limitText(logs.join('\n'), HTML_OUTPUT_LIMIT);
         const stderr = limitText(errors.join('\n'), HTML_OUTPUT_LIMIT);
         const html = typeof value.html === 'string' ? value.html : '';
@@ -151,7 +144,7 @@ function createHtmlDocument(source: string, requestId: string): string {
   const prelude = `<script>
 (() => {
   const requestId = ${JSON.stringify(requestId)};
-  const send = (payload) => parent.postMessage(Object.assign({ requestId }, payload), '*');
+  const send = (payload) => parent.postMessage(Object.assign({ requestId }, payload), ${JSON.stringify(SANDBOX_FRAME_TARGET_ORIGIN)});
   const format = (value) => {
     if (value === undefined) return '';
     if (typeof value === 'string') return value;
@@ -160,19 +153,19 @@ function createHtmlDocument(source: string, requestId: string): string {
   ['log', 'info', 'warn', 'error'].forEach((level) => {
     const original = console[level];
     console[level] = (...values) => {
-      send({ type: 'DPP_HTML_LOG', level, values: values.map(format) });
+      send({ type: ${JSON.stringify(SANDBOX_MESSAGE_TYPES.htmlLog)}, level, values: values.map(format) });
       if (typeof original === 'function') original.apply(console, values);
     };
   });
   addEventListener('error', (event) => {
-    send({ type: 'DPP_HTML_ERROR', message: event.message || String(event.error || 'Error') });
+    send({ type: ${JSON.stringify(SANDBOX_MESSAGE_TYPES.htmlError)}, message: event.message || String(event.error || 'Error') });
   });
   addEventListener('unhandledrejection', (event) => {
-    send({ type: 'DPP_HTML_ERROR', message: event.reason && event.reason.stack ? String(event.reason.stack) : String(event.reason) });
+    send({ type: ${JSON.stringify(SANDBOX_MESSAGE_TYPES.htmlError)}, message: event.reason && event.reason.stack ? String(event.reason.stack) : String(event.reason) });
   });
   const done = () => setTimeout(() => {
     send({
-      type: 'DPP_HTML_DONE',
+      type: ${JSON.stringify(SANDBOX_MESSAGE_TYPES.htmlDone)},
       title: document.title || '',
       text: document.body ? document.body.innerText : '',
       html: document.documentElement ? document.documentElement.outerHTML : (document.body ? document.body.outerHTML : ''),

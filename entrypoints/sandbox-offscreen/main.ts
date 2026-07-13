@@ -1,4 +1,13 @@
-import type { SandboxExecutionResult, SandboxRunRequest } from '../../core/sandbox';
+import {
+  normalizeSandboxBoundaryRequest,
+  normalizeSandboxExecutionResult,
+  parseSandboxEnvelope,
+  SANDBOX_FRAME_TARGET_ORIGIN,
+  SANDBOX_MESSAGE_TYPES,
+  SANDBOX_OFFSCREEN_PORT,
+  type SandboxExecutionResult,
+  type SandboxRunRequest,
+} from '../../core/sandbox';
 
 const SANDBOX_FRAME_URL = chrome.runtime.getURL('sandbox-runner.html');
 const PYODIDE_BASE_URL = chrome.runtime.getURL('pyodide/');
@@ -11,20 +20,22 @@ const pendingRuns = new Map<string, {
 }>();
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'sandbox-offscreen') return;
+  if (port.name !== SANDBOX_OFFSCREEN_PORT) return;
 
   port.onMessage.addListener((message: unknown) => {
-    const value = message && typeof message === 'object'
-      ? message as { type?: unknown; requestId?: unknown; payload?: unknown }
-      : {};
-    if (value.type !== 'OFFSCREEN_SANDBOX_RUN' || typeof value.requestId !== 'string') return;
+    const envelope = parseSandboxEnvelope(message, SANDBOX_MESSAGE_TYPES.offscreenRun);
+    if (!envelope) return;
 
-    runSandboxInFrame(value.payload)
-      .then((result) => port.postMessage({ type: 'OFFSCREEN_SANDBOX_RESULT', requestId: value.requestId, result }))
+    runSandboxInFrame(envelope.payload)
+      .then((result) => port.postMessage({
+        type: SANDBOX_MESSAGE_TYPES.offscreenResult,
+        requestId: envelope.requestId,
+        result,
+      }))
       .catch((error) => {
         port.postMessage({
-          type: 'OFFSCREEN_SANDBOX_RESULT',
-          requestId: value.requestId,
+          type: SANDBOX_MESSAGE_TYPES.offscreenResult,
+          requestId: envelope.requestId,
           result: createFailure(error instanceof Error ? error.message : String(error)),
         });
       });
@@ -35,16 +46,14 @@ window.addEventListener('message', (event) => {
   const frame = document.querySelector<HTMLIFrameElement>('iframe[data-dpp-sandbox-frame="true"]');
   if (!frame || event.source !== frame.contentWindow) return;
 
-  const value = event.data && typeof event.data === 'object'
-    ? event.data as { type?: unknown; requestId?: unknown; result?: unknown }
-    : {};
-  if (value.type !== 'DPP_SANDBOX_RESULT' || typeof value.requestId !== 'string') return;
+  const envelope = parseSandboxEnvelope(event.data, SANDBOX_MESSAGE_TYPES.frameResult);
+  if (!envelope) return;
 
-  const pending = pendingRuns.get(value.requestId);
+  const pending = pendingRuns.get(envelope.requestId);
   if (!pending) return;
-  pendingRuns.delete(value.requestId);
+  pendingRuns.delete(envelope.requestId);
   clearTimeout(pending.timeout);
-  pending.resolve(normalizeFrameResult(value.result));
+  pending.resolve(normalizeSandboxExecutionResult(envelope.result));
 });
 
 async function runSandboxInFrame(payload: unknown): Promise<SandboxExecutionResult> {
@@ -64,13 +73,13 @@ async function runSandboxInFrame(payload: unknown): Promise<SandboxExecutionResu
 
     pendingRuns.set(requestId, { resolve, timeout });
     contentWindow.postMessage({
-      type: 'DPP_SANDBOX_RUN',
+      type: SANDBOX_MESSAGE_TYPES.frameRun,
       requestId,
       payload: {
         ...request,
         pyodideBaseUrl: PYODIDE_BASE_URL,
       },
-    }, '*');
+    }, SANDBOX_FRAME_TARGET_ORIGIN);
   });
 }
 
@@ -107,41 +116,10 @@ function ensureSandboxFrame(): Promise<HTMLIFrameElement> {
 }
 
 function validateRequest(payload: unknown): SandboxRunRequest {
-  const value = payload && typeof payload === 'object' ? payload as Partial<SandboxRunRequest> : {};
-  if (
-    value.language !== 'javascript' &&
-    value.language !== 'typescript' &&
-    value.language !== 'python' &&
-    value.language !== 'html'
-  ) {
-    throw new Error('Only JavaScript, TypeScript, Python, and HTML use the browser sandbox.');
-  }
-  if (typeof value.code !== 'string' || value.code.trim().length === 0) {
-    throw new Error('Sandbox code must be a non-empty string.');
-  }
-  return {
-    language: value.language,
-    code: value.code,
-    input: typeof value.input === 'string' ? value.input : undefined,
-    timeoutMs: typeof value.timeoutMs === 'number' && Number.isFinite(value.timeoutMs)
-      ? Math.max(1_000, Math.min(15_000, Math.floor(value.timeoutMs)))
-      : value.language === 'python' ? 15_000 : 5_000,
-  };
-}
-
-function normalizeFrameResult(value: unknown): SandboxExecutionResult {
-  const result = value && typeof value === 'object' ? value as Partial<SandboxExecutionResult> : {};
-  return {
-    ok: result.ok === true,
-    stdout: typeof result.stdout === 'string' ? result.stdout : '',
-    stderr: typeof result.stderr === 'string' ? result.stderr : '',
-    result: typeof result.result === 'string' ? result.result : undefined,
-    html: typeof result.html === 'string' ? result.html : undefined,
-    previewText: typeof result.previewText === 'string' ? result.previewText : undefined,
-    durationMs: typeof result.durationMs === 'number' && Number.isFinite(result.durationMs) ? result.durationMs : 0,
-    truncated: result.truncated === true,
-    error: typeof result.error === 'string' ? result.error : undefined,
-  };
+  return normalizeSandboxBoundaryRequest(payload, {
+    invalidLanguage: 'Only JavaScript, TypeScript, Python, and HTML use the browser sandbox.',
+    invalidCode: 'Sandbox code must be a non-empty string.',
+  });
 }
 
 function createFailure(message: string, code = 'sandbox_offscreen_error', durationMs = 0): SandboxExecutionResult {

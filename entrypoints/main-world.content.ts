@@ -17,13 +17,18 @@ import type {
 } from '../core/types';
 import type { ToolCallPayloadChunk } from '../core/interceptor/streaming-tool-call-parser';
 import type { SkillPopupCopy, SkillPopupItem } from '../core/ui/skill-popup';
-import { validateBridgeMessage } from '../core/messaging/schema';
+import {
+  BRIDGE_HANDSHAKE_TYPES,
+  BRIDGE_READY_TYPE,
+  BRIDGE_SOURCES,
+  isBridgeHandshakeMessage,
+  validateBridgeMessage,
+} from '../core/messaging/schema';
 
-const MAIN_WORLD_SOURCE = 'deepseek-pp-main';
-const CONTENT_SOURCE = 'deepseek-pp-content';
-const BRIDGE_REQUEST_TYPE = 'DPP_BRIDGE_REQUEST';
-const BRIDGE_INIT_TYPE = 'DPP_BRIDGE_INIT';
-const BRIDGE_READY_TYPE = 'DPP_BRIDGE_READY';
+const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld;
+const CONTENT_SOURCE = BRIDGE_SOURCES.content;
+const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request;
+const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init;
 const REQUEST_TIMEOUT_MS = 8_000;
 const BRIDGE_REQUEST_INTERVAL_MS = 50;
 const BRIDGE_REQUEST_MAX_ATTEMPTS = 100;
@@ -89,12 +94,18 @@ export default defineContentScript({
 
 function installContentBridge(): void {
   window.addEventListener('message', (event) => {
-    if (event.origin !== window.location.origin) return;
-    if (event.data?.source !== CONTENT_SOURCE || event.data.type !== BRIDGE_INIT_TYPE) return;
-    if (contentPort) return;
+    if (!isBridgeHandshakeMessage({
+      value: event.data,
+      actualOrigin: event.origin,
+      expectedOrigin: window.location.origin,
+      expectedSource: CONTENT_SOURCE,
+      expectedType: BRIDGE_INIT_TYPE,
+      alreadyConnected: Boolean(contentPort),
+      requireTransferredPort: true,
+      transferredPortCount: event.ports.length,
+    })) return;
 
     const [port] = event.ports;
-    if (!port) return;
 
     contentPort = port;
     contentPort.onmessage = (message) => handlePortMessage(message.data);

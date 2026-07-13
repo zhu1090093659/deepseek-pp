@@ -14,3 +14,16 @@ export {
   type SandboxToolRuntime,
   type SandboxToolName,
 } from './tool';
+
+export {
+  normalizeSandboxExecutionResult,
+  normalizeSandboxBoundaryRequest,
+  parseSandboxEnvelope,
+  SANDBOX_FRAME_TARGET_ORIGIN,
+  SANDBOX_MESSAGE_TYPES,
+  SANDBOX_OFFSCREEN_PORT,
+  type SandboxEnvelope,
+  type SandboxBoundaryRequest,
+  type SandboxBoundaryRequestMessages,
+  type SandboxMessageType,
+} from './contracts';

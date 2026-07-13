@@ -87,7 +87,13 @@ import {
   createToolRestoreBlockId,
   createToolRestoreBlockUrl,
 } from '../core/tool/restore-block';
-import { validateBridgeMessage } from '../core/messaging/schema';
+import {
+  BRIDGE_HANDSHAKE_TYPES,
+  BRIDGE_READY_TYPE,
+  BRIDGE_SOURCES,
+  isBridgeHandshakeMessage,
+  validateBridgeMessage,
+} from '../core/messaging/schema';
 import { startDeepSeekHistoryOrganizer, type HistoryOrganizerController } from './content/adapters/history-organizer';
 import { startDeepSeekProjectSidebarOrganizer, type ProjectSidebarOrganizerController } from './content/adapters/project-sidebar-organizer';
 import { startContentUxPolish, type ContentUxPolishController } from './content/adapters/ux-polish';
@@ -168,11 +174,10 @@ const PET_FEEDBACK_DELAY_MS = 1400;
 const PET_SLEEP_DELAY_MS = 12000;
 const PET_SPRITE_PATH = 'pet/deepseek-whale-pet-states.png';
 const DEEPSEEK_POW_WASM_PATH = 'deepseek/sha3_wasm_bg.wasm';
-const MAIN_WORLD_SOURCE = 'deepseek-pp-main';
-const CONTENT_SOURCE = 'deepseek-pp-content';
-const BRIDGE_REQUEST_TYPE = 'DPP_BRIDGE_REQUEST';
-const BRIDGE_INIT_TYPE = 'DPP_BRIDGE_INIT';
-const BRIDGE_READY_TYPE = 'DPP_BRIDGE_READY';
+const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld;
+const CONTENT_SOURCE = BRIDGE_SOURCES.content;
+const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request;
+const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init;
 const PET_BUBBLE_VISIBLE_MS = 6000;
 const PET_BUBBLE_REPEAT_MIN_MS = 8000;
 const PET_BUBBLE_REPEAT_MAX_MS = 12000;
@@ -631,8 +636,14 @@ function setMainWorldMessageHandler(handler: (data: any) => void | Promise<void>
 
 function installMainWorldBridge(): void {
   window.addEventListener('message', (event) => {
-    if (event.origin !== window.location.origin) return;
-    if (event.data?.source !== MAIN_WORLD_SOURCE || event.data.type !== BRIDGE_REQUEST_TYPE) return;
+    if (!isBridgeHandshakeMessage({
+      value: event.data,
+      actualOrigin: event.origin,
+      expectedOrigin: window.location.origin,
+      expectedSource: MAIN_WORLD_SOURCE,
+      expectedType: BRIDGE_REQUEST_TYPE,
+      alreadyConnected: Boolean(mainWorldPort),
+    })) return;
     connectMainWorldPort();
   });
 }

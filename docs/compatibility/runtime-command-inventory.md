@@ -275,4 +275,4 @@ MEMORIES_UPDATED
 
 ## Validation Method
 
-The inventory is derived from literal `case` labels inside `handleMessage` and literal `type` fields in `MessageAction`. Validation must fail if counts, uniqueness, or the `32/2` set difference changes without an accompanying registry update. T1.3 will turn this method into an executable contract fixture rather than maintaining a second production router.
+`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive literal `case` labels inside `handleMessage`, literal `type` fields and payload presence in `MessageAction`, payload reads, and direct payload casts. It compares those results with this inventory and the frozen `119/89/87/32/2` plus `75/44/69` topology. A 121-entry data-only registry records each name's live/declared surface, payload access/presence, observed response family, and listener-error family; representative serializable specimens cover each response family without creating a second production router. Exhaustive decoded request/response schemas remain T3.1 work.
