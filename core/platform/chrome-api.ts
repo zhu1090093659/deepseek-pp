@@ -10,6 +10,12 @@ export function readOptionalChromeApi<T>(read: () => T): T | undefined {
 function isKnownUnavailableChromeApiError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('is not allowed for specified extension ID') ||
-    message.includes('Extension context invalidated') ||
-    message.includes('context invalidated');
+    isExtensionContextInvalidatedError(error);
+}
+
+export function isExtensionContextInvalidatedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Extension context invalidated') ||
+    message.includes('context invalidated') ||
+    message.includes('Extension context is unavailable');
 }

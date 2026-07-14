@@ -1,4 +1,5 @@
 import { getFloatingChatEnabled } from '../../../core/floating-chat/store';
+import { isExtensionContextInvalidatedError } from '../../../core/platform/chrome-api';
 
 export interface ChatLauncherController {
   stop(): void;
@@ -24,8 +25,22 @@ export function startChatLauncher(): ChatLauncherController {
   if (!document.body) {
     return { stop() {} };
   }
+
+  let spriteUrl: string;
+  let floatingChatUrl: string;
+  try {
+    // Resolve extension URLs while the content-script context is known to be
+    // alive. A content script can outlive an extension reload, so event handlers
+    // must not touch chrome.runtime later when the user clicks the launcher.
+    spriteUrl = chrome.runtime.getURL(PET_SPRITE_PATH);
+    floatingChatUrl = chrome.runtime.getURL(SIDE_PANEL_PATH);
+  } catch (error) {
+    if (isExtensionContextInvalidatedError(error)) return { stop() {} };
+    throw error;
+  }
+
   injectStyles();
-  const button = ensureButton();
+  const button = ensureButton(spriteUrl);
 
   // Pointer state — a press only becomes a drag once the pointer moves past
   // DRAG_THRESHOLD. This avoids swallowing clicks that take longer than the
@@ -77,7 +92,7 @@ export function startChatLauncher(): ChatLauncherController {
     if (!movedPastThreshold) {
       // It was a click, not a drag — toggle the chat window.
       e.preventDefault();
-      toggleFloatingWindow();
+      toggleFloatingWindow(floatingChatUrl);
     }
   };
 
@@ -93,27 +108,44 @@ export function startChatLauncher(): ChatLauncherController {
     if (STORAGE_KEY in changes) void renderFromStorage();
   };
   const renderFromStorage = async () => {
-    const enabled = await getFloatingChatEnabled();
-    if (disposed) return;
-    renderLauncher(enabled);
+    try {
+      const enabled = await getFloatingChatEnabled();
+      if (disposed) return;
+      renderLauncher(enabled);
+    } catch (error) {
+      if (!isExtensionContextInvalidatedError(error)) throw error;
+      stop();
+    }
   };
-  chrome.storage?.onChanged?.addListener(onStorageChanged);
+
+  const stop = () => {
+    if (disposed) return;
+    disposed = true;
+    button.removeEventListener('pointerdown', onPointerDown);
+    button.removeEventListener('pointermove', onPointerMove);
+    button.removeEventListener('pointerup', onPointerUp);
+    button.removeEventListener('pointercancel', onPointerUp);
+    try {
+      chrome.storage?.onChanged?.removeListener(onStorageChanged);
+    } catch (error) {
+      if (!isExtensionContextInvalidatedError(error)) throw error;
+    }
+    themeObserver.disconnect();
+    removeButton();
+    removeWindow();
+  };
+
+  try {
+    chrome.storage?.onChanged?.addListener(onStorageChanged);
+  } catch (error) {
+    if (!isExtensionContextInvalidatedError(error)) throw error;
+    stop();
+    return { stop };
+  }
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-dpp-theme'] });
   void renderFromStorage();
 
-  return {
-    stop() {
-      disposed = true;
-      button.removeEventListener('pointerdown', onPointerDown);
-      button.removeEventListener('pointermove', onPointerMove);
-      button.removeEventListener('pointerup', onPointerUp);
-      button.removeEventListener('pointercancel', onPointerUp);
-      chrome.storage?.onChanged?.removeListener(onStorageChanged);
-      themeObserver.disconnect();
-      removeButton();
-      removeWindow();
-    },
-  };
+  return { stop };
 }
 
 function renderLauncher(enabled: boolean): void {
@@ -124,14 +156,14 @@ function renderLauncher(enabled: boolean): void {
   button.setAttribute('aria-label', 'Open DS++ Chat');
 }
 
-function ensureButton(): HTMLButtonElement {
+function ensureButton(spriteUrl: string): HTMLButtonElement {
   const existing = document.getElementById(BUTTON_ID) as HTMLButtonElement | null;
   if (existing) return existing;
   const button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
   button.style.display = 'none';
-  button.innerHTML = createWhaleMarkup();
+  button.innerHTML = createWhaleMarkup(spriteUrl);
   document.body!.appendChild(button);
   return button;
 }
@@ -140,7 +172,7 @@ function removeButton(): void {
   document.getElementById(BUTTON_ID)?.remove();
 }
 
-function toggleFloatingWindow(): void {
+function toggleFloatingWindow(floatingChatUrl: string): void {
   const existing = document.getElementById(WINDOW_ID);
   if (existing) {
     existing.remove();
@@ -152,7 +184,7 @@ function toggleFloatingWindow(): void {
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'DeepSeek++ Chat');
   applyWindowTheme(panel);
-  const frameSrc = chrome.runtime.getURL(`${SIDE_PANEL_PATH}&hostTheme=${getHostTheme()}`);
+  const frameSrc = `${floatingChatUrl}&hostTheme=${getHostTheme()}`;
   panel.innerHTML =
     `<div class="dpp-floating-chat__header" data-dpp-drag-handle>`
     + `<span class="dpp-floating-chat__title">DS++ Chat</span>`
@@ -166,8 +198,10 @@ function toggleFloatingWindow(): void {
 }
 
 function startDrag(e: PointerEvent, panel: HTMLElement): void {
-  // Only primary-button drags; let the close button and iframe keep their clicks.
+  // Interactive controls inside the header own their pointer sequence. Starting
+  // a drag here would prevent their click and move pointer capture to the header.
   if (e.button !== 0) return;
+  if (isInteractiveDragTarget(e.target)) return;
   e.preventDefault();
   try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   const rect = panel.getBoundingClientRect();
@@ -183,6 +217,11 @@ function startDrag(e: PointerEvent, panel: HTMLElement): void {
   document.addEventListener('pointermove', onDrag);
   document.addEventListener('pointerup', stopDrag);
   document.addEventListener('pointercancel', stopDrag);
+}
+
+function isInteractiveDragTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('button, a, input, textarea, select, [role="button"]') !== null;
 }
 
 function onDrag(e: PointerEvent): void {
@@ -231,8 +270,7 @@ function getHostTheme(): HostTheme {
 
 // The button reuses the whale pet sprite sheet (pet/deepseek-whale-pet-states.png,
 // a 4x2 grid) and shows the "thinking" frame as its resting pose.
-function createWhaleMarkup(): string {
-  const spriteUrl = chrome.runtime.getURL(PET_SPRITE_PATH);
+function createWhaleMarkup(spriteUrl: string): string {
   return `<span class="dpp-chat-launcher__whale" style="background-image:url('${spriteUrl}')"></span>`;
 }
 
