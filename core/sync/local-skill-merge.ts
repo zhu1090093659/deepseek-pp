@@ -1,4 +1,5 @@
-import type { Skill, SkillImportSource, LocalSkillSource } from '../types';
+import { isLocalOnlySkill, isLocalOnlySkillSource } from '../skill/sync-policy';
+import type { Skill, SkillImportSource } from '../types';
 
 interface SkillImportSnapshot {
   skills: Skill[];
@@ -10,7 +11,7 @@ export function mergeLocalSkillImportsIntoSyncSnapshot(
   localState: SkillImportSnapshot,
 ): SkillImportSnapshot {
   const occupiedNames = new Set(snapshot.skills.map((skill) => skill.name));
-  const localSkills = localState.skills.filter(isLocalImportedSkill);
+  const localSkills = localState.skills.filter(isLocalOnlySkill);
   const localNameBySourcePath = new Map<string, string>();
 
   const mergedLocalSkills = localSkills.map((skill) => {
@@ -21,7 +22,7 @@ export function mergeLocalSkillImportsIntoSyncSnapshot(
   });
 
   const mergedLocalSources = localState.skillSources
-    .filter(isLocalSkillSource)
+    .filter(isLocalOnlySkillSource)
     .map((source) => ({
       ...source,
       importedSkillNames: source.skillPaths
@@ -39,16 +40,6 @@ export function mergeLocalSkillImportsIntoSyncSnapshot(
       ...mergedLocalSources,
     ],
   };
-}
-
-function isLocalImportedSkill(skill: Skill): skill is Skill & {
-  remote: NonNullable<Skill['remote']> & { provider: 'local' };
-} {
-  return skill.source === 'remote' && skill.remote?.provider === 'local';
-}
-
-function isLocalSkillSource(source: SkillImportSource): source is LocalSkillSource {
-  return source.provider === 'local';
 }
 
 function createAvailableSkillName(preferred: string, occupiedNames: Set<string>): string {

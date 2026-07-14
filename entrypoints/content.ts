@@ -23,6 +23,9 @@ import { createLatestSyncGate, type LatestSyncLease } from '../core/tool/latest-
 import { DEFAULT_PROMPT_INJECTION_SETTINGS, normalizePromptInjectionSettings } from '../core/prompt/settings';
 import { normalizeBackgroundConfig } from '../core/background/config';
 import { decodePersistedMemoryRecord } from '../core/memory/codec';
+import { decodeActivePreset } from '../core/preset/codec';
+import { decodeSkillLibrary } from '../core/skill/codec';
+import { decodeRuntimeResponse, isRuntimeFailure } from '../core/messaging/runtime-response';
 import {
   LEGACY_TOOL_CALLS_OPEN_TAG,
   stripToolCalls,
@@ -633,10 +636,13 @@ export default defineContentScript({
       }
       if (message.type === 'STATE_UPDATED') {
         try {
+          const memories = decodeRuntimeMemories(message.memories, 'memoryUpdate');
+          const skills = decodeSkillLibrary(message.skills, 'skillUpdate');
+          const activePreset = decodeActivePreset(message.activePreset, 'activePresetUpdate');
           syncToMainWorld(
-            decodeRuntimeMemories(message.memories, 'memoryUpdate'),
-            message.skills,
-            message.activePreset,
+            memories,
+            skills,
+            activePreset,
             message.modelType,
             currentToolDescriptors,
             normalizePromptInjectionSettings(message.promptSettings),
@@ -1042,15 +1048,19 @@ async function loadAndSyncRuntimeState(
   const runtimeStateSync = Promise.all([
     sendRuntimeMessageStrict<unknown>({ type: 'GET_MEMORIES' })
       .then((value) => decodeRuntimeMemories(value, 'memoryResponse')),
-    sendRuntimeMessage<Skill[]>({ type: 'GET_SKILLS' }),
-    sendRuntimeMessage<SystemPromptPreset | null>({ type: 'GET_ACTIVE_PRESET' }),
+    sendRuntimeMessageStrict<unknown>({ type: 'GET_SKILLS' })
+      .then((value) => decodeSkillLibrary(value, 'skillResponse')),
+    sendRuntimeMessageStrict(
+      { type: 'GET_ACTIVE_PRESET' },
+      (value) => decodeActivePreset(value, 'activePresetResponse'),
+    ),
     sendRuntimeMessage<ModelType>({ type: 'GET_MODEL_TYPE' }),
     sendRuntimeMessage<PromptInjectionSettings>({ type: 'GET_PROMPT_INJECTION_SETTINGS' }),
   ]).then(
     ([memories, skills, activePreset, modelType, promptSettings]) => syncToMainWorld(
       memories,
-      skills ?? [],
-      activePreset ?? null,
+      skills,
+      activePreset,
       modelType ?? null,
       currentToolDescriptors,
       normalizePromptInjectionSettings(promptSettings),
@@ -2869,7 +2879,7 @@ async function sendRuntimeMessage<T>(message: unknown): Promise<T | undefined> {
   try {
     const result = await chrome.runtime.sendMessage(message);
     // Guard against background error responses being misinterpreted as valid data
-    if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+    if (isRuntimeFailure(result)) {
       return undefined;
     }
     return result as T;
@@ -2882,14 +2892,20 @@ async function sendRuntimeMessage<T>(message: unknown): Promise<T | undefined> {
   }
 }
 
-async function sendRuntimeMessageStrict<T>(message: unknown): Promise<T> {
+async function sendRuntimeMessageStrict<T>(
+  message: unknown,
+  decode?: (value: unknown) => T,
+): Promise<T> {
   if (!hasLiveExtensionContext()) {
     throw new Error('Extension context is unavailable.');
   }
 
   try {
     const result = await chrome.runtime.sendMessage(message);
-    if (isRuntimeFailureResponse(result)) {
+    if (decode) {
+      return decodeRuntimeResponse(result, decode, 'Runtime request failed.');
+    }
+    if (isRuntimeFailure(result)) {
       throw new Error(result.error ? String(result.error) : 'Runtime request failed.');
     }
     return result as T;
@@ -2899,10 +2915,6 @@ async function sendRuntimeMessageStrict<T>(message: unknown): Promise<T> {
     }
     throw error;
   }
-}
-
-function isRuntimeFailureResponse(value: unknown): value is { ok: false; error?: unknown } {
-  return Boolean(value && typeof value === 'object' && (value as { ok?: unknown }).ok === false);
 }
 
 async function getLocalStorageValue<T>(key: string): Promise<T | undefined> {

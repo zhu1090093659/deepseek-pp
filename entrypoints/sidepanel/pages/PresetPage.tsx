@@ -1,63 +1,111 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SystemPromptPreset } from '../../../core/types';
+import { decodeActivePreset, decodePresetCollection } from '../../../core/preset/codec';
 import PageIntro from '../components/PageIntro';
 import PresetCard from '../components/PresetCard';
 import PresetForm from '../components/PresetForm';
-import { SkeletonList, useConfirm } from '../components/settings/primitives';
+import { SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+import {
+  decodeRuntimeResponse,
+  getRuntimeErrorMessage,
+  unwrapRuntimeResponse,
+} from '../runtime-response';
 
 export default function PresetPage() {
   const { t } = useI18n();
   const [presets, setPresets] = useState<SystemPromptPreset[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SystemPromptPreset | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
+  const showOperationError = (error: unknown) => {
+    banner.show('error', t('sidepanel.presetPage.operationFailed', {
+      error: getRuntimeErrorMessage(error),
+    }));
+  };
+
   const load = async () => {
-    const [list, active] = await Promise.all([
-      chrome.runtime.sendMessage({ type: 'GET_PRESETS' }),
-      chrome.runtime.sendMessage({ type: 'GET_ACTIVE_PRESET' }),
-    ]);
-    setPresets(list ?? []);
-    setActiveId((active as SystemPromptPreset | null)?.id ?? null);
-    setLoading(false);
+    try {
+      const [listResponse, activeResponse] = await Promise.all([
+        chrome.runtime.sendMessage({ type: 'GET_PRESETS' }),
+        chrome.runtime.sendMessage({ type: 'GET_ACTIVE_PRESET' }),
+      ]);
+      const list = decodePresetCollection(
+        unwrapRuntimeResponse(listResponse, t('sidepanel.presetPage.backendUnavailable')),
+        'presetResponse',
+      );
+      const active = decodeRuntimeResponse(
+        activeResponse,
+        (value) => decodeActivePreset(value, 'activePresetResponse'),
+        t('sidepanel.presetPage.backendUnavailable'),
+      );
+      setPresets(list);
+      setActiveId(active?.id ?? null);
+      setLoadFailed(false);
+    } catch (error) {
+      setLoadFailed(true);
+      showOperationError(error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
 
   const handleSave = async (preset: SystemPromptPreset) => {
-    await chrome.runtime.sendMessage({ type: 'SAVE_PRESET', payload: preset });
-    setShowForm(false);
-    setEditing(undefined);
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'SAVE_PRESET', payload: preset }),
+        t('sidepanel.presetPage.backendUnavailable'),
+      );
+      setShowForm(false);
+      setEditing(undefined);
+      await load();
+    } catch (error) {
+      showOperationError(error);
+    }
   };
 
   const handleImportFiles = async (files: FileList) => {
-    const entries = await Promise.all(
-      Array.from(files, async (file) => ({
-        name: file.name.replace(/\.(txt|md)$/i, '').trim(),
-        content: (await file.text()).trim(),
-      })),
-    );
-    for (const { name, content } of entries) {
-      if (!content) continue;
-      const now = Date.now();
-      await chrome.runtime.sendMessage({
-        type: 'SAVE_PRESET',
-        payload: {
-          id: crypto.randomUUID(),
-          name,
-          content,
-          createdAt: now,
-          updatedAt: now,
-        } satisfies SystemPromptPreset,
-      });
+    try {
+      banner.clear();
+      const entries = await Promise.all(
+        Array.from(files, async (file) => ({
+          name: file.name.replace(/\.(txt|md)$/i, '').trim(),
+          content: (await file.text()).trim(),
+        })),
+      );
+      for (const { name, content } of entries) {
+        if (!content) continue;
+        const now = Date.now();
+        unwrapRuntimeResponse(
+          await chrome.runtime.sendMessage({
+            type: 'SAVE_PRESET',
+            payload: {
+              id: crypto.randomUUID(),
+              name,
+              content,
+              createdAt: now,
+              updatedAt: now,
+            } satisfies SystemPromptPreset,
+          }),
+          t('sidepanel.presetPage.backendUnavailable'),
+        );
+      }
+      await load();
+    } catch (error) {
+      await load();
+      showOperationError(error);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    load();
   };
 
   const handleDelete = async (id: string) => {
@@ -68,20 +116,42 @@ export default function PresetPage() {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    await chrome.runtime.sendMessage({ type: 'DELETE_PRESET', payload: { id } });
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'DELETE_PRESET', payload: { id } }),
+        t('sidepanel.presetPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      showOperationError(error);
+    }
   };
 
   const handleActivate = async (id: string) => {
-    await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id } });
-    setActiveId(id);
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id } }),
+        t('sidepanel.presetPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      showOperationError(error);
+    }
   };
 
   const handleDeactivate = async () => {
-    await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id: null } });
-    setActiveId(null);
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id: null } }),
+        t('sidepanel.presetPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      showOperationError(error);
+    }
   };
 
   const handleEdit = (preset: SystemPromptPreset) => {
@@ -139,10 +209,11 @@ export default function PresetPage() {
       )}
 
       {confirmNode}
+      {banner.node}
 
       {loading ? (
         <SkeletonList rows={3} />
-      ) : presets.length === 0 ? (
+      ) : presets.length === 0 && loadFailed ? null : presets.length === 0 ? (
         <div className="ds-empty-state">
           <div className="ds-empty-state-icon">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -155,9 +226,9 @@ export default function PresetPage() {
       ) : (
         <>
           <div className="space-y-2">
-            {presets.map((p) => (
+            {presets.map((p, index) => (
               <PresetCard
-                key={p.id}
+                key={`${p.id}:${index}`}
                 preset={p}
                 isActive={p.id === activeId}
                 onActivate={() => handleActivate(p.id)}

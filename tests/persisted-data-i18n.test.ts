@@ -6,12 +6,14 @@ import { addCustomScenario, getAllScenarios } from '../core/scenario/store';
 import { getAllSkills, replaceAllCustomSkills } from '../core/skill/registry';
 import {
   parseValidatedArray,
-  validateGitHubSkillSource,
-  validateSkillImportSource,
-  validatePreset,
-  validateSkill,
   validateStoredMemory,
 } from '../core/sync/schema';
+import { decodePreset as validatePreset } from '../core/preset/codec';
+import {
+  decodeGitHubSkillSource as validateGitHubSkillSource,
+  decodeSkill as validateSkill,
+  decodeSkillImportSource as validateSkillImportSource,
+} from '../core/skill/codec';
 import type { GitHubSkillSource, LocalSkillSource, Memory, Skill, SystemPromptPreset } from '../core/types';
 
 let storage: Record<string, unknown>;

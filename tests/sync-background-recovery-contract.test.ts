@@ -7,6 +7,7 @@ const settingsState = readFileSync(
   'utf8',
 );
 const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');
+const localSkillMerge = readFileSync('core/sync/local-skill-merge.ts', 'utf8');
 
 describe('background sync recovery integration', () => {
   it('establishes the recovery barrier before startup mutation and runtime dispatch', () => {
@@ -71,6 +72,41 @@ describe('background sync recovery integration', () => {
     expect(deleteProjectCase).toContain('stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)');
     expect(deleteProjectCase).toContain('await syncLocalRecoveryBarrier.trackApply(operation)');
     expect(deleteProjectCase).not.toContain('deleteMemoriesForProject(');
+  });
+
+  it('routes Skill/Source imports and deletes plus Preset deletion through the same recovery journal', () => {
+    const deleteSkillCase = background.slice(
+      background.indexOf("case 'DELETE_SKILL':"),
+      background.indexOf("case 'SET_SKILL_ENABLED':"),
+    );
+    const importSkillCases = background.slice(
+      background.indexOf("case 'IMPORT_GITHUB_SKILL_SOURCE':"),
+      background.indexOf("case 'GET_PRESETS':"),
+    );
+    const deletePresetCase = background.slice(
+      background.indexOf("case 'DELETE_PRESET':"),
+      background.indexOf("case 'SET_ACTIVE_PRESET':"),
+    );
+
+    expect(deleteSkillCase).toContain(
+      'beginLocalStateMutation(() => stageDeleteSkillAlreadyLocked(name))',
+    );
+    expect(importSkillCases).toContain('runLocalStateMutation: beginLocalStateMutation');
+    expect(importSkillCases).toContain(
+      'beginLocalStateMutation(() => stageDeleteSkillSourceAlreadyLocked(sourceId))',
+    );
+    expect(deletePresetCase).toContain(
+      'beginLocalStateMutation(() => stageDeletePresetAlreadyLocked(presetId))',
+    );
+  });
+
+  it('shares one local-only Skill sync policy across upload filtering and download preservation', () => {
+    expect(background).toContain('.filter(isSyncableSkill)');
+    expect(background).toContain('.filter(isSyncableSkillSource)');
+    expect(localSkillMerge).toContain('.filter(isLocalOnlySkill)');
+    expect(localSkillMerge).toContain('.filter(isLocalOnlySkillSource)');
+    expect(background).not.toContain('function isSyncableSkill(');
+    expect(localSkillMerge).not.toContain('function isLocalImportedSkill(');
   });
 
   it('imports a Settings Memory JSON batch through one atomic background command', () => {

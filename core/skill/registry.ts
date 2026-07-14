@@ -1,14 +1,45 @@
 import type { GitHubSkillSource, LocalSkillSource, Skill, SkillImportSource } from '../types';
 import { DEFAULT_LOCALE, type SupportedLocale } from '../i18n';
 import { withSyncLocalStateLock } from '../persistence/local-state-lock';
+import {
+  createChromeStorageSlot,
+  createVersionedRepository,
+} from '../persistence/versioned-repository';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from './builtin';
+import {
+  decodeGitHubSkillSource,
+  decodeSkillImportSource,
+  decodeSkillSourceCollection,
+  decodeUserSkill,
+  skillSourceCollectionCodec,
+  userSkillCollectionCodec,
+} from './codec';
 
 export const SKILLS_STORAGE_KEY = 'deepseek_pp_skills';
 export const SKILL_SOURCES_STORAGE_KEY = 'deepseek_pp_skill_sources';
 const BUNDLED_ENABLED_STORAGE_KEY = 'deepseek_pp_bundled_skill_enabled';
 
-const USER_SKILL_SOURCES = new Set(['custom', 'remote']);
 const TOGGLEABLE_BUNDLED_SKILL_SOURCES = new Set(['third-party', 'official']);
+
+const userSkillRepository = createVersionedRepository({
+  label: 'skills',
+  createDefault: () => [],
+  codec: userSkillCollectionCodec,
+  storage: createChromeStorageSlot(SKILLS_STORAGE_KEY),
+});
+
+const skillSourceRepository = createVersionedRepository({
+  label: 'skillSources',
+  createDefault: () => [],
+  codec: skillSourceCollectionCodec,
+  storage: createChromeStorageSlot(SKILL_SOURCES_STORAGE_KEY),
+});
+
+export interface ImportedSkillMutationResult {
+  imported: Skill[];
+  replaced: number;
+  renamed: number;
+}
 
 export async function getAllSkills(
   options: { includeDisabled?: boolean; locale?: SupportedLocale } = {},
@@ -33,45 +64,75 @@ export async function getSkillLibrary(locale: SupportedLocale = DEFAULT_LOCALE):
 }
 
 export async function getUserSkills(): Promise<Skill[]> {
-  const data = await chrome.storage.local.get(SKILLS_STORAGE_KEY) as Record<string, unknown>;
-  const storedSkills = data[SKILLS_STORAGE_KEY];
-  return normalizeStoredSkills(storedSkills);
+  return userSkillRepository.read();
+}
+
+export async function getUserSkillsAlreadyLocked(): Promise<Skill[]> {
+  return userSkillRepository.readAlreadyLocked();
 }
 
 export async function saveSkill(skill: Skill, previousName?: string): Promise<void> {
   await withSyncLocalStateLock(async () => {
-    const userSkills = await getUserSkills();
+    if (previousName !== undefined) requireNonEmptyString(previousName, 'Previous Skill name');
+    const incomingSkill = decodeUserSkill({
+      ...skill,
+      source: 'custom',
+      enabled: skill.enabled === undefined ? true : skill.enabled,
+    }, 'skill');
+    const userSkills = await getUserSkillsAlreadyLocked();
     const custom = userSkills.filter((s) => s.source === 'custom');
-    const namesToReplace = new Set<string>([skill.name]);
+    const namesToReplace = new Set<string>([incomingSkill.name]);
     if (previousName) namesToReplace.add(previousName);
-
-    const previousIndex = previousName ? custom.findIndex((s) => s.name === previousName) : -1;
-    const currentIndex = custom.findIndex((s) => s.name === skill.name);
-    const insertIndex = previousIndex >= 0 ? previousIndex : currentIndex;
+    const matchingIndexes = custom
+      .map((item, index) => namesToReplace.has(item.name) ? index : -1)
+      .filter((index) => index >= 0);
+    if (matchingIndexes.length > 1) {
+      throw new Error('Skill edit is ambiguous because multiple custom Skills use the same name');
+    }
+    const insertIndex = matchingIndexes[0] ?? -1;
     const next = custom.filter((s) => !namesToReplace.has(s.name));
     const remote = userSkills.filter((s) => s.source === 'remote');
-    const savedSkill = { ...skill, source: 'custom' as const, enabled: skill.enabled !== false };
+    const existingSkill = insertIndex >= 0 ? custom[insertIndex] : undefined;
+    const savedSkill = decodeUserSkill({
+      ...existingSkill,
+      ...incomingSkill,
+      source: 'custom',
+      enabled: incomingSkill.enabled !== false,
+    }, 'skill');
 
     if (insertIndex >= 0) {
       next.splice(Math.min(insertIndex, next.length), 0, savedSkill);
     } else {
       next.push(savedSkill);
     }
-    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: [...next, ...remote] });
+    await userSkillRepository.writeAfterReadAlreadyLocked([...next, ...remote]);
   });
 }
 
-export async function deleteSkill(name: string): Promise<void> {
-  await withSyncLocalStateLock(async () => {
-    const userSkills = await getUserSkills();
-    const removed = userSkills.find((s) => s.name === name);
-    const next = userSkills.filter((s) => s.name !== name);
-    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: next });
+export async function stageDeleteSkillAlreadyLocked(
+  name: string,
+): Promise<() => Promise<void>> {
+  requireNonEmptyString(name, 'Skill name');
+  const [userSkills, sources] = await Promise.all([
+    getUserSkillsAlreadyLocked(),
+    getAllSkillSourcesAlreadyLocked(),
+  ]);
+  const removedSkills = userSkills.filter((skill) => skill.name === name);
+  const nextSkills = userSkills.filter((skill) => skill.name !== name);
+  const nextSources = removedSkills.reduce((current, skill) => (
+    skill.source === 'remote' && skill.remote
+      ? removeSkillFromSources(current, skill.remote.sourceId, skill.remote.path, skill.name)
+      : current
+  ), sources);
 
-    if (removed?.source === 'remote' && removed.remote) {
-      await removeRemoteSkillFromSource(removed.remote.sourceId, removed.remote.path, removed.name);
+  return async () => {
+    if (nextSkills.length !== userSkills.length) {
+      await userSkillRepository.writeAfterReadAlreadyLocked(nextSkills);
     }
-  });
+    if (nextSources !== sources) {
+      await skillSourceRepository.writeAfterReadAlreadyLocked(nextSources);
+    }
+  };
 }
 
 export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
@@ -79,14 +140,8 @@ export async function replaceAllCustomSkills(skills: Skill[]): Promise<void> {
 }
 
 export async function replaceAllCustomSkillsForSyncApply(skills: Skill[]): Promise<void> {
-  const userSkills = skills
-    .filter((s) => USER_SKILL_SOURCES.has(s.source))
-    .map((s) => ({
-      ...s,
-      source: s.source === 'remote' ? 'remote' as const : 'custom' as const,
-      enabled: s.enabled !== false,
-    }));
-  await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: userSkills });
+  const userSkills = userSkillCollectionCodec.decode(skills, 'skills');
+  await userSkillRepository.replaceAlreadyLocked(userSkills);
 }
 
 export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
@@ -95,6 +150,10 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
 
 export async function setSkillsEnabled(updates: Array<{ name: string; enabled: boolean }>): Promise<void> {
   if (updates.length === 0) return;
+  for (const update of updates) {
+    requireNonEmptyString(update.name, 'Skill name');
+    if (typeof update.enabled !== 'boolean') throw new Error('Skill enabled must be a boolean');
+  }
 
   await withSyncLocalStateLock(() => setSkillsEnabledUnlocked(updates));
 }
@@ -105,15 +164,17 @@ async function setSkillsEnabledUnlocked(updates: Array<{ name: string; enabled: 
     updateByName.set(update.name, update.enabled);
   }
 
-  const userSkills = await getUserSkills();
+  const userSkills = await getUserSkillsAlreadyLocked();
   let userSkillsChanged = false;
+  const matchedNames = new Set<string>();
   const next = userSkills.map((skill) => {
     if (!updateByName.has(skill.name)) return skill;
     const enabled = updateByName.get(skill.name) ?? true;
-    updateByName.delete(skill.name);
+    matchedNames.add(skill.name);
     userSkillsChanged = true;
     return { ...skill, enabled };
   });
+  for (const name of matchedNames) updateByName.delete(name);
 
   const bundledUpdates: Record<string, boolean> = {};
   for (const [name, enabled] of updateByName) {
@@ -127,7 +188,7 @@ async function setSkillsEnabledUnlocked(updates: Array<{ name: string; enabled: 
 
   if (Object.keys(bundledUpdates).length === 0) {
     if (!userSkillsChanged) return;
-    await chrome.storage.local.set({ [SKILLS_STORAGE_KEY]: next });
+    await userSkillRepository.writeAfterReadAlreadyLocked(next);
     return;
   }
 
@@ -138,22 +199,24 @@ async function setSkillsEnabledUnlocked(updates: Array<{ name: string; enabled: 
       ...bundledUpdates,
     },
   };
-  if (userSkillsChanged) patch[SKILLS_STORAGE_KEY] = next;
+  if (userSkillsChanged) patch[SKILLS_STORAGE_KEY] = userSkillCollectionCodec.encode(next);
   await chrome.storage.local.set({
     ...patch,
   });
 }
 
 export async function getAllSkillSources(): Promise<SkillImportSource[]> {
-  const data = await chrome.storage.local.get(SKILL_SOURCES_STORAGE_KEY) as Record<string, unknown>;
-  const storedSources = data[SKILL_SOURCES_STORAGE_KEY];
-  if (!Array.isArray(storedSources)) return [];
-  return storedSources.filter(isSkillImportSource);
+  return skillSourceRepository.read();
+}
+
+export async function getAllSkillSourcesAlreadyLocked(): Promise<SkillImportSource[]> {
+  return skillSourceRepository.readAlreadyLocked();
 }
 
 export async function getSkillSourceById(sourceId: string): Promise<SkillImportSource | null> {
+  requireNonEmptyString(sourceId, 'Skill source id');
   const sources = await getAllSkillSources();
-  return sources.find((source) => source.id === sourceId) ?? null;
+  return findUniqueSourceById(sources, sourceId);
 }
 
 export async function getGitHubSkillSourceById(sourceId: string): Promise<GitHubSkillSource | null> {
@@ -161,114 +224,138 @@ export async function getGitHubSkillSourceById(sourceId: string): Promise<GitHub
   return source?.provider === 'github' ? source : null;
 }
 
-export async function saveGitHubSkillSource(source: GitHubSkillSource): Promise<void> {
-  await withSyncLocalStateLock(async () => {
-    const sources = await getAllSkillSources();
-    await chrome.storage.local.set({
-      [SKILL_SOURCES_STORAGE_KEY]: [
-        ...sources.filter((item) => item.id !== source.id),
-        source,
-      ],
-    });
+export async function updateGitHubSkillSourceLastCheckedAt(
+  sourceId: string,
+  lastCheckedAt: number,
+): Promise<GitHubSkillSource> {
+  requireNonEmptyString(sourceId, 'Skill source id');
+  if (!Number.isFinite(lastCheckedAt)) throw new Error('Skill source lastCheckedAt must be finite');
+  return withSyncLocalStateLock(async () => {
+    const sources = await getAllSkillSourcesAlreadyLocked();
+    const source = findUniqueSourceById(sources, sourceId);
+    if (!source || source.provider !== 'github') throw new Error('GitHub Skill source was not found');
+    const index = sources.indexOf(source);
+    const updated = decodeGitHubSkillSource({ ...source, lastCheckedAt }, 'skillSource');
+    const next = [...sources];
+    next[index] = updated;
+    await skillSourceRepository.writeAfterReadAlreadyLocked(next);
+    return updated;
   });
 }
 
-export async function upsertGitHubSkillSource(
+export async function stageUpsertGitHubSkillSourceAlreadyLocked(
   source: GitHubSkillSource,
   incomingSkills: Skill[],
-): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
-  return upsertImportedSkillSource(source, incomingSkills);
+  expectedSkillPaths?: readonly string[],
+): Promise<() => Promise<ImportedSkillMutationResult>> {
+  return stageUpsertImportedSkillSourceAlreadyLocked(source, incomingSkills, expectedSkillPaths);
 }
 
-export async function upsertLocalSkillSource(
+export async function stageUpsertLocalSkillSourceAlreadyLocked(
   source: LocalSkillSource,
   incomingSkills: Skill[],
-): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
-  return upsertImportedSkillSource(source, incomingSkills);
+): Promise<() => Promise<ImportedSkillMutationResult>> {
+  return stageUpsertImportedSkillSourceAlreadyLocked(source, incomingSkills);
 }
 
-async function upsertImportedSkillSource(
+async function stageUpsertImportedSkillSourceAlreadyLocked(
   source: SkillImportSource,
   incomingSkills: Skill[],
-): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
-  return withSyncLocalStateLock(() => upsertImportedSkillSourceUnlocked(source, incomingSkills));
-}
-
-async function upsertImportedSkillSourceUnlocked(
-  source: SkillImportSource,
-  incomingSkills: Skill[],
-): Promise<{ imported: Skill[]; replaced: number; renamed: number }> {
+  expectedSkillPaths?: readonly string[],
+): Promise<() => Promise<ImportedSkillMutationResult>> {
+  const decodedSource = decodeSkillImportSource(source, 'skillSource');
+  const decodedIncoming = incomingSkills.map((skill, index) => (
+    decodeUserSkill(skill, `skills[${index}]`)
+  ));
+  for (const [index, skill] of decodedIncoming.entries()) {
+    if (skill.source !== 'remote' || !skill.remote) {
+      throw new Error(`skills[${index}] must be a remote Skill`);
+    }
+    if (skill.remote.sourceId !== decodedSource.id || skill.remote.provider !== decodedSource.provider) {
+      throw new Error(`skills[${index}].remote does not match its Skill source`);
+    }
+  }
   const [existingUserSkills, existingSources] = await Promise.all([
-    getUserSkills(),
-    getAllSkillSources(),
+    getUserSkillsAlreadyLocked(),
+    getAllSkillSourcesAlreadyLocked(),
   ]);
+  const existingSource = findUniqueSourceById(existingSources, decodedSource.id);
+  if (expectedSkillPaths) {
+    const currentSource = existingSource;
+    if (!currentSource || currentSource.provider !== 'github' || !sameStrings(currentSource.skillPaths, expectedSkillPaths)) {
+      throw new Error('GitHub Skill source changed while its update was loading; retry the update');
+    }
+  }
 
   const sourceSkills = existingUserSkills.filter(
-    (skill) => skill.source === 'remote' && skill.remote?.sourceId === source.id,
+    (skill) => skill.source === 'remote' && skill.remote?.sourceId === decodedSource.id,
   );
   const sourceSkillByPath = new Map(sourceSkills.map((skill) => [skill.remote?.path, skill]));
-  const incomingPaths = new Set(incomingSkills.map((skill) => skill.remote?.path).filter((path): path is string => Boolean(path)));
+  const incomingPaths = new Set(decodedIncoming.map((skill) => skill.remote?.path).filter((path): path is string => Boolean(path)));
   const replaced = sourceSkills.filter((skill) => incomingPaths.has(skill.remote?.path ?? '')).length;
 
   const occupiedNames = new Set([
     ...BUILTIN_SKILLS.map((skill) => skill.name),
     ...existingUserSkills
-      .filter((skill) => skill.remote?.sourceId !== source.id)
+      .filter((skill) => skill.remote?.sourceId !== decodedSource.id)
       .map((skill) => skill.name),
   ]);
 
   let renamed = 0;
-  const imported = incomingSkills.map((skill) => {
+  const imported = decodedIncoming.map((skill) => {
     const existing = sourceSkillByPath.get(skill.remote?.path);
     const preferredName = existing?.name ?? skill.name;
     const name = existing ? preferredName : createUniqueSkillName(preferredName, occupiedNames);
     if (!existing && name !== preferredName) renamed += 1;
     occupiedNames.add(name);
     return {
+      ...existing,
       ...skill,
       name,
       source: 'remote' as const,
       enabled: existing?.enabled ?? skill.enabled ?? true,
+      ...(skill.remote
+        ? { remote: { ...existing?.remote, ...skill.remote } }
+        : {}),
     };
   });
 
   const nextUserSkills = [
-    ...existingUserSkills.filter((skill) => skill.remote?.sourceId !== source.id),
+    ...existingUserSkills.filter((skill) => skill.remote?.sourceId !== decodedSource.id),
     ...imported,
   ];
   const nextSource: SkillImportSource = {
-    ...source,
+    ...existingSource,
+    ...decodedSource,
     skillPaths: imported.map((skill) => skill.remote?.path).filter((path): path is string => Boolean(path)),
     importedSkillNames: imported.map((skill) => skill.name),
   };
   const nextSources = [
-    ...existingSources.filter((item) => item.id !== source.id),
+    ...existingSources.filter((item) => item.id !== decodedSource.id),
     nextSource,
   ];
 
-  await chrome.storage.local.set({
-    [SKILLS_STORAGE_KEY]: nextUserSkills,
-    [SKILL_SOURCES_STORAGE_KEY]: nextSources,
-  });
-
-  return { imported, replaced, renamed };
+  return async () => {
+    await userSkillRepository.writeAfterReadAlreadyLocked(nextUserSkills);
+    await skillSourceRepository.writeAfterReadAlreadyLocked(nextSources);
+    return { imported, replaced, renamed };
+  };
 }
 
-export async function deleteGitHubSkillSource(sourceId: string): Promise<void> {
-  await deleteSkillSource(sourceId);
-}
-
-export async function deleteSkillSource(sourceId: string): Promise<void> {
-  await withSyncLocalStateLock(async () => {
-    const [userSkills, sources] = await Promise.all([
-      getUserSkills(),
-      getAllSkillSources(),
-    ]);
-    await chrome.storage.local.set({
-      [SKILLS_STORAGE_KEY]: userSkills.filter((skill) => skill.remote?.sourceId !== sourceId),
-      [SKILL_SOURCES_STORAGE_KEY]: sources.filter((source) => source.id !== sourceId),
-    });
-  });
+export async function stageDeleteSkillSourceAlreadyLocked(
+  sourceId: string,
+): Promise<() => Promise<void>> {
+  requireNonEmptyString(sourceId, 'Skill source id');
+  const [userSkills, sources] = await Promise.all([
+    getUserSkillsAlreadyLocked(),
+    getAllSkillSourcesAlreadyLocked(),
+  ]);
+  const nextSkills = userSkills.filter((skill) => skill.remote?.sourceId !== sourceId);
+  const nextSources = sources.filter((source) => source.id !== sourceId);
+  return async () => {
+    await userSkillRepository.writeAfterReadAlreadyLocked(nextSkills);
+    await skillSourceRepository.writeAfterReadAlreadyLocked(nextSources);
+  };
 }
 
 export async function replaceAllSkillSources(sources: SkillImportSource[]): Promise<void> {
@@ -276,22 +363,8 @@ export async function replaceAllSkillSources(sources: SkillImportSource[]): Prom
 }
 
 export async function replaceAllSkillSourcesForSyncApply(sources: SkillImportSource[]): Promise<void> {
-  await chrome.storage.local.set({
-    [SKILL_SOURCES_STORAGE_KEY]: sources.filter(isSkillImportSource),
-  });
-}
-
-function normalizeStoredSkills(value: unknown): Skill[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((skill): skill is Skill => (
-      Boolean(skill) &&
-      typeof skill === 'object' &&
-      typeof (skill as Skill).name === 'string' &&
-      typeof (skill as Skill).instructions === 'string' &&
-      USER_SKILL_SOURCES.has((skill as Skill).source)
-    ))
-    .map((skill) => ({ ...skill, enabled: skill.enabled !== false }));
+  const decoded = decodeSkillSourceCollection(sources, 'skillSources');
+  await skillSourceRepository.replaceAlreadyLocked(decoded);
 }
 
 async function getBundledSkillEnabledOverrides(): Promise<Record<string, boolean>> {
@@ -330,33 +403,13 @@ function normalizeSkillName(name: string): string {
   return normalized;
 }
 
-function isGitHubSkillSource(value: unknown): value is GitHubSkillSource {
-  if (!value || typeof value !== 'object') return false;
-  const source = value as GitHubSkillSource;
-  return source.provider === 'github' &&
-    typeof source.id === 'string' &&
-    typeof source.owner === 'string' &&
-    typeof source.repo === 'string' &&
-    Array.isArray(source.skillPaths);
-}
-
-function isLocalSkillSource(value: unknown): value is LocalSkillSource {
-  if (!value || typeof value !== 'object') return false;
-  const source = value as LocalSkillSource;
-  return source.provider === 'local' &&
-    typeof source.id === 'string' &&
-    typeof source.rootPath === 'string' &&
-    typeof source.displayName === 'string' &&
-    Array.isArray(source.skillPaths);
-}
-
-function isSkillImportSource(value: unknown): value is SkillImportSource {
-  return isGitHubSkillSource(value) || isLocalSkillSource(value);
-}
-
-async function removeRemoteSkillFromSource(sourceId: string, path: string, name: string): Promise<void> {
-  const sources = await getAllSkillSources();
-  const nextSources = sources
+function removeSkillFromSources(
+  sources: SkillImportSource[],
+  sourceId: string,
+  path: string,
+  name: string,
+): SkillImportSource[] {
+  return sources
     .map((source) => {
       if (source.id !== sourceId) return source;
       return {
@@ -367,5 +420,25 @@ async function removeRemoteSkillFromSource(sourceId: string, path: string, name:
       };
     })
     .filter((source) => source.skillPaths.length > 0);
-  await chrome.storage.local.set({ [SKILL_SOURCES_STORAGE_KEY]: nextSources });
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function requireNonEmptyString(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} is required`);
+  }
+}
+
+function findUniqueSourceById(
+  sources: SkillImportSource[],
+  sourceId: string,
+): SkillImportSource | null {
+  const matches = sources.filter((source) => source.id === sourceId);
+  if (matches.length > 1) {
+    throw new Error(`Skill source mutation is ambiguous because the id is duplicated: ${sourceId}`);
+  }
+  return matches[0] ?? null;
 }

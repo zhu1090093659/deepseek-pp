@@ -7,6 +7,7 @@ export type RawStorageSlot =
 export interface StorageSlotPort {
   read(): Promise<RawStorageSlot>;
   write(value: unknown): Promise<void>;
+  remove(): Promise<void>;
 }
 
 export interface VersionedValueCodec<T> {
@@ -39,6 +40,9 @@ export function createChromeStorageSlot(key: string): StorageSlotPort {
     },
     async write(value) {
       await chrome.storage.local.set({ [key]: value });
+    },
+    async remove() {
+      await chrome.storage.local.remove(key);
     },
   };
 }

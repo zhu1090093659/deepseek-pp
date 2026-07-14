@@ -70,7 +70,9 @@ async function saveSkillDraft(
       type: 'SAVE_SKILL',
       payload: draft,
     });
-    if (result?.ok === false) throw new Error(result.error || translate(locale, 'tool.skillCreator.result.saveFailed'));
+    if (result?.ok !== true) {
+      throw new Error(result?.error || translate(locale, 'tool.skillCreator.result.saveFailed'));
+    }
     button.textContent = translate(locale, 'tool.skillCreator.result.saved');
   } catch (error) {
     button.textContent = error instanceof Error ? error.message : translate(locale, 'tool.skillCreator.result.saveFailed');

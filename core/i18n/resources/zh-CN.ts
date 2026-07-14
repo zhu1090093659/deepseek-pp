@@ -286,6 +286,8 @@ export const zhCN = {
       emptyHelp: '创建系统提示词预设后，选中即可在每次新对话的第一条消息前自动注入，无需手动触发。',
       activeHelp: '启用一个预设后，每次新对话的首条消息会自动注入该提示词。同一时间只能激活一个预设。',
       deleteConfirm: '确定删除这个预设吗？',
+      backendUnavailable: '预设存储不可用，请重新加载扩展后再试。',
+      operationFailed: '预设操作失败：{error}',
     },
     skillPage: {
       title: '可用 Skill',
@@ -332,6 +334,8 @@ export const zhCN = {
       newSkills: '{count} 个新增 Skill',
       missingSkills: '{count} 个已导入 Skill 在上游消失',
       updatesFound: '发现上游更新',
+      backendUnavailable: 'Skill 存储不可用，请重新加载扩展后再试。',
+      operationFailed: 'Skill 操作失败：{error}',
     },
     settings: {
       title: '设置',

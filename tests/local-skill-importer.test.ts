@@ -22,6 +22,7 @@ import {
   previewLocalSkillSource as previewLocalSkillSourceWithRuntime,
 } from '../core/skill/local-importer';
 import type { LocalSkillImportResponse, LocalSkillImportResult } from '../core/types';
+import type { LocalStateMutationStage } from '../core/persistence/local-state-mutation';
 import type { ToolCall, ToolResult } from '../core/types';
 
 const SKILL_STORAGE_KEY = 'deepseek_pp_skills';
@@ -32,6 +33,9 @@ const importerDeps = {
   executeToolCall: (call: ToolCall) => (
     executeMcpToolCall as unknown as (value: ToolCall) => Promise<ToolResult>
   )(call),
+  async runLocalStateMutation<T>(stage: LocalStateMutationStage<T>): Promise<T> {
+    return (await stage())();
+  },
 };
 
 const previewLocalSkillSource = (rootPath: string) =>

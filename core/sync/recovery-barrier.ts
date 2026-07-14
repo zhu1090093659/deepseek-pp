@@ -4,7 +4,7 @@ export interface SyncRecoveryResultLike {
 
 export interface SyncRecoveryBarrierOptions<TRecovery extends SyncRecoveryResultLike> {
   recover(): Promise<TRecovery>;
-  notifyRecovered(result: TRecovery): Promise<void>;
+  notifyReady(result: TRecovery): Promise<void>;
   onRecoveryFailure?(error: unknown): void;
   onNotificationFailure?(error: unknown): void;
 }
@@ -19,11 +19,12 @@ export function createSyncRecoveryBarrier<TRecovery extends SyncRecoveryResultLi
 ): SyncRecoveryBarrier {
   let ready: Promise<void> | null = null;
 
-  function notifyAfterRecovery(result: TRecovery): void {
-    if (!result.recovered) return;
-    void options.notifyRecovered(result).catch((error) => {
+  async function notifyAfterRecoveryCheck(result: TRecovery): Promise<void> {
+    try {
+      await options.notifyReady(result);
+    } catch (error) {
       options.onNotificationFailure?.(error);
-    });
+    }
   }
 
   function installRecoveryAttempt(attempt: Promise<void>): Promise<void> {
@@ -35,10 +36,9 @@ export function createSyncRecoveryBarrier<TRecovery extends SyncRecoveryResultLi
     return attempt;
   }
 
-  function recover(): Promise<void> {
-    return options.recover().then((result) => {
-      notifyAfterRecovery(result);
-    });
+  async function recover(): Promise<void> {
+    const result = await options.recover();
+    await notifyAfterRecoveryCheck(result);
   }
 
   return {

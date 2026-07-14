@@ -54,11 +54,13 @@ import {
 import {
   parseValidatedArray,
   parseValidatedJson,
-  validatePreset,
-  validateSkill,
-  validateSkillImportSource,
   validateSyncMemory,
 } from '../core/sync/schema';
+import { decodePreset as validatePreset } from '../core/preset/codec';
+import {
+  decodeSkill as validateSkill,
+  decodeSkillImportSource as validateSkillImportSource,
+} from '../core/skill/codec';
 import {
   ADDITIVE_LEGACY_ARTIFACT_RECORD,
   LEGAL_LEGACY_ARTIFACT_STORAGE,

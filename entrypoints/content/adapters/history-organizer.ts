@@ -1,13 +1,16 @@
+import {
+  createEmptyHistoryOrganizerState,
+  decodeHistoryOrganizerState,
+  normalizeHistoryTags,
+  type HistoryOrganizerState,
+} from '../../../core/history-organizer/codec';
+import { createSerialOperationQueue } from '../../../core/persistence/serial-operation-queue';
+
 export interface HistoryItem {
   sessionId: string;
   title: string;
   element: HTMLElement;
   tags: string[];
-}
-
-export interface HistoryOrganizerState {
-  schemaVersion: 1;
-  tagsBySessionId: Record<string, string[]>;
 }
 
 export interface HistoryOrganizerController {
@@ -26,7 +29,7 @@ export interface HistoryOrganizerLabels {
   storageError: (action: 'load' | 'save', message: string) => string;
 }
 
-const STORAGE_KEY = 'deepseek_pp_history_organizer';
+export const HISTORY_ORGANIZER_STORAGE_KEY = 'deepseek_pp_history_organizer';
 const STYLE_ID = 'dpp-history-organizer-css';
 const ENHANCER_ID = 'dpp-history-search-enhancer';
 const HISTORY_LINK_SELECTOR = [
@@ -37,20 +40,6 @@ const HISTORY_LINK_SELECTOR = [
 const SYNTHETIC_HISTORY_SURFACE_SELECTOR = '[data-dpp-history-synthetic="true"]';
 const PROJECT_SIDEBAR_HIDDEN_ATTR = 'data-dpp-project-sidebar-hidden';
 const OFFICIAL_SEARCH_OPTION_SELECTOR = '[role="option"]';
-
-export function normalizeHistoryOrganizerState(value: unknown): HistoryOrganizerState {
-  const object = value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Partial<HistoryOrganizerState>
-    : {};
-  const tagsBySessionId: Record<string, string[]> = {};
-  const rawTags = object.tagsBySessionId && typeof object.tagsBySessionId === 'object' && !Array.isArray(object.tagsBySessionId)
-    ? object.tagsBySessionId
-    : {};
-  for (const [sessionId, tags] of Object.entries(rawTags)) {
-    tagsBySessionId[sessionId] = normalizeTags(tags);
-  }
-  return { schemaVersion: 1, tagsBySessionId };
-}
 
 export function extractHistoryItems(root: ParentNode, state: HistoryOrganizerState): HistoryItem[] {
   const seen = new Set<string>();
@@ -87,15 +76,18 @@ export function startDeepSeekHistoryOrganizer(
   getLabels: () => HistoryOrganizerLabels,
 ): HistoryOrganizerController {
   let stopped = false;
-  let state: HistoryOrganizerState = { schemaVersion: 1, tagsBySessionId: {} };
+  let state = createEmptyHistoryOrganizerState();
+  let persistenceError: { action: 'load' | 'save'; message: string } | null = null;
   let tagFilter = '';
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const persistenceOperations = createSerialOperationQueue();
 
   injectStyles();
 
   const refreshLabels = () => {
     const enhancer = findSearchEnhancer();
     if (enhancer) renderSearchEnhancerLabels(enhancer, getLabels());
+    refresh();
   };
 
   const refresh = () => {
@@ -118,21 +110,10 @@ export function startDeepSeekHistoryOrganizer(
         tagFilter = value;
         refresh();
       },
-      onCurrentTagsChange(value, status) {
+      onCurrentTagsChange(value) {
         const sessionId = getCurrentSessionId();
         if (!sessionId) return;
-        state = {
-          schemaVersion: 1,
-          tagsBySessionId: {
-            ...state.tagsBySessionId,
-            [sessionId]: normalizeTags(value.split(',')),
-          },
-        };
-        chrome.storage.local.set({ [STORAGE_KEY]: state })
-          .then(refresh)
-          .catch((error) => {
-            reportStorageError(status, 'save', error, getLabels);
-          });
+        void persistSessionTags(sessionId, normalizeHistoryTags(value.split(',')));
       },
     });
 
@@ -149,9 +130,48 @@ export function startDeepSeekHistoryOrganizer(
     const result = applyOfficialSearchTags(dialog, items, tagFilter);
     if (status) {
       const labels = getLabels();
-      status.textContent = result.total === 0
-        ? labels.emptySearchStatus
-        : labels.visibleStatus(result.visible, result.total);
+      status.textContent = persistenceError
+        ? labels.storageError(persistenceError.action, persistenceError.message)
+        : result.total === 0
+          ? labels.emptySearchStatus
+          : labels.visibleStatus(result.visible, result.total);
+    }
+  };
+
+  const readPersistedState = async (): Promise<HistoryOrganizerState> => {
+    const data = await chrome.storage.local.get(HISTORY_ORGANIZER_STORAGE_KEY) as Record<string, unknown>;
+    const value = data[HISTORY_ORGANIZER_STORAGE_KEY];
+    return value === undefined
+      ? createEmptyHistoryOrganizerState()
+      : decodeHistoryOrganizerState(value, 'historyOrganizer');
+  };
+
+  const persistSessionTags = async (
+    sessionId: string,
+    tags: string[],
+  ): Promise<void> => {
+    try {
+      await persistenceOperations.run(async () => {
+        const current = await readPersistedState();
+        const next: HistoryOrganizerState = {
+          ...current,
+          schemaVersion: 1,
+          tagsBySessionId: {
+            ...current.tagsBySessionId,
+            [sessionId]: tags,
+          },
+        };
+        await chrome.storage.local.set({ [HISTORY_ORGANIZER_STORAGE_KEY]: next });
+        if (stopped) return;
+        state = next;
+        persistenceError = null;
+        refresh();
+      });
+    } catch (error) {
+      if (stopped) return;
+      persistenceError = { action: 'save', message: getErrorMessage(error) };
+      reportStorageError('save', error);
+      refresh();
     }
   };
 
@@ -163,14 +183,17 @@ export function startDeepSeekHistoryOrganizer(
     }, 200);
   };
 
-  chrome.storage.local.get(STORAGE_KEY)
-    .then((data) => {
-      state = normalizeHistoryOrganizerState(data[STORAGE_KEY]);
+  persistenceOperations.run(readPersistedState)
+    .then((loaded) => {
+      if (stopped) return;
+      state = loaded;
+      persistenceError = null;
       refresh();
     })
     .catch((error) => {
-      const status = findSearchEnhancer()?.querySelector<HTMLElement>('[data-dpp-history-status]') ?? null;
-      reportStorageError(status, 'load', error, getLabels);
+      if (stopped) return;
+      persistenceError = { action: 'load', message: getErrorMessage(error) };
+      reportStorageError('load', error);
       refresh();
     });
 
@@ -263,7 +286,7 @@ function bindSearchEnhancer(
   enhancer: HTMLElement,
   handlers: {
     onTagFilterChange(value: string): void;
-    onCurrentTagsChange(value: string, status: HTMLElement | null): void;
+    onCurrentTagsChange(value: string): void;
   },
 ): void {
   if (enhancer.dataset.dppBound === 'true') return;
@@ -271,13 +294,12 @@ function bindSearchEnhancer(
 
   const tagInput = enhancer.querySelector<HTMLInputElement>('[data-dpp-history-tag]');
   const currentTagInput = enhancer.querySelector<HTMLInputElement>('[data-dpp-current-tags]');
-  const status = enhancer.querySelector<HTMLElement>('[data-dpp-history-status]');
 
   tagInput?.addEventListener('input', () => {
     handlers.onTagFilterChange(tagInput.value);
   });
   currentTagInput?.addEventListener('change', () => {
-    handlers.onCurrentTagsChange(currentTagInput.value, status);
+    handlers.onCurrentTagsChange(currentTagInput.value);
   });
 }
 
@@ -326,7 +348,7 @@ function findTagsForOfficialSearchOption(option: HTMLElement, items: readonly Hi
   const optionText = normalizeTitle(option.textContent ?? '').toLowerCase();
   if (!optionText) return [];
 
-  return normalizeTags(items.flatMap((item) => {
+  return normalizeHistoryTags(items.flatMap((item) => {
     const title = item.title.toLowerCase();
     if (!title || !item.tags.length) return [];
     return optionText.includes(title) || title.includes(optionText) ? item.tags : [];
@@ -465,24 +487,14 @@ function normalizeTitle(value: string): string {
 }
 
 function reportStorageError(
-  status: HTMLElement | null,
   action: 'load' | 'save',
   error: unknown,
-  getLabels: () => HistoryOrganizerLabels,
 ): void {
-  const message = error instanceof Error ? error.message : String(error);
-  if (status) status.textContent = getLabels().storageError(action, message);
   console.error(`DeepSeek++ failed to ${action} history tags`, error);
 }
 
-function normalizeTags(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value
-    .filter((item): item is string => typeof item === 'string')
-    .flatMap((item) => item.split(','))
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .slice(0, 12))];
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getCurrentSessionId(): string | null {

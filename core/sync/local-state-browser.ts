@@ -9,6 +9,7 @@ import {
   clearActivePresetForSyncApply,
   replacePresetCollectionForSyncApply,
 } from '../preset/store';
+import { decodeActivePresetId } from '../preset/codec';
 import {
   PROJECT_CONTEXT_STORAGE_KEY,
   saveProjectContextStateForSyncApply,
@@ -79,8 +80,7 @@ export function stageSyncLocalApply(
   const memories = assignStableMemoryIds(snapshot.memories, before.memoryRecords);
   const applySteps: SyncApplyStep[] = ['memories', 'skills', 'skillSources', 'presets'];
   const activePresetId = before.storage.activePreset.present
-    && typeof before.storage.activePreset.value === 'string'
-    ? before.storage.activePreset.value
+    ? decodeActivePresetId(before.storage.activePreset.value, 'activePresetId')
     : null;
   const clearActivePreset = activePresetId !== null
     && !snapshot.presets.some((preset) => preset.id === activePresetId);

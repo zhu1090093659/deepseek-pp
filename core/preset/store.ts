@@ -1,74 +1,132 @@
 import type { SystemPromptPreset } from '../types';
 import { withSyncLocalStateLock } from '../persistence/local-state-lock';
+import {
+  createChromeStorageSlot,
+  createVersionedRepository,
+  type RawStorageSlot,
+} from '../persistence/versioned-repository';
+import {
+  decodeActivePresetId,
+  decodePreset,
+  decodePresetCollection,
+  presetCollectionCodec,
+} from './codec';
 
 export const PRESETS_STORAGE_KEY = 'deepseek_pp_presets';
 export const ACTIVE_PRESET_STORAGE_KEY = 'deepseek_pp_active_preset_id';
 
+const presetRepository = createVersionedRepository({
+  label: 'presets',
+  createDefault: () => [],
+  codec: presetCollectionCodec,
+  storage: createChromeStorageSlot(PRESETS_STORAGE_KEY),
+});
+const activePresetStorage = createChromeStorageSlot(ACTIVE_PRESET_STORAGE_KEY);
+
 export async function getAllPresets(): Promise<SystemPromptPreset[]> {
-  const data = await chrome.storage.local.get(PRESETS_STORAGE_KEY) as Record<string, unknown>;
-  const presets = data[PRESETS_STORAGE_KEY];
-  return Array.isArray(presets) ? (presets as SystemPromptPreset[]) : [];
+  return presetRepository.read();
+}
+
+export async function getAllPresetsAlreadyLocked(): Promise<SystemPromptPreset[]> {
+  return presetRepository.readAlreadyLocked();
 }
 
 export async function savePreset(preset: SystemPromptPreset): Promise<void> {
   await withSyncLocalStateLock(async () => {
-    const presets = await getAllPresets();
-    const idx = presets.findIndex((p) => p.id === preset.id);
-    const next = [...presets];
-    if (idx >= 0) {
-      next[idx] = preset;
-    } else {
-      next.push(preset);
+    const decoded = decodePreset(preset, 'preset');
+    const presets = await getAllPresetsAlreadyLocked();
+    const matchingIndexes = presets
+      .map((item, index) => item.id === decoded.id ? index : -1)
+      .filter((index) => index >= 0);
+    if (matchingIndexes.length > 1) {
+      throw new Error('Preset edit is ambiguous because the id is duplicated');
     }
-    await writePresetCollection(next);
+    const index = matchingIndexes[0] ?? -1;
+    const next = [...presets];
+    if (index >= 0) {
+      next[index] = decodePreset({ ...presets[index], ...decoded }, 'preset');
+    } else {
+      next.push(decoded);
+    }
+    await presetRepository.writeAfterReadAlreadyLocked(next);
   });
 }
 
-export async function deletePreset(id: string): Promise<void> {
-  await withSyncLocalStateLock(async () => {
-    const presets = await getAllPresets();
-    await writePresetCollection(presets.filter((p) => p.id !== id));
+export async function stageDeletePresetAlreadyLocked(
+  id: string,
+): Promise<() => Promise<void>> {
+  requireNonEmptyPresetId(id);
+  const [presets, activeId] = await Promise.all([
+    getAllPresetsAlreadyLocked(),
+    getActivePresetIdAlreadyLocked(),
+  ]);
+  const next = presets.filter((preset) => preset.id !== id);
 
-    const activeId = await getActivePresetId();
-    if (activeId === id) await writeActivePresetId(null);
-  });
+  return async () => {
+    if (next.length !== presets.length) {
+      await presetRepository.writeAfterReadAlreadyLocked(next);
+    }
+    if (activeId === id) await activePresetStorage.remove();
+  };
 }
 
 export async function getActivePresetId(): Promise<string | null> {
-  const data = await chrome.storage.local.get(ACTIVE_PRESET_STORAGE_KEY) as Record<string, unknown>;
-  const activeId = data[ACTIVE_PRESET_STORAGE_KEY];
-  return typeof activeId === 'string' ? activeId : null;
+  return withSyncLocalStateLock(getActivePresetIdAlreadyLocked);
+}
+
+export async function getActivePresetIdAlreadyLocked(): Promise<string | null> {
+  return decodeActivePresetSlot(await activePresetStorage.read());
 }
 
 export async function setActivePresetId(id: string | null): Promise<void> {
-  await withSyncLocalStateLock(() => writeActivePresetId(id));
+  await withSyncLocalStateLock(async () => {
+    await getActivePresetIdAlreadyLocked();
+    if (id === null) {
+      await activePresetStorage.remove();
+      return;
+    }
+    requireNonEmptyPresetId(id);
+    const presets = await getAllPresetsAlreadyLocked();
+    if (!presets.some((preset) => preset.id === id)) {
+      throw new Error(`Preset was not found: ${id}`);
+    }
+    await activePresetStorage.write(id);
+  });
 }
 
 export async function clearActivePresetForSyncApply(): Promise<void> {
-  await writeActivePresetId(null);
-}
-
-async function writeActivePresetId(id: string | null): Promise<void> {
-  if (id === null) {
-    await chrome.storage.local.remove(ACTIVE_PRESET_STORAGE_KEY);
-  } else {
-    await chrome.storage.local.set({ [ACTIVE_PRESET_STORAGE_KEY]: id });
-  }
+  const current = await activePresetStorage.read();
+  if (!current.present) return;
+  decodeActivePresetId(current.value, 'activePresetId');
+  await activePresetStorage.remove();
 }
 
 export async function getActivePreset(): Promise<SystemPromptPreset | null> {
-  const activeId = await getActivePresetId();
-  if (!activeId) return null;
-  const presets = await getAllPresets();
-  return presets.find((p) => p.id === activeId) ?? null;
+  return withSyncLocalStateLock(async () => {
+    const [activeId, presets] = await Promise.all([
+      getActivePresetIdAlreadyLocked(),
+      getAllPresetsAlreadyLocked(),
+    ]);
+    if (!activeId) return null;
+    return presets.find((preset) => preset.id === activeId) ?? null;
+  });
 }
 
 export async function replacePresetCollectionForSyncApply(
   presets: SystemPromptPreset[],
 ): Promise<void> {
-  await writePresetCollection(presets);
+  const decoded = decodePresetCollection(presets, 'presets');
+  await presetRepository.replaceAlreadyLocked(decoded);
 }
 
-async function writePresetCollection(presets: SystemPromptPreset[]): Promise<void> {
-  await chrome.storage.local.set({ [PRESETS_STORAGE_KEY]: presets });
+function decodeActivePresetSlot(slot: RawStorageSlot): string | null {
+  return slot.present
+    ? decodeActivePresetId(slot.value, 'activePresetId')
+    : null;
+}
+
+function requireNonEmptyPresetId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Preset id is required');
+  }
 }

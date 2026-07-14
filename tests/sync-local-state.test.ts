@@ -102,13 +102,15 @@ describe('browser sync local-state staging', () => {
     ]);
   });
 
-  it('stages active-preset cleanup only for a released string id missing from the target', () => {
+  it('stages active-preset cleanup only for a released string id and rejects unsupported state', () => {
     const before = createPreimage([]);
     before.storage.activePreset = { present: true, value: 'removed-preset' };
     expect(stageSyncLocalApply(createSnapshot([]), before).applySteps).toContain('activePreset');
 
     before.storage.activePreset = { present: true, value: { future: 'opaque' } };
-    expect(stageSyncLocalApply(createSnapshot([]), before).applySteps).not.toContain('activePreset');
+    expect(() => stageSyncLocalApply(createSnapshot([]), before)).toThrow(
+      'activePresetId must use the released string schema',
+    );
   });
 });
 

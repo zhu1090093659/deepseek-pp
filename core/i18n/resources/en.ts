@@ -286,6 +286,8 @@ export const en = {
       emptyHelp: 'Create a system prompt preset, then select it to inject automatically before the first message of each new conversation.',
       activeHelp: 'When a preset is enabled, its prompt is injected before the first message of each new conversation. Only one preset can be active at a time.',
       deleteConfirm: 'Delete this preset?',
+      backendUnavailable: 'Preset storage is unavailable. Reload the extension and try again.',
+      operationFailed: 'Preset operation failed: {error}',
     },
     skillPage: {
       title: 'Available Skills',
@@ -332,6 +334,8 @@ export const en = {
       newSkills: '{count} new Skills',
       missingSkills: '{count} imported Skills disappeared upstream',
       updatesFound: 'Upstream updates found',
+      backendUnavailable: 'Skill storage is unavailable. Reload the extension and try again.',
+      operationFailed: 'Skill operation failed: {error}',
     },
     settings: {
       title: 'Settings',

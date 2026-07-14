@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   parseValidatedArray,
   validateImportedMemory,
-  validatePreset,
   validateStoredMemory,
   validateSyncMemory,
 } from '../core/sync/schema';
+import { decodePreset as validatePreset } from '../core/preset/codec';
 import {
   decodeProjectConversation,
   decodeProjectContext,

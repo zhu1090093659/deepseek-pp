@@ -11,10 +11,10 @@ import {
 } from '../../../core/messaging/runtime-boundary';
 import {
   extractHistoryItems,
-  normalizeHistoryOrganizerState,
   parseSessionId,
   type HistoryItem,
 } from './history-organizer';
+import { createEmptyHistoryOrganizerState } from '../../../core/history-organizer/codec';
 import { injectInjectedThemeStyles } from '../../../core/ui/injected-theme';
 import { decodeProjectContextState } from '../../../core/project/codec';
 import { isUsableProjectConversationTitle } from '../../../core/project/title';
@@ -53,7 +53,7 @@ const PROJECT_STYLE_ID = 'dpp-project-sidebar-css';
 const PROJECT_HIDDEN_ATTR = 'data-dpp-project-sidebar-hidden';
 const NATIVE_MENU_ENHANCER_ATTR = 'data-dpp-project-native-menu';
 const PROJECT_LIMIT = 5;
-const EMPTY_HISTORY_STATE = normalizeHistoryOrganizerState(null);
+const EMPTY_HISTORY_STATE = createEmptyHistoryOrganizerState();
 const NATIVE_MENU_TEXT = {
   delete: [0x5220, 0x9664],
   rename: [0x91cd, 0x547d, 0x540d],

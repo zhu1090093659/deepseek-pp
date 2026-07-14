@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
+import {
+  isLocalOnlySkill,
+  isLocalOnlySkillSource,
+  isSyncableSkill,
+  isSyncableSkillSource,
+} from '../core/skill/sync-policy';
 import type { LocalSkillSource, Skill, SkillImportSource } from '../core/types';
+import { LEGACY_GITHUB_SKILL_SOURCE } from './fixtures/persistence-contract/skill-preset-history';
 
 describe('mergeLocalSkillImportsIntoSyncSnapshot', () => {
+  it('uses one complementary policy for local-only preservation and sync filtering', () => {
+    const localSource = createLocalSource('local:/skills/demo', ['SKILL.md']);
+    const localSkill = createLocalSkill('demo', localSource.id, 'SKILL.md');
+    const customSkill = createCustomSkill('custom');
+    const githubSource = LEGACY_GITHUB_SKILL_SOURCE;
+
+    expect([isLocalOnlySkill(localSkill), isSyncableSkill(localSkill)]).toEqual([true, false]);
+    expect([isLocalOnlySkill(customSkill), isSyncableSkill(customSkill)]).toEqual([false, true]);
+    expect([isLocalOnlySkillSource(localSource), isSyncableSkillSource(localSource)])
+      .toEqual([true, false]);
+    expect([isLocalOnlySkillSource(githubSource), isSyncableSkillSource(githubSource)])
+      .toEqual([false, true]);
+  });
+
   it('renames local imports that collide with remote sync skills', () => {
     const localSource = createLocalSource('local:/skills/demo', ['SKILL.md']);
     const localSkill = createLocalSkill('demo', localSource.id, 'SKILL.md');

@@ -7,10 +7,10 @@ import {
 } from '../core/export/secondary-artifacts';
 import {
   extractHistoryItems,
-  normalizeHistoryOrganizerState,
   parseSessionId,
   startDeepSeekHistoryOrganizer,
 } from '../entrypoints/content/adapters/history-organizer';
+import { decodeHistoryOrganizerState } from '../core/history-organizer/codec';
 import {
   collectCodeBlocks,
   getCodeBlockText,
@@ -50,7 +50,7 @@ describe('Phase 5 product surface helpers', () => {
         <div><a href="https://chat.deepseek.com/a/chat/s/session-three">Refactor adapters</a><span>2m ago</span></div>
       </nav>
     `;
-    const state = normalizeHistoryOrganizerState({
+    const state = decodeHistoryOrganizerState({
       tagsBySessionId: {
         'session-one': ['release'],
         'session-two': ['android'],
@@ -200,14 +200,15 @@ describe('Phase 5 product surface helpers', () => {
     }));
 
     try {
-      await Promise.resolve();
       const tagInput = document.querySelector<HTMLInputElement>('[data-dpp-history-tag]');
       tagInput!.value = 'rel';
       tagInput!.dispatchEvent(new Event('input', { bubbles: true }));
 
-      expect(document.querySelector<HTMLElement>('[data-testid="release-result"]')?.hidden).toBe(false);
-      expect(document.querySelector<HTMLElement>('[data-testid="android-result"]')?.hidden).toBe(true);
-      expect(document.querySelector('[data-dpp-history-status]')?.textContent).toBe('DeepSeek++：已显示 1/2');
+      await vi.waitFor(() => {
+        expect(document.querySelector<HTMLElement>('[data-testid="release-result"]')?.hidden).toBe(false);
+        expect(document.querySelector<HTMLElement>('[data-testid="android-result"]')?.hidden).toBe(true);
+        expect(document.querySelector('[data-dpp-history-status]')?.textContent).toBe('DeepSeek++：已显示 1/2');
+      });
     } finally {
       history.stop();
     }

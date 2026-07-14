@@ -13,12 +13,13 @@ import type {
   Skill,
 } from '../types';
 import type { McpServerConfig } from '../mcp/types';
+import type { LocalStateMutationRunner } from '../persistence/local-state-mutation';
 import type { JsonValue, ToolResult } from '../tool/types';
 import type { ToolCall } from '../tool/types';
 import {
   getAllSkillSources,
   getSkillLibrary,
-  upsertLocalSkillSource,
+  stageUpsertLocalSkillSourceAlreadyLocked,
 } from './registry';
 
 const MAX_SKILL_BYTES = 120_000;
@@ -98,6 +99,8 @@ export interface LocalSkillImporterDeps {
   executeToolCall(call: ToolCall): Promise<ToolResult>;
 }
 
+export interface LocalSkillImportDeps extends LocalSkillImporterDeps, LocalStateMutationRunner {}
+
 export async function previewLocalSkillSource(
   rootPath: string,
   deps: LocalSkillImporterDeps,
@@ -124,7 +127,7 @@ export async function pickLocalSkillFolder(
 
 export async function importLocalSkillSource(
   request: LocalSkillImportRequest,
-  deps: LocalSkillImporterDeps,
+  deps: LocalSkillImportDeps,
 ): Promise<LocalSkillImportResponse> {
   if (request.selectedPaths.length === 0) {
     throw new Error('Select at least one local Skill before importing.');
@@ -176,7 +179,9 @@ export async function importLocalSkillSource(
       lastCheckedAt: now,
     } : undefined,
   }));
-  const result = await upsertLocalSkillSource(source, incomingSkills);
+  const result = await deps.runLocalStateMutation(() => (
+    stageUpsertLocalSkillSourceAlreadyLocked(source, incomingSkills)
+  ));
 
   return {
     ok: true,

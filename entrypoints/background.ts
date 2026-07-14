@@ -11,15 +11,16 @@ import {
 } from '../core/memory/store';
 import { filterMemoriesByProjectScope } from '../core/memory/scope';
 import {
-  deleteGitHubSkillSource,
   getAllSkillSources,
+  getAllSkillSourcesAlreadyLocked,
   getAllSkills,
   getSkillLibrary,
-  getUserSkills,
+  getUserSkillsAlreadyLocked,
   saveSkill,
   setSkillEnabled,
   setSkillsEnabled,
-  deleteSkill,
+  stageDeleteSkillAlreadyLocked,
+  stageDeleteSkillSourceAlreadyLocked,
 } from '../core/skill/registry';
 import {
   checkGitHubSkillSourceUpdates,
@@ -34,10 +35,11 @@ import {
 } from '../core/skill/local-importer';
 import {
   getAllPresets,
+  getAllPresetsAlreadyLocked,
   savePreset,
-  deletePreset,
   getActivePreset,
   setActivePresetId,
+  stageDeletePresetAlreadyLocked,
 } from '../core/preset/store';
 import { getModelType, setModelType } from '../core/model/store';
 import { getDeepSeekTheme, saveDeepSeekTheme } from '../core/theme/store';
@@ -66,12 +68,14 @@ import {
   uploadSyncGeneration,
 } from '../core/sync/generation';
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
+import { isSyncableSkill, isSyncableSkillSource } from '../core/skill/sync-policy';
 import {
   recoverPendingSyncLocalApply,
   runLocalStateMutationWithRecovery,
   stageAndApplySyncSnapshotLocally,
 } from '../core/sync/local-apply-runtime';
 import { withSyncLocalStateLock } from '../core/persistence/local-state-lock';
+import type { LocalStateMutationStage } from '../core/persistence/local-state-mutation';
 import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
 import { createStorageBackend } from '../core/sync/backend-factory';
 import type { StorageBackend } from '../core/sync/storage-backend';
@@ -84,11 +88,13 @@ import { authorizeOneDrive } from '../core/sync/onedrive-client';
 import {
   parseValidatedArray,
   parseValidatedJson,
-  validatePreset,
-  validateSkillImportSource,
-  validateSkill,
   validateSyncMemory,
 } from '../core/sync/schema';
+import { decodePresetCollection } from '../core/preset/codec';
+import {
+  decodeSkillSourceCollection,
+  decodeUserSkillCollection,
+} from '../core/skill/codec';
 import { clearToolCallHistory, getToolCallHistory } from '../core/tool/history';
 import {
   appendExternalizedToolPayloadChunk,
@@ -322,7 +328,7 @@ let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
 const syncLocalRecoveryBarrier = createSyncRecoveryBarrier({
   recover: recoverPendingSyncLocalApply,
-  async notifyRecovered() {
+  async notifyReady() {
     await Promise.all([
       broadcastStateUpdate(),
       broadcastProjectContextUpdate(),
@@ -460,6 +466,11 @@ function registerAutomationAlarmListener() {
 
 function beginSyncLocalApply(stage: () => Promise<SyncDataSnapshot>) {
   const operation = stageAndApplySyncSnapshotLocally(stage);
+  return syncLocalRecoveryBarrier.trackApply(operation);
+}
+
+function beginLocalStateMutation<T>(stage: LocalStateMutationStage<T>): Promise<T> {
+  const operation = runLocalStateMutationWithRecovery(stage);
   return syncLocalRecoveryBarrier.trackApply(operation);
 }
 
@@ -712,7 +723,7 @@ async function handleLegacyMessage(
 
     case 'DELETE_SKILL': {
       const { name } = message.payload as { name: string };
-      await deleteSkill(name);
+      await beginLocalStateMutation(() => stageDeleteSkillAlreadyLocked(name));
       await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
@@ -737,7 +748,10 @@ async function handleLegacyMessage(
     }
 
     case 'IMPORT_GITHUB_SKILL_SOURCE': {
-      const result = await importGitHubSkillSource(message.payload as GitHubSkillImportRequest);
+      const result = await importGitHubSkillSource(
+        message.payload as GitHubSkillImportRequest,
+        { runLocalStateMutation: beginLocalStateMutation },
+      );
       await broadcastStateUpdate(context.tabId);
       return result;
     }
@@ -759,7 +773,10 @@ async function handleLegacyMessage(
     case 'IMPORT_LOCAL_SKILL_SOURCE': {
       const result = await importLocalSkillSource(
         message.payload as LocalSkillImportRequest,
-        { executeToolCall: executeLocalSkillImporterToolCall },
+        {
+          executeToolCall: executeLocalSkillImporterToolCall,
+          runLocalStateMutation: beginLocalStateMutation,
+        },
       );
       if (!result.ok) return result;
       await broadcastStateUpdate(context.tabId);
@@ -773,14 +790,17 @@ async function handleLegacyMessage(
 
     case 'UPDATE_GITHUB_SKILL_SOURCE': {
       const { sourceId } = message.payload as { sourceId: string };
-      const result = await updateGitHubSkillSource(sourceId);
+      const result = await updateGitHubSkillSource(
+        sourceId,
+        { runLocalStateMutation: beginLocalStateMutation },
+      );
       await broadcastStateUpdate(context.tabId);
       return result;
     }
 
     case 'DELETE_GITHUB_SKILL_SOURCE': {
       const { sourceId } = message.payload as { sourceId: string };
-      await deleteGitHubSkillSource(sourceId);
+      await beginLocalStateMutation(() => stageDeleteSkillSourceAlreadyLocked(sourceId));
       await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
@@ -796,7 +816,7 @@ async function handleLegacyMessage(
 
     case 'DELETE_PRESET': {
       const { id: presetId } = message.payload as { id: string };
-      await deletePreset(presetId);
+      await beginLocalStateMutation(() => stageDeletePresetAlreadyLocked(presetId));
       await broadcastStateUpdate(context.tabId);
       return { ok: true };
     }
@@ -2357,9 +2377,9 @@ async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
   return withSyncLocalStateLock(async () => {
     const [memories, userSkills, skillSources, presets, projectContext, savedItems] = await Promise.all([
       getAllMemoriesAlreadyLocked(),
-      getUserSkills(),
-      getAllSkillSources(),
-      getAllPresets(),
+      getUserSkillsAlreadyLocked(),
+      getAllSkillSourcesAlreadyLocked(),
+      getAllPresetsAlreadyLocked(),
       getProjectContextStateAlreadyLocked(),
       getSavedItemsStateAlreadyLocked(),
     ]);
@@ -2410,18 +2430,30 @@ function parseRemoteSyncDataSnapshot(remoteFiles: ReadonlyMap<SyncFileKey, strin
 
   const memories = parseValidatedArray(SYNC_FILE_KEYS.memories, remoteMemJson, validateSyncMemory);
 
-  const skills = parseValidatedArray(SYNC_FILE_KEYS.skills, remoteSkillJson, validateSkill)
+  const skills = parseValidatedJson(
+    SYNC_FILE_KEYS.skills,
+    remoteSkillJson,
+    decodeUserSkillCollection,
+  )
     .filter(isSyncableSkill);
   const skillSources = remoteSkillSourceJson === null
     ? []
-    : parseValidatedArray(SYNC_FILE_KEYS.skillSources, remoteSkillSourceJson, validateSkillImportSource)
+    : parseValidatedJson(
+      SYNC_FILE_KEYS.skillSources,
+      remoteSkillSourceJson,
+      decodeSkillSourceCollection,
+    )
       .filter(isSyncableSkillSource);
 
   return {
     memories,
     skills,
     skillSources,
-    presets: parseValidatedArray(SYNC_FILE_KEYS.presets, remotePresetJson, validatePreset),
+    presets: parseValidatedJson(
+      SYNC_FILE_KEYS.presets,
+      remotePresetJson,
+      decodePresetCollection,
+    ),
     projectContext: remoteProjectContextJson === null
       ? null
       : parseValidatedJson(SYNC_FILE_KEYS.projectContext, remoteProjectContextJson, decodeProjectContextState),
@@ -2439,18 +2471,10 @@ function getRequiredSyncFile(files: ReadonlyMap<SyncFileKey, string>, file: Sync
   return content;
 }
 
-function isSyncableSkill(skill: Skill): boolean {
-  return !(skill.source === 'remote' && skill.remote?.provider === 'local');
-}
-
-function isSyncableSkillSource(source: SkillImportSource): boolean {
-  return source.provider !== 'local';
-}
-
 async function mergeSyncSnapshotWithLocalImports(snapshot: SyncDataSnapshot): Promise<SyncDataSnapshot> {
   const [userSkills, skillSources] = await Promise.all([
-    getUserSkills(),
-    getAllSkillSources(),
+    getUserSkillsAlreadyLocked(),
+    getAllSkillSourcesAlreadyLocked(),
   ]);
   const merged = mergeLocalSkillImportsIntoSyncSnapshot(
     {
