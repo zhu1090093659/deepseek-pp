@@ -1,7 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { createRequestGenerationFence } from './async-state';
 import { I18nProvider } from './i18n';
+import { decodeThemeUpdatedEvent } from './runtime-event-codec';
+import { sidepanelRuntimeClient } from './runtime-client';
 import './style.css';
 
 type DeepSeekTheme = 'light' | 'dark';
@@ -30,13 +33,22 @@ function applyTheme(theme: DeepSeekTheme | null | undefined) {
 function applyStoredTheme() {
   if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
 
-  chrome.runtime.sendMessage({ type: 'GET_DEEPSEEK_THEME' })
-    .then((theme: DeepSeekTheme | null) => applyTheme(theme))
-    .catch(() => applyTheme(null));
+  const requestFence = createRequestGenerationFence();
+  const generation = requestFence.begin();
+  sidepanelRuntimeClient.request({ type: 'GET_DEEPSEEK_THEME' })
+    .then((theme) => {
+      if (requestFence.isCurrent(generation)) applyTheme(theme);
+    })
+    .catch((error) => {
+      if (!requestFence.isCurrent(generation)) return;
+      console.error('Failed to load DeepSeek theme', error);
+      applyTheme(null);
+    });
 
-  chrome.runtime.onMessage.addListener((message: { type?: string; theme?: DeepSeekTheme }) => {
-    if (message.type === 'THEME_UPDATED') {
-      applyTheme(message.theme);
-    }
+  chrome.runtime.onMessage.addListener((message: unknown) => {
+    const theme = decodeThemeUpdatedEvent(message);
+    if (theme === null) return;
+    requestFence.begin();
+    applyTheme(theme);
   });
 }

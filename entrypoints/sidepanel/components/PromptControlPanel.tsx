@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_PROMPT_INJECTION_SETTINGS,
   normalizePromptInjectionSettings,
@@ -6,27 +6,38 @@ import {
   type PromptInjectionSettings,
   type PromptPresetCadence,
 } from '../../../core/prompt/settings';
+import { createRequestGenerationFence } from '../async-state';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { getRuntimeErrorMessage } from '../runtime-response';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 export default function PromptControlPanel() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<PromptInjectionSettings>(DEFAULT_PROMPT_INJECTION_SETTINGS);
   const [statusMessage, setStatusMessage] = useState('');
+  const requestFence = useRef(createRequestGenerationFence());
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_PROMPT_INJECTION_SETTINGS' })
-      .then((result) => {
-        const loaded = unwrapRuntimeResponse<PromptInjectionSettings>(
-          result,
+    const generation = requestFence.current.begin();
+    sidepanelRuntimeClient.request(
+      { type: 'GET_PROMPT_INJECTION_SETTINGS' },
+      {
+        unavailableMessage: t('sidepanel.promptControls.backendUnavailable'),
+        decode: (value) => decodePromptSettings(
+          value,
           t('sidepanel.promptControls.backendUnavailable'),
-        );
-        setSettings(normalizePromptInjectionSettings(loaded));
+        ),
+      },
+    )
+      .then((loaded) => {
+        if (requestFence.current.isCurrent(generation)) setSettings(loaded);
       })
       .catch((error) => {
+        if (!requestFence.current.isCurrent(generation)) return;
         setSettings(DEFAULT_PROMPT_INJECTION_SETTINGS);
         setStatusMessage(t('sidepanel.promptControls.loadFailed', { error: getRuntimeErrorMessage(error) }));
       });
+    return () => requestFence.current.invalidate();
   }, [t]);
 
   const save = async (patch: Partial<PromptInjectionSettings>) => {
@@ -34,16 +45,24 @@ export default function PromptControlPanel() {
     const next = normalizePromptInjectionSettings({ ...settings, ...patch });
     setSettings(next);
     setStatusMessage('');
+    const generation = requestFence.current.begin();
     try {
-      const saved = unwrapRuntimeResponse<PromptInjectionSettings>(
-        await chrome.runtime.sendMessage({
+      const saved = await sidepanelRuntimeClient.request(
+        {
           type: 'SAVE_PROMPT_INJECTION_SETTINGS',
           payload: next,
-        }),
-        t('sidepanel.promptControls.backendUnavailable'),
+        },
+        {
+          unavailableMessage: t('sidepanel.promptControls.backendUnavailable'),
+          decode: (value) => decodePromptSettings(
+            value,
+            t('sidepanel.promptControls.backendUnavailable'),
+          ),
+        },
       );
-      setSettings(normalizePromptInjectionSettings(saved));
+      if (requestFence.current.isCurrent(generation)) setSettings(saved);
     } catch (error) {
+      if (!requestFence.current.isCurrent(generation)) return;
       setSettings(previous);
       setStatusMessage(t('sidepanel.promptControls.saveFailed', { error: getRuntimeErrorMessage(error) }));
     }
@@ -109,6 +128,11 @@ export default function PromptControlPanel() {
       </div>
     </section>
   );
+}
+
+function decodePromptSettings(value: unknown, missingMessage: string): PromptInjectionSettings {
+  if (value === null) throw new Error(missingMessage);
+  return normalizePromptInjectionSettings(value);
 }
 
 function ToggleRow({

@@ -13,6 +13,7 @@ import {
 } from '../../../core/automation/storage-codec';
 import { validateAutomationSchedule } from '../../../core/automation/schedule';
 import type { SupportedLocale } from '../../../core/i18n';
+import { createRequestGenerationFence } from '../async-state';
 import PageIntro from '../components/PageIntro';
 import {
   SkeletonList,
@@ -22,9 +23,12 @@ import {
   useConfirm,
 } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { isSidepanelRuntimeEvent } from '../runtime-event-codec';
+import { getRuntimeErrorMessage } from '../runtime-response';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
+const AUTOMATION_UPDATE_EVENTS = ['AUTOMATIONS_UPDATED', 'AUTOMATION_RUNS_UPDATED'] as const;
 
 const DEFAULT_PROMPT_OPTIONS: AutomationPromptOptions = {
   modelType: null,
@@ -66,7 +70,7 @@ export default function AutomationPage() {
   const [loading, setLoading] = useState(true);
   const [hasConfirmedSnapshot, setHasConfirmedSnapshot] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const loadGeneration = useRef(0);
+  const loadFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
@@ -76,55 +80,54 @@ export default function AutomationPage() {
   );
 
   const load = async () => {
-    const generation = ++loadGeneration.current;
+    const generation = loadFence.current.begin();
     setLoading(true);
     setLoadError(null);
     try {
-      const listResponse = await chrome.runtime.sendMessage({ type: 'GET_AUTOMATIONS' });
-      const items = decodeAutomationList(
-        unwrapRuntimeResponse<unknown>(
-          listResponse,
-          t('sidepanel.automationPage.loadFailed'),
-        ),
-        'GET_AUTOMATIONS response',
+      const items = await sidepanelRuntimeClient.request(
+        { type: 'GET_AUTOMATIONS' },
+        {
+          unavailableMessage: t('sidepanel.automationPage.loadFailed'),
+          decode: (value) => decodeAutomationList(value, 'GET_AUTOMATIONS response'),
+        },
       );
       const runEntries = await Promise.all(
         items.map(async (automation) => {
-          const runResponse = await chrome.runtime.sendMessage({
-            type: 'GET_AUTOMATION_RUNS',
-            payload: { automationId: automation.id, limit: 3 },
-          });
-          const recent = decodeAutomationRunList(
-            unwrapRuntimeResponse<unknown>(
-              runResponse,
-              t('sidepanel.automationPage.loadFailed'),
-            ),
-            'GET_AUTOMATION_RUNS response',
+          const recent = await sidepanelRuntimeClient.request(
+            {
+              type: 'GET_AUTOMATION_RUNS',
+              payload: { automationId: automation.id, limit: 3 },
+            },
+            {
+              unavailableMessage: t('sidepanel.automationPage.loadFailed'),
+              decode: (value) => decodeAutomationRunList(
+                value,
+                'GET_AUTOMATION_RUNS response',
+              ),
+            },
           );
           return [automation.id, recent] as const;
         }),
       );
-      if (generation !== loadGeneration.current) return;
+      if (!loadFence.current.isCurrent(generation)) return;
       setAutomations(items);
       setRuns(Object.fromEntries(runEntries));
       setHasConfirmedSnapshot(true);
     } catch (error) {
-      if (generation !== loadGeneration.current) return;
+      if (!loadFence.current.isCurrent(generation)) return;
       setLoadError(
         getRuntimeErrorMessage(error) || t('sidepanel.automationPage.loadFailed'),
       );
     } finally {
-      if (generation === loadGeneration.current) setLoading(false);
+      if (loadFence.current.isCurrent(generation)) setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
 
-    const handleUpdate = (msg: { type?: string }) => {
-      if (msg.type === 'AUTOMATIONS_UPDATED' || msg.type === 'AUTOMATION_RUNS_UPDATED') {
-        void load();
-      }
+    const handleUpdate = (message: unknown) => {
+      if (isSidepanelRuntimeEvent(message, AUTOMATION_UPDATE_EVENTS)) void load();
     };
     const refreshWhenVisible = () => {
       if (!document.hidden) void load();
@@ -135,7 +138,7 @@ export default function AutomationPage() {
     window.addEventListener('focus', refreshWhenVisible);
 
     return () => {
-      loadGeneration.current += 1;
+      loadFence.current.invalidate();
       chrome.runtime.onMessage.removeListener(handleUpdate);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.removeEventListener('focus', refreshWhenVisible);
@@ -172,41 +175,46 @@ export default function AutomationPage() {
       return;
     }
 
-    const response = editing
-      ? await chrome.runtime.sendMessage({
-        type: 'UPDATE_AUTOMATION',
-        payload: { id: editing.id, patch: payload },
-      })
-      : await chrome.runtime.sendMessage({ type: 'CREATE_AUTOMATION', payload });
+    try {
+      const response = editing
+        ? await sidepanelRuntimeClient.request({
+          type: 'UPDATE_AUTOMATION',
+          payload: { id: editing.id, patch: payload },
+        }, { acceptFailure: true })
+        : await sidepanelRuntimeClient.request({ type: 'CREATE_AUTOMATION', payload });
 
-    if (response?.ok === false && response.error) {
-      banner.show('error', typeof response.error === 'string' ? response.error : response.error.message);
-      return;
+      if ('ok' in response) {
+        banner.show('error', response.error);
+        return;
+      }
+      if (response.lastError) {
+        banner.show('error', response.lastError.message);
+        return;
+      }
+      banner.show('success', editing ? t('common.saveChanges') : t('sidepanel.automationPage.created'));
+      setShowForm(false);
+      setEditing(null);
+      await load();
+    } catch (error) {
+      banner.show('error', getRuntimeErrorMessage(error));
     }
-
-    if (response?.lastError) {
-      banner.show('error', response.lastError.message);
-      return;
-    }
-    banner.show('success', editing ? t('common.saveChanges') : t('sidepanel.automationPage.created'));
-    setShowForm(false);
-    setEditing(null);
-    await load();
   };
 
   const runNow = async (id: string) => {
     setRunningIds((prev) => new Set(prev).add(id));
     banner.clear();
     try {
-      const run: AutomationRun | { ok: false; error: string } | null = await chrome.runtime.sendMessage({
-        type: 'RUN_AUTOMATION_NOW',
-        payload: { id },
-      });
+      const run: AutomationRun | { ok: false; error: string } | null = await sidepanelRuntimeClient.request(
+        { type: 'RUN_AUTOMATION_NOW', payload: { id } },
+        { acceptFailure: true },
+      );
       if (run && 'error' in run && typeof run.error === 'string') {
         banner.show('error', run.error);
       } else if (run && 'status' in run && (run.status === 'failed' || run.status === 'timeout')) {
         banner.show('error', run.error?.message ?? t('sidepanel.automationPage.runFailed'));
       }
+    } catch (error) {
+      banner.show('error', getRuntimeErrorMessage(error));
     } finally {
       setRunningIds((prev) => {
         const next = new Set(prev);
@@ -218,11 +226,15 @@ export default function AutomationPage() {
   };
 
   const toggleStatus = async (automation: Automation) => {
-    await chrome.runtime.sendMessage({
-      type: 'SET_AUTOMATION_STATUS',
-      payload: { id: automation.id, status: automation.status === 'active' ? 'paused' : 'active' },
-    });
-    await load();
+    try {
+      await sidepanelRuntimeClient.request({
+        type: 'SET_AUTOMATION_STATUS',
+        payload: { id: automation.id, status: automation.status === 'active' ? 'paused' : 'active' },
+      });
+      await load();
+    } catch (error) {
+      banner.show('error', getRuntimeErrorMessage(error));
+    }
   };
 
   const remove = async (automation: Automation) => {
@@ -233,8 +245,15 @@ export default function AutomationPage() {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    await chrome.runtime.sendMessage({ type: 'DELETE_AUTOMATION', payload: { id: automation.id } });
-    await load();
+    try {
+      await sidepanelRuntimeClient.request({
+        type: 'DELETE_AUTOMATION',
+        payload: { id: automation.id },
+      });
+      await load();
+    } catch (error) {
+      banner.show('error', getRuntimeErrorMessage(error));
+    }
   };
 
   const openSession = async (url: string | null) => {

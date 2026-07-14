@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CurrentDeepSeekConversation,
   Memory,
@@ -7,15 +7,25 @@ import type {
   ProjectContextState,
   ProjectConversation,
 } from '../../../core/types';
-import { decodeProjectContextState } from '../../../core/project/codec';
-import { decodePersistedMemoryRecord } from '../../../core/memory/codec';
+import {
+  decodeCurrentDeepSeekConversation,
+  decodeProjectContext,
+  decodeProjectContextState,
+} from '../../../core/project/codec';
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from '../../../core/project/types';
+import { createRequestGenerationFence } from '../async-state';
 import MemoryCard from '../components/MemoryCard';
 import MemoryForm from '../components/MemoryForm';
 import PageIntro from '../components/PageIntro';
 import { SkeletonList, StatusBadge, useBanner, useConfirm } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { decodeMemoryList } from '../controllers/library-controller';
+import { isSidepanelRuntimeEvent } from '../runtime-event-codec';
+import { getRuntimeErrorMessage } from '../runtime-response';
+import {
+  sidepanelRuntimeClient,
+  type AnyTypedRuntimeCommandRequest,
+} from '../runtime-client';
 
 const EMPTY_PROJECT_STATE: ProjectContextState = {
   schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
@@ -23,6 +33,21 @@ const EMPTY_PROJECT_STATE: ProjectContextState = {
   conversations: [],
   pendingProjectId: null,
 };
+
+const PROJECT_UPDATE_EVENTS = ['PROJECT_CONTEXT_UPDATED', 'STATE_UPDATED'] as const;
+
+type ProjectMutationRequest = Extract<
+  AnyTypedRuntimeCommandRequest,
+  { type:
+    | 'UPDATE_PROJECT_CONTEXT'
+    | 'DELETE_PROJECT_CONTEXT'
+    | 'ADD_CONVERSATION_TO_PROJECT'
+    | 'REMOVE_CONVERSATION_FROM_PROJECT'
+    | 'SET_PENDING_PROJECT_CONTEXT'
+    | 'SAVE_MEMORY'
+    | 'UPDATE_MEMORY'
+    | 'DELETE_MEMORY' }
+>;
 
 export default function ProjectsPage() {
   const { t } = useI18n();
@@ -40,41 +65,24 @@ export default function ProjectsPage() {
   const [showMemoryForm, setShowMemoryForm] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
   const [currentConversation, setCurrentConversation] = useState<CurrentDeepSeekConversation | null>(null);
+  const loadFence = useRef(createRequestGenerationFence());
+  const conversationFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
   useEffect(() => {
     void loadAll().catch(showProjectError);
     void refreshCurrentConversation();
-    const handler = (msg: { type?: string; state?: ProjectContextState; memories?: unknown }) => {
-      if (msg.type === 'PROJECT_CONTEXT_UPDATED') {
-        try {
-          applyState(decodeProjectContextState(msg.state, 'projectContextUpdate'));
-          setLoadFailed(false);
-        } catch (error) {
-          setLoadFailed(true);
-          showProjectError(error);
-        }
-        return;
-      }
-      if (msg.type === 'STATE_UPDATED') {
-        try {
-          if (!Array.isArray(msg.memories)) {
-            throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
-          }
-          setMemories(msg.memories.map((memory, index) => (
-            decodePersistedMemoryRecord(memory, `memoryUpdate[${index}]`)
-          )));
-          setLoadFailed(false);
-        } catch (error) {
-          setLoadFailed(true);
-          showProjectError(error);
-        }
+    const handler = (message: unknown) => {
+      if (isSidepanelRuntimeEvent(message, PROJECT_UPDATE_EVENTS)) {
+        void loadAll().catch(showProjectError);
       }
     };
     chrome.runtime.onMessage.addListener(handler);
     window.addEventListener('focus', refreshCurrentConversation);
     return () => {
+      loadFence.current.invalidate();
+      conversationFence.current.invalidate();
       chrome.runtime.onMessage.removeListener(handler);
       window.removeEventListener('focus', refreshCurrentConversation);
     };
@@ -115,37 +123,34 @@ export default function ProjectsPage() {
   }, [selectedProject]);
 
   async function loadAll() {
+    const generation = loadFence.current.begin();
     try {
-      const [projectState, memoryList] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
-        chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
-      ]);
-      const next = decodeProjectContextState(
-        unwrapProjectResponse<ProjectContextState>(
-          projectState,
-          t('sidepanel.projectsPage.backendUnavailable'),
+      const [next, nextMemories] = await Promise.all([
+        sidepanelRuntimeClient.request(
+          { type: 'GET_PROJECT_CONTEXT_STATE' },
+          {
+            unavailableMessage: t('sidepanel.projectsPage.backendUnavailable'),
+            decode: (value) => decodeProjectContextState(value, 'projectContextResponse'),
+          },
         ),
-        'projectContextResponse',
-      );
-      const memoryResponse = unwrapProjectResponse<unknown>(
-        memoryList,
-        t('sidepanel.projectsPage.backendUnavailable'),
-      );
-      if (!Array.isArray(memoryResponse)) {
-        throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
-      }
-      const nextMemories = memoryResponse.map((memory, index) => (
-        decodePersistedMemoryRecord(memory, `memoryResponse[${index}]`)
-      ));
-
+        sidepanelRuntimeClient.request(
+          { type: 'GET_MEMORIES' },
+          {
+            unavailableMessage: t('sidepanel.projectsPage.backendUnavailable'),
+            decode: (value) => decodeMemoryList(value, 'memoryResponse'),
+          },
+        ),
+      ]);
+      if (!loadFence.current.isCurrent(generation)) return;
       applyState(next);
       setMemories(nextMemories);
       setLoadFailed(false);
     } catch (error) {
+      if (!loadFence.current.isCurrent(generation)) return;
       setLoadFailed(true);
       throw error;
     } finally {
-      setLoading(false);
+      if (loadFence.current.isCurrent(generation)) setLoading(false);
     }
   }
 
@@ -158,15 +163,18 @@ export default function ProjectsPage() {
   }
 
   async function refreshCurrentConversation() {
+    const generation = conversationFence.current.begin();
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_CURRENT_DEEPSEEK_CONVERSATION' });
-      if (response?.ok && response.conversation) {
-        setCurrentConversation(response.conversation as CurrentDeepSeekConversation);
-        return;
+      const conversation = await sidepanelRuntimeClient.request(
+        { type: 'GET_CURRENT_DEEPSEEK_CONVERSATION' },
+        { acceptFailure: true, decode: decodeCurrentConversationResponse },
+      );
+      if (conversationFence.current.isCurrent(generation)) {
+        setCurrentConversation(conversation);
       }
-      setCurrentConversation(null);
-    } catch {
-      setCurrentConversation(null);
+    } catch (error) {
+      if (!conversationFence.current.isCurrent(generation)) return;
+      showProjectError(error);
     }
   }
 
@@ -174,13 +182,15 @@ export default function ProjectsPage() {
     if (!name.trim()) return;
     try {
       banner.clear();
-      const response = await chrome.runtime.sendMessage({
-        type: 'CREATE_PROJECT_CONTEXT',
-        payload: { name, instructions },
-      });
-      const project = unwrapProjectResponse<ProjectContext>(
-        response,
-        t('sidepanel.projectsPage.backendUnavailable'),
+      const project = await sidepanelRuntimeClient.request(
+        { type: 'CREATE_PROJECT_CONTEXT', payload: { name, instructions } },
+        {
+          unavailableMessage: t('sidepanel.projectsPage.backendUnavailable'),
+          decode(value) {
+            if (value === null) throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
+            return decodeProjectContext(value, 'CREATE_PROJECT_CONTEXT response');
+          },
+        },
       );
       setName('');
       setInstructions('');
@@ -330,11 +340,10 @@ export default function ProjectsPage() {
     banner.show('error', t('sidepanel.projectsPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
   }
 
-  async function runProjectMutation(message: unknown): Promise<void> {
-    unwrapProjectResponse(
-      await chrome.runtime.sendMessage(message),
-      t('sidepanel.projectsPage.backendUnavailable'),
-    );
+  async function runProjectMutation(message: ProjectMutationRequest): Promise<void> {
+    await sidepanelRuntimeClient.request(message, {
+      unavailableMessage: t('sidepanel.projectsPage.backendUnavailable'),
+    });
   }
 
   return (
@@ -592,8 +601,19 @@ function FolderIcon() {
   );
 }
 
-function unwrapProjectResponse<T = unknown>(response: unknown, missingMessage: string): T {
-  return unwrapRuntimeResponse<T>(response, missingMessage);
+function decodeCurrentConversationResponse(value: unknown): CurrentDeepSeekConversation | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid GET_CURRENT_DEEPSEEK_CONVERSATION response.');
+  }
+  const response = value as Record<string, unknown>;
+  if (response.ok === false) return null;
+  if (response.ok !== true) {
+    throw new Error('Invalid GET_CURRENT_DEEPSEEK_CONVERSATION response.');
+  }
+  return decodeCurrentDeepSeekConversation(
+    response.conversation,
+    'GET_CURRENT_DEEPSEEK_CONVERSATION response.conversation',
+  );
 }
 
 function formatAge(timestamp: number, t: ReturnType<typeof useI18n>['t']): string {

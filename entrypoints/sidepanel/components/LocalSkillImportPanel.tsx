@@ -6,6 +6,7 @@ import type {
   LocalSkillPreviewItem,
 } from '../../../core/types';
 import { useI18n } from '../i18n';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 type ImportState = 'idle' | 'previewing' | 'ready' | 'importing' | 'success' | 'error';
 
@@ -60,13 +61,12 @@ export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
     setMessage('');
     setResult(null);
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sidepanelRuntimeClient.request({
         type: 'PREVIEW_LOCAL_SKILL_SOURCE',
         payload: { rootPath: requestedPath },
       });
-      if (response?.ok === false) throw new Error(response.error ?? t('sidepanel.localSkillImport.previewFailed'));
       if (requestId !== previewRequestIdRef.current || latestPathRef.current.trim() !== requestedPath) return;
-      const nextPreview = response as LocalSkillPreview;
+      const nextPreview = response;
       setPreview(nextPreview);
       setSelectedPaths(new Set(
         nextPreview.skills
@@ -91,13 +91,12 @@ export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
     setMessage('');
     setResult(null);
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sidepanelRuntimeClient.request({
         type: 'PICK_LOCAL_SKILL_FOLDER',
         payload: {
           ...(rootPath.trim() ? { defaultPath: rootPath.trim() } : {}),
         },
       });
-      if (response?.ok === false) throw new Error(response.error ?? t('sidepanel.localSkillImport.pickFailed'));
       const pickedPath = typeof response?.path === 'string' ? response.path.trim() : '';
       if (!pickedPath) throw new Error(t('sidepanel.localSkillImport.pickFailed'));
       setRootPath(pickedPath);
@@ -118,24 +117,27 @@ export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
     setState('importing');
     setMessage('');
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'IMPORT_LOCAL_SKILL_SOURCE',
-        payload: {
-          rootPath: rootPath.trim(),
-          selectedPaths: [...selectedPaths],
-          selectedImportNames: Object.fromEntries(
-            preview.skills
-              .filter((skill) => selectedPaths.has(skill.path))
-              .map((skill) => [skill.path, skill.importName]),
-          ),
+      const response = await sidepanelRuntimeClient.request(
+        {
+          type: 'IMPORT_LOCAL_SKILL_SOURCE',
+          payload: {
+            rootPath: rootPath.trim(),
+            selectedPaths: [...selectedPaths],
+            selectedImportNames: Object.fromEntries(
+              preview.skills
+                .filter((skill) => selectedPaths.has(skill.path))
+                .map((skill) => [skill.path, skill.importName]),
+            ),
+          },
         },
-      });
+        { acceptFailure: true },
+      );
       if (response?.ok === false) {
         const importBlock = readLocalSkillImportBlock(response.importBlock);
         if (importBlock) throw new Error(formatImportBlockMessage(importBlock, t));
         throw new Error(response.error ?? t('sidepanel.localSkillImport.importFailed'));
       }
-      const importResult = response as LocalSkillImportResult;
+      const importResult = response;
       setResult(importResult);
       setState('success');
       setMessage(t('sidepanel.localSkillImport.importedMessage', { count: importResult.imported.length }));

@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BrowserControlSettings,
   BrowserControlState,
   BrowserControlTarget,
-} from '../../../core/browser-control';
+} from '../../../core/browser-control/types';
+import {
+  decodeBrowserControlSettings,
+  decodeBrowserControlState,
+  decodeBrowserControlTarget,
+} from '../../../core/browser-control/codec';
+import { DEFAULT_BROWSER_CONTROL_SETTINGS } from '../../../core/browser-control/settings';
+import { createRequestGenerationFence } from '../async-state';
 import PageIntro from '../components/PageIntro';
 import {
   EmptyState,
@@ -14,23 +21,20 @@ import {
   useBanner,
 } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+import { isSidepanelRuntimeEvent } from '../runtime-event-codec';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 type BusyState = 'idle' | 'loading' | 'saving' | 'targeting' | 'detaching';
 
-const DEFAULT_SETTINGS: BrowserControlSettings = {
-  enabled: false,
-  targetTabId: null,
-  includeSnapshotAfterActions: true,
-  maxSnapshotNodes: 400,
-  maxSnapshotTextBytes: 24_000,
-};
+const BROWSER_CONTROL_UPDATE_EVENTS = ['BROWSER_CONTROL_UPDATED', 'TOOL_DESCRIPTORS_UPDATED'] as const;
 
 export default function BrowserControlPage() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<BrowserControlSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<BrowserControlSettings>(DEFAULT_BROWSER_CONTROL_SETTINGS);
   const [state, setState] = useState<BrowserControlState | null>(null);
   const [busy, setBusy] = useState<BusyState>('loading');
   const banner = useBanner();
+  const loadFence = useRef(createRequestGenerationFence());
 
   const targets = useMemo(
     () => state?.targets ?? [],
@@ -40,26 +44,39 @@ export default function BrowserControlPage() {
   useEffect(() => {
     void load();
 
-    const handler = (msg: { type?: string }) => {
-      if (msg.type === 'BROWSER_CONTROL_UPDATED' || msg.type === 'TOOL_DESCRIPTORS_UPDATED') {
-        void load();
-      }
+    const handler = (message: unknown) => {
+      if (isSidepanelRuntimeEvent(message, BROWSER_CONTROL_UPDATE_EVENTS)) void load();
     };
     chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
+    return () => {
+      loadFence.current.invalidate();
+      chrome.runtime.onMessage.removeListener(handler);
+    };
   }, []);
 
   const load = async () => {
+    const generation = loadFence.current.begin();
     setBusy((current) => current === 'idle' ? 'loading' : current);
     try {
       const [nextSettings, nextState] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_BROWSER_CONTROL_SETTINGS' }),
-        chrome.runtime.sendMessage({ type: 'GET_BROWSER_CONTROL_STATE' }),
-      ]) as [BrowserControlSettings | null, BrowserControlState | null];
-      setSettings(nextSettings ?? DEFAULT_SETTINGS);
+        sidepanelRuntimeClient.request(
+          { type: 'GET_BROWSER_CONTROL_SETTINGS' },
+          { decode: (value) => decodeBrowserControlSettings(value, 'GET_BROWSER_CONTROL_SETTINGS response') },
+        ),
+        sidepanelRuntimeClient.request(
+          { type: 'GET_BROWSER_CONTROL_STATE' },
+          { decode: (value) => decodeBrowserControlState(value, 'GET_BROWSER_CONTROL_STATE response') },
+        ),
+      ]);
+      if (!loadFence.current.isCurrent(generation)) return;
+      setSettings(nextSettings);
       setState(nextState);
+    } catch (error) {
+      if (loadFence.current.isCurrent(generation)) {
+        banner.show('error', error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setBusy('idle');
+      if (loadFence.current.isCurrent(generation)) setBusy('idle');
     }
   };
 
@@ -67,11 +84,11 @@ export default function BrowserControlPage() {
     setBusy('saving');
     banner.clear();
     try {
-      const next = await chrome.runtime.sendMessage({
-        type: 'SAVE_BROWSER_CONTROL_SETTINGS',
-        payload: patch,
-      }) as BrowserControlSettings;
-      setSettings(next ?? settings);
+      const next = await sidepanelRuntimeClient.request(
+        { type: 'SAVE_BROWSER_CONTROL_SETTINGS', payload: patch },
+        { decode: (value) => decodeBrowserControlSettings(value, 'SAVE_BROWSER_CONTROL_SETTINGS response') },
+      );
+      setSettings(next);
       await load();
     } catch (error) {
       banner.show('error', error instanceof Error ? error.message : String(error));
@@ -84,11 +101,11 @@ export default function BrowserControlPage() {
     setBusy('saving');
     banner.clear();
     try {
-      const next = await chrome.runtime.sendMessage({
-        type: 'SET_BROWSER_CONTROL_ENABLED',
-        payload: { enabled },
-      }) as BrowserControlSettings;
-      setSettings(next ?? { ...settings, enabled });
+      const next = await sidepanelRuntimeClient.request(
+        { type: 'SET_BROWSER_CONTROL_ENABLED', payload: { enabled } },
+        { decode: (value) => decodeBrowserControlSettings(value, 'SET_BROWSER_CONTROL_ENABLED response') },
+      );
+      setSettings(next);
       banner.show('success', enabled
         ? t('sidepanel.browserControlPage.messages.enabled')
         : t('sidepanel.browserControlPage.messages.disabled'));
@@ -105,16 +122,28 @@ export default function BrowserControlPage() {
     setBusy('targeting');
     banner.clear();
     try {
-      const result = await chrome.runtime.sendMessage({
-        type: 'SET_BROWSER_CONTROL_TARGET',
-        payload: { tabId: target.id },
-      });
-      if (result?.ok === false) {
-        banner.show('error', String(result.error ?? t('sidepanel.browserControlPage.messages.targetFailed')));
-      } else {
-        banner.show('success', t('sidepanel.browserControlPage.messages.targetSelected', { id: target.id }));
-      }
+      await sidepanelRuntimeClient.request(
+        { type: 'SET_BROWSER_CONTROL_TARGET', payload: { tabId: target.id } },
+        {
+          decode(value) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+              throw new Error(t('sidepanel.browserControlPage.messages.targetFailed'));
+            }
+            const response = value as Record<string, unknown>;
+            if (response.ok !== true) {
+              throw new Error(t('sidepanel.browserControlPage.messages.targetFailed'));
+            }
+            return decodeBrowserControlTarget(
+              response.target,
+              'SET_BROWSER_CONTROL_TARGET response.target',
+            );
+          },
+        },
+      );
+      banner.show('success', t('sidepanel.browserControlPage.messages.targetSelected', { id: target.id }));
       await load();
+    } catch (error) {
+      banner.show('error', error instanceof Error ? error.message : String(error));
     } finally {
       setBusy('idle');
     }
@@ -124,9 +153,11 @@ export default function BrowserControlPage() {
     setBusy('detaching');
     banner.clear();
     try {
-      await chrome.runtime.sendMessage({ type: 'DETACH_BROWSER_CONTROL' });
+      await sidepanelRuntimeClient.request({ type: 'DETACH_BROWSER_CONTROL' });
       banner.show('success', t('sidepanel.browserControlPage.messages.detached'));
       await load();
+    } catch (error) {
+      banner.show('error', error instanceof Error ? error.message : String(error));
     } finally {
       setBusy('idle');
     }

@@ -1,5 +1,6 @@
 import {
   PROJECT_CONTEXT_SCHEMA_VERSION,
+  type CurrentDeepSeekConversation,
   type ProjectContext,
   type ProjectContextState,
   type ProjectConversation,
@@ -66,6 +67,19 @@ export function decodeProjectConversation(
     addedAt: finiteNumber(object.addedAt, `${path}.addedAt`),
     lastSeenAt: finiteNumber(object.lastSeenAt, `${path}.lastSeenAt`),
   } as ProjectConversation;
+}
+
+export function decodeCurrentDeepSeekConversation(
+  value: unknown,
+  path = 'currentDeepSeekConversation',
+): CurrentDeepSeekConversation {
+  const object = recordValue(value, path);
+  return {
+    ...object,
+    conversationId: requiredString(object.conversationId, `${path}.conversationId`),
+    title: requiredString(object.title, `${path}.title`),
+    url: requiredString(object.url, `${path}.url`),
+  } as CurrentDeepSeekConversation;
 }
 
 export function removeProjectFromLegacyFields(

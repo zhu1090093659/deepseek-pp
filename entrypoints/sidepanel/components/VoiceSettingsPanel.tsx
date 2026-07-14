@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_VOICE_SETTINGS,
   detectVoiceCapabilities,
@@ -6,32 +6,63 @@ import {
   type VoiceCapabilityState,
   type VoiceSettings,
 } from '../../../core/voice/settings';
+import { createRequestGenerationFence } from '../async-state';
 import { useI18n } from '../i18n';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 export default function VoiceSettingsPanel() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
   const [capabilities, setCapabilities] = useState<VoiceCapabilityState>(detectVoiceCapabilities());
+  const loadFence = useRef(createRequestGenerationFence());
+  const saveFence = useRef(createRequestGenerationFence());
 
   useEffect(() => {
     const localCapabilities = detectVoiceCapabilities();
+    const generation = loadFence.current.begin();
     Promise.all([
-      chrome.runtime.sendMessage({ type: 'GET_VOICE_SETTINGS' }),
-      chrome.runtime.sendMessage({ type: 'GET_VOICE_CAPABILITIES' }),
+      sidepanelRuntimeClient.request(
+        { type: 'GET_VOICE_SETTINGS' },
+        { decode: normalizeVoiceSettings },
+      ),
+      sidepanelRuntimeClient.request(
+        { type: 'GET_VOICE_CAPABILITIES' },
+        { decode: normalizeVoiceCapabilities },
+      ),
     ]).then(([voiceSettings, voiceCapabilities]) => {
-      setSettings(normalizeVoiceSettings(voiceSettings));
+      if (!loadFence.current.isCurrent(generation)) return;
+      setSettings(voiceSettings);
       setCapabilities({
         speechRecognition: localCapabilities.speechRecognition || voiceCapabilities?.speechRecognition === true,
         speechSynthesis: localCapabilities.speechSynthesis || voiceCapabilities?.speechSynthesis === true,
       });
-    }).catch(() => undefined);
+    }).catch((error) => {
+      if (loadFence.current.isCurrent(generation)) {
+        console.error('Failed to load voice settings', error);
+      }
+    });
+    return () => {
+      loadFence.current.invalidate();
+      saveFence.current.invalidate();
+    };
   }, []);
 
   const save = async (patch: Partial<VoiceSettings>) => {
     const next = normalizeVoiceSettings({ ...settings, ...patch });
     setSettings(next);
-    const saved = await chrome.runtime.sendMessage({ type: 'SAVE_VOICE_SETTINGS', payload: next });
-    setSettings(normalizeVoiceSettings(saved));
+    loadFence.current.invalidate();
+    const generation = saveFence.current.begin();
+    try {
+      const saved = await sidepanelRuntimeClient.request(
+        { type: 'SAVE_VOICE_SETTINGS', payload: next },
+        { decode: normalizeVoiceSettings },
+      );
+      if (saveFence.current.isCurrent(generation)) setSettings(saved);
+    } catch (error) {
+      if (saveFence.current.isCurrent(generation)) {
+        console.error('Failed to save voice settings', error);
+      }
+    }
   };
 
   return (
@@ -78,6 +109,16 @@ export default function VoiceSettingsPanel() {
       </div>
     </section>
   );
+}
+
+function normalizeVoiceCapabilities(value: unknown): VoiceCapabilityState {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    speechRecognition: record.speechRecognition === true,
+    speechSynthesis: record.speechSynthesis === true,
+  };
 }
 
 function VoiceToggle({

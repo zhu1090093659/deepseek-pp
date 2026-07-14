@@ -6,11 +6,12 @@ import PresetCard from '../components/PresetCard';
 import PresetForm from '../components/PresetForm';
 import { SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+import { createRequestGenerationFence } from '../async-state';
 import {
   decodeRuntimeResponse,
   getRuntimeErrorMessage,
-  unwrapRuntimeResponse,
 } from '../runtime-response';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 export default function PresetPage() {
   const { t } = useI18n();
@@ -21,6 +22,7 @@ export default function PresetPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SystemPromptPreset | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
@@ -31,39 +33,53 @@ export default function PresetPage() {
   };
 
   const load = async () => {
+    const generation = loadFence.current.begin();
     try {
-      const [listResponse, activeResponse] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_PRESETS' }),
-        chrome.runtime.sendMessage({ type: 'GET_ACTIVE_PRESET' }),
+      const [list, active] = await Promise.all([
+        sidepanelRuntimeClient.request(
+          { type: 'GET_PRESETS' },
+          {
+            unavailableMessage: t('sidepanel.presetPage.backendUnavailable'),
+            decode: (value) => decodePresetCollection(value, 'presetResponse'),
+          },
+        ),
+        sidepanelRuntimeClient.request(
+          { type: 'GET_ACTIVE_PRESET' },
+          {
+            acceptFailure: true,
+            unavailableMessage: t('sidepanel.presetPage.backendUnavailable'),
+            decode: (value) => decodeRuntimeResponse(
+              value,
+              (candidate) => decodeActivePreset(candidate, 'activePresetResponse'),
+              t('sidepanel.presetPage.backendUnavailable'),
+            ),
+          },
+        ),
       ]);
-      const list = decodePresetCollection(
-        unwrapRuntimeResponse(listResponse, t('sidepanel.presetPage.backendUnavailable')),
-        'presetResponse',
-      );
-      const active = decodeRuntimeResponse(
-        activeResponse,
-        (value) => decodeActivePreset(value, 'activePresetResponse'),
-        t('sidepanel.presetPage.backendUnavailable'),
-      );
+      if (!loadFence.current.isCurrent(generation)) return;
       setPresets(list);
       setActiveId(active?.id ?? null);
       setLoadFailed(false);
     } catch (error) {
+      if (!loadFence.current.isCurrent(generation)) return;
       setLoadFailed(true);
       showOperationError(error);
     } finally {
-      setLoading(false);
+      if (loadFence.current.isCurrent(generation)) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    void load();
+    return () => loadFence.current.invalidate();
+  }, []);
 
   const handleSave = async (preset: SystemPromptPreset) => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'SAVE_PRESET', payload: preset }),
-        t('sidepanel.presetPage.backendUnavailable'),
+      await sidepanelRuntimeClient.request(
+        { type: 'SAVE_PRESET', payload: preset },
+        { unavailableMessage: t('sidepanel.presetPage.backendUnavailable') },
       );
       setShowForm(false);
       setEditing(undefined);
@@ -85,8 +101,7 @@ export default function PresetPage() {
       for (const { name, content } of entries) {
         if (!content) continue;
         const now = Date.now();
-        unwrapRuntimeResponse(
-          await chrome.runtime.sendMessage({
+        await sidepanelRuntimeClient.request({
             type: 'SAVE_PRESET',
             payload: {
               id: crypto.randomUUID(),
@@ -95,9 +110,7 @@ export default function PresetPage() {
               createdAt: now,
               updatedAt: now,
             } satisfies SystemPromptPreset,
-          }),
-          t('sidepanel.presetPage.backendUnavailable'),
-        );
+          }, { unavailableMessage: t('sidepanel.presetPage.backendUnavailable') });
       }
       await load();
     } catch (error) {
@@ -118,9 +131,9 @@ export default function PresetPage() {
     if (!ok) return;
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'DELETE_PRESET', payload: { id } }),
-        t('sidepanel.presetPage.backendUnavailable'),
+      await sidepanelRuntimeClient.request(
+        { type: 'DELETE_PRESET', payload: { id } },
+        { unavailableMessage: t('sidepanel.presetPage.backendUnavailable') },
       );
       await load();
     } catch (error) {
@@ -131,9 +144,9 @@ export default function PresetPage() {
   const handleActivate = async (id: string) => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id } }),
-        t('sidepanel.presetPage.backendUnavailable'),
+      await sidepanelRuntimeClient.request(
+        { type: 'SET_ACTIVE_PRESET', payload: { id } },
+        { unavailableMessage: t('sidepanel.presetPage.backendUnavailable') },
       );
       await load();
     } catch (error) {
@@ -144,9 +157,9 @@ export default function PresetPage() {
   const handleDeactivate = async () => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'SET_ACTIVE_PRESET', payload: { id: null } }),
-        t('sidepanel.presetPage.backendUnavailable'),
+      await sidepanelRuntimeClient.request(
+        { type: 'SET_ACTIVE_PRESET', payload: { id: null } },
+        { unavailableMessage: t('sidepanel.presetPage.backendUnavailable') },
       );
       await load();
     } catch (error) {

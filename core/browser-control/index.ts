@@ -14,6 +14,12 @@ export {
   setBrowserControlEnabled,
 } from './settings';
 
+export {
+  decodeBrowserControlSettings,
+  decodeBrowserControlState,
+  decodeBrowserControlTarget,
+} from './codec';
+
 export type {
   BrowserActionResult,
   BrowserControlSettings,

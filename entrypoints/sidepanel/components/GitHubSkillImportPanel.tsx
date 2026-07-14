@@ -6,6 +6,7 @@ import type {
 } from '../../../core/types';
 import { requestGitHubApiPermission } from '../github-permission';
 import { useI18n } from '../i18n';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 type ImportState = 'idle' | 'previewing' | 'ready' | 'importing' | 'success' | 'error';
 
@@ -47,13 +48,12 @@ export default function GitHubSkillImportPanel({ onImported, onCancel }: Props) 
     try {
       const granted = await requestGitHubApiPermission();
       if (!granted) throw new Error(t('sidepanel.githubSkillImport.permissionError'));
-      const response = await chrome.runtime.sendMessage({
+      const response = await sidepanelRuntimeClient.request({
         type: 'PREVIEW_GITHUB_SKILL_SOURCE',
         payload: { url: requestedUrl },
       });
-      if (response?.ok === false) throw new Error(response.error ?? t('sidepanel.githubSkillImport.previewFailed'));
       if (requestId !== previewRequestIdRef.current || latestUrlRef.current.trim() !== requestedUrl) return;
-      const nextPreview = response as GitHubSkillPreview;
+      const nextPreview = response;
       setPreview(nextPreview);
       setSelectedPaths(new Set(nextPreview.skills.map((skill) => skill.path)));
       setState('ready');
@@ -71,15 +71,14 @@ export default function GitHubSkillImportPanel({ onImported, onCancel }: Props) 
     setState('importing');
     setMessage('');
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await sidepanelRuntimeClient.request({
         type: 'IMPORT_GITHUB_SKILL_SOURCE',
         payload: {
           url: url.trim(),
           selectedPaths: [...selectedPaths],
         },
       });
-      if (response?.ok === false) throw new Error(response.error ?? t('sidepanel.githubSkillImport.importFailed'));
-      const importResult = response as GitHubSkillImportResult;
+      const importResult = response;
       setResult(importResult);
       setState('success');
       setMessage(t('sidepanel.githubSkillImport.importedMessage', { count: importResult.imported.length }));

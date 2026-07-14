@@ -45,13 +45,14 @@ export interface SidepanelRuntimeRequestOptions<TResult> {
 }
 
 export interface SidepanelRuntimeClient {
-  request<TRequest extends AnyTypedRuntimeCommandRequest>(
-    request: TRequest,
-  ): Promise<RuntimeResponseFor<TRequest>>;
   request<TRequest extends AnyTypedRuntimeCommandRequest, TResult>(
     request: TRequest,
     options: SidepanelRuntimeRequestOptions<TResult> & { decode: (value: unknown) => TResult },
   ): Promise<TResult>;
+  request<TRequest extends AnyTypedRuntimeCommandRequest>(
+    request: TRequest,
+    options?: Omit<SidepanelRuntimeRequestOptions<RuntimeResponseFor<TRequest>>, 'decode'>,
+  ): Promise<RuntimeResponseFor<TRequest>>;
 }
 
 export function createSidepanelRuntimeClient(

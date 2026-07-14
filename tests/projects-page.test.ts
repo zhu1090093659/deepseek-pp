@@ -223,6 +223,40 @@ describe('ProjectsPage', () => {
 
     expect(container.textContent).toContain('update failed');
   });
+
+  it('does not let an older read replace a newer runtime invalidation reload', async () => {
+    const stale = deferred<unknown>();
+    const newestState: ProjectContextState = {
+      ...EMPTY_PROJECT_STATE,
+      projects: [createProject('project-newest', 'Newest project')],
+    };
+    let projectReads = 0;
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') {
+        projectReads += 1;
+        return projectReads === 1 ? stale.promise : newestState;
+      }
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: false, error: 'none' };
+      return { ok: true };
+    });
+
+    await renderProjectsPage(sendMessage);
+    await act(async () => {
+      runtimeListeners.forEach((listener) => listener({ type: 'PROJECT_CONTEXT_UPDATED' }));
+    });
+    await settle();
+    expect(container.textContent).toContain('Newest project');
+
+    stale.resolve({
+      ...EMPTY_PROJECT_STATE,
+      projects: [createProject('project-stale', 'Stale project')],
+    });
+    await settle();
+
+    expect(container.textContent).toContain('Newest project');
+    expect(container.textContent).not.toContain('Stale project');
+  });
 });
 
 async function renderProjectsPage(sendMessage: ReturnType<typeof vi.fn>) {
@@ -310,4 +344,20 @@ function createProjectMemory(id: string, name: string) {
     accessCount: 0,
     lastAccessedAt: 1,
   };
+}
+
+async function settle() {
+  for (let index = 0; index < 5; index += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

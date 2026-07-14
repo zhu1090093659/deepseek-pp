@@ -13,6 +13,7 @@ export { PROJECT_CONTEXT_SCHEMA_VERSION } from './types';
 
 export {
   createEmptyProjectContextState,
+  decodeCurrentDeepSeekConversation,
   decodeProjectContext,
   decodeProjectContextState,
   decodeProjectConversation,

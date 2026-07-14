@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LocaleMessageKey, MessageParams, SupportedLocale } from '../../../core/i18n';
 import type { GitHubSkillSource, GitHubSkillUpdatePreview, Skill, SkillImportSource } from '../../../core/types';
 import { decodeSkillLibrary, decodeSkillSourceCollection } from '../../../core/skill/codec';
@@ -10,7 +10,9 @@ import SkillForm from '../components/SkillForm';
 import { SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
 import { requestGitHubApiPermission } from '../github-permission';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { createRequestGenerationFence } from '../async-state';
+import { getRuntimeErrorMessage } from '../runtime-response';
+import { sidepanelRuntimeClient } from '../runtime-client';
 
 interface SkillSectionProps {
   title: string;
@@ -68,6 +70,7 @@ export default function SkillPage() {
   const [expandedThirdPartyGroups, setExpandedThirdPartyGroups] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const loadFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
@@ -78,31 +81,41 @@ export default function SkillPage() {
   };
 
   const load = async () => {
+    const generation = loadFence.current.begin();
     try {
-      const [listResponse, sourceResponse] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_SKILL_LIBRARY' }),
-        chrome.runtime.sendMessage({ type: 'GET_SKILL_SOURCES' }),
+      const [list, sources] = await Promise.all([
+        sidepanelRuntimeClient.request(
+          { type: 'GET_SKILL_LIBRARY' },
+          {
+            unavailableMessage: t('sidepanel.skillPage.backendUnavailable'),
+            decode: (value) => decodeSkillLibrary(value, 'skillLibraryResponse'),
+          },
+        ),
+        sidepanelRuntimeClient.request(
+          { type: 'GET_SKILL_SOURCES' },
+          {
+            unavailableMessage: t('sidepanel.skillPage.backendUnavailable'),
+            decode: (value) => decodeSkillSourceCollection(value, 'skillSourceResponse'),
+          },
+        ),
       ]);
-      const list = decodeSkillLibrary(
-        unwrapRuntimeResponse(listResponse, t('sidepanel.skillPage.backendUnavailable')),
-        'skillLibraryResponse',
-      );
-      const sources = decodeSkillSourceCollection(
-        unwrapRuntimeResponse(sourceResponse, t('sidepanel.skillPage.backendUnavailable')),
-        'skillSourceResponse',
-      );
+      if (!loadFence.current.isCurrent(generation)) return;
       setSkills(list);
       setSkillSources(sources);
       setLoadFailed(false);
     } catch (error) {
+      if (!loadFence.current.isCurrent(generation)) return;
       setLoadFailed(true);
       showOperationError(error);
     } finally {
-      setLoading(false);
+      if (loadFence.current.isCurrent(generation)) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [locale]);
+  useEffect(() => {
+    void load();
+    return () => loadFence.current.invalidate();
+  }, [locale]);
 
   const closeForm = () => {
     setShowForm(false);
@@ -129,9 +142,9 @@ export default function SkillPage() {
   const handleDelete = async (name: string) => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'DELETE_SKILL', payload: { name } }),
-        t('sidepanel.skillPage.backendUnavailable'),
+      await sidepanelRuntimeClient.request(
+        { type: 'DELETE_SKILL', payload: { name } },
+        { unavailableMessage: t('sidepanel.skillPage.backendUnavailable') },
       );
       if (editingSkill?.name === name) closeForm();
       await load();
@@ -143,12 +156,12 @@ export default function SkillPage() {
   const handleToggleEnabled = async (skill: Skill) => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({
+      await sidepanelRuntimeClient.request(
+        {
           type: 'SET_SKILL_ENABLED',
           payload: { name: skill.name, enabled: skill.enabled === false },
-        }),
-        t('sidepanel.skillPage.backendUnavailable'),
+        },
+        { unavailableMessage: t('sidepanel.skillPage.backendUnavailable') },
       );
       await load();
     } catch (error) {
@@ -160,14 +173,14 @@ export default function SkillPage() {
     const shouldEnable = group.skills.some((skill) => skill.enabled === false);
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({
+      await sidepanelRuntimeClient.request(
+        {
           type: 'SET_SKILLS_ENABLED',
           payload: {
             updates: group.skills.map((skill) => ({ name: skill.name, enabled: shouldEnable })),
           },
-        }),
-        t('sidepanel.skillPage.backendUnavailable'),
+        },
+        { unavailableMessage: t('sidepanel.skillPage.backendUnavailable') },
       );
       await load();
     } catch (error) {
@@ -185,12 +198,12 @@ export default function SkillPage() {
   const handleSave = async (skill: Skill) => {
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({
+      await sidepanelRuntimeClient.request(
+        {
           type: 'SAVE_SKILL',
           payload: editingSkill ? { skill, previousName: editingSkill.name } : skill,
-        }),
-        t('sidepanel.skillPage.backendUnavailable'),
+        },
+        { unavailableMessage: t('sidepanel.skillPage.backendUnavailable') },
       );
       closeForm();
       await load();
@@ -207,13 +220,10 @@ export default function SkillPage() {
     try {
       const granted = await requestGitHubApiPermission();
       if (!granted) throw new Error(t('sidepanel.skillPage.checkPermissionError'));
-      const update = unwrapRuntimeResponse<GitHubSkillUpdatePreview>(
-        await chrome.runtime.sendMessage({
+      const update = await sidepanelRuntimeClient.request({
           type: 'CHECK_GITHUB_SKILL_SOURCE_UPDATES',
           payload: { sourceId: source.id },
-        }),
-        t('sidepanel.skillPage.checkFailed'),
-      );
+        }, { unavailableMessage: t('sidepanel.skillPage.checkFailed') });
       setSourceActions((current) => ({
         ...current,
         [source.id]: {
@@ -242,13 +252,10 @@ export default function SkillPage() {
     try {
       const granted = await requestGitHubApiPermission();
       if (!granted) throw new Error(t('sidepanel.skillPage.syncPermissionError'));
-      const response = unwrapRuntimeResponse<{ imported: Skill[] }>(
-        await chrome.runtime.sendMessage({
+      const response = await sidepanelRuntimeClient.request({
           type: 'UPDATE_GITHUB_SKILL_SOURCE',
           payload: { sourceId: source.id },
-        }),
-        t('sidepanel.skillPage.syncFailed'),
-      );
+        }, { unavailableMessage: t('sidepanel.skillPage.syncFailed') });
       setSourceActions((current) => ({
         ...current,
         [source.id]: {
@@ -284,12 +291,12 @@ export default function SkillPage() {
     if (!ok) return;
     try {
       banner.clear();
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({
+      await sidepanelRuntimeClient.request(
+        {
           type: 'DELETE_GITHUB_SKILL_SOURCE',
           payload: { sourceId: source.id },
-        }),
-        t('sidepanel.skillPage.backendUnavailable'),
+        },
+        { unavailableMessage: t('sidepanel.skillPage.backendUnavailable') },
       );
       setSourceActions((current) => {
         const next = { ...current };
