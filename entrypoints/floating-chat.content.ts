@@ -6,7 +6,7 @@
  * storage key (default ON). Lives on its own content script so the DeepSeek-only
  * content script does not run on unrelated sites.
  */
-import { startChatLauncher } from './content/adapters/chat-launcher';
+import { startChatLauncherPageLifecycle } from './content/adapters/chat-launcher-page-lifecycle';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -17,6 +17,6 @@ export default defineContentScript({
     if (location.hostname === 'chat.deepseek.com' || location.hostname.endsWith('.deepseek.com')) {
       return;
     }
-    startChatLauncher();
+    startChatLauncherPageLifecycle();
   },
 });
