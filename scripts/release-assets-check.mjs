@@ -228,8 +228,8 @@ function inspectBundledSkillPackage(browser, zipFile) {
 
   const expectedPayloadEntries = Object.entries(bundledSkillGroups)
     .flatMap(([group, paths]) => paths.map((path) => `${group}/${path}`))
-    .sort();
-  const expectedBuildEntries = ['manifest.json', ...expectedPayloadEntries].sort();
+    .sort(comparePaths);
+  const expectedBuildEntries = ['manifest.json', ...expectedPayloadEntries].sort(comparePaths);
   assertExactEntries(collectFiles(buildDir), expectedBuildEntries, `${browser} build bundled Skill assets`);
 
   const buildManifest = JSON.parse(readFileSync(buildManifestPath, 'utf8'));
@@ -238,7 +238,7 @@ function inspectBundledSkillPackage(browser, zipFile) {
   const zipEntries = readZipListing(zipFile)
     .filter((entry) => entry.startsWith('bundled-skills/') && !entry.endsWith('/'))
     .map((entry) => entry.slice('bundled-skills/'.length))
-    .sort();
+    .sort(comparePaths);
   assertExactEntries(zipEntries, expectedBuildEntries, `${browser} zip bundled Skill assets`);
   const zipManifest = readZipJson(zipFile, 'bundled-skills/manifest.json');
   if (zipManifest) assertBundledSkillManifest(zipManifest, `${browser} zip bundled Skill manifest`);
@@ -358,7 +358,11 @@ function collectFiles(directory, prefix = '') {
       files.push(path);
     }
   }
-  return files.sort();
+  return files.sort(comparePaths);
+}
+
+function comparePaths(left, right) {
+  return left.localeCompare(right);
 }
 
 function assertExactEntries(actual, expected, label) {

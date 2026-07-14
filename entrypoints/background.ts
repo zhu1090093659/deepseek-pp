@@ -626,6 +626,7 @@ type ActionApi = {
 export default defineBackground(() => {
   void syncLocalRecoveryBarrier.ensureReady().catch(() => undefined);
   enableSidePanelActionClick();
+  registerContextMenuClickListener();
   registerWhatsNewInstallListener();
   registerAutomationAlarmListener();
   refreshBackgroundLocale()
@@ -782,7 +783,11 @@ async function createContextMenus() {
   }
 }
 
-chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+function registerContextMenuClickListener(): void {
+  chrome.contextMenus.onClicked.addListener(async (
+    info: chrome.contextMenus.OnClickData,
+    tab?: chrome.tabs.Tab,
+  ) => {
     if (!info.selectionText) return;
     const selectedText = info.selectionText.trim();
     if (!selectedText) return;
@@ -815,7 +820,8 @@ chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnCli
         .catch((error) => reportBackgroundStartupError('scenario_context_menu_failed', error));
       return;
     }
-});
+  });
+}
 
 async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
   // Persist to storage as a fallback because the sidepanel may not be ready for messages yet.
