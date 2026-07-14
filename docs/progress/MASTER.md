@@ -117,7 +117,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Current Status
 
-**Active Phase**: Publication closure — Phase 4, Phase 5, and Phase 6 implementation plus the complete PC compatibility/package matrix are finished in the batch branch; their Issues remain open until the one batch PR merges.
+**Active Phase**: Publication closure — Phase 4, Phase 5, and Phase 6 implementation plus the complete PC compatibility/package matrix are finished in [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394); their Issues remain open until it merges.
 
 **Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries. Execution telemetry is recorded on every Issue and [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) is the sole publication path; the Issues remain open until it merges.
 
@@ -375,8 +375,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Keep [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) on its final head until hosted quality and contribution-evidence checks finish.
-2. Merge PR #394 after review; its closing keywords then close #362–#379 together.
+1. Review and merge [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394); its closing keywords then close #362–#379 together.
+2. After merge, record the final merge SHA and verify the Issue/Milestone closure counts.
 
 ## Session Log
 
@@ -474,4 +474,4 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | Post-integration checkpoint | Passed 20 files / 160 integrated targeted tests, TypeScript, seven prompt goldens, Chrome build, and unchanged Side Panel budgets. Real Chrome Content smoke was not executable because Chrome 150 did not load the command-line unpacked extension; this is recorded as a gap rather than a pass. |
 | 2026-07-14 | R5.1 audit start | Static checks find one Background listener, zero legacy router symbols, one Side Panel request transport, no permanent Content route poller, and zero SCCs across 350 core/entrypoint source files; independent review remains in progress. |
 | 2026-07-14 | Final local closure | Closed five bounded R5.1 findings, passed 6 files / 107 targeted tests and the complete 161-file / 1,166-test `ci:quality` matrix, and recorded the real Chrome Content smoke as an explicit non-pass gap. |
-| 2026-07-14 | Batch publication | Recorded execution telemetry on #362–#379, pushed the single integration branch, and opened ready PR #394 as the sole closing path. Hosted quality is pending on the final documentation-synchronized head. |
+| 2026-07-14 | Batch publication | Recorded execution telemetry on #362–#379, pushed the single integration branch, and opened ready PR #394 as the sole closing path; review and merge are the remaining publication steps. |
