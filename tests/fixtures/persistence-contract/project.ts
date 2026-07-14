@@ -51,15 +51,49 @@ export const PROJECT_V2_STATE = {
   pendingProjectId: 'project-v2',
 } as const;
 
-export const PROJECT_V1_MIGRATION_REQUIREMENT = {
-  name: 'released project v1 state is silently reset to empty v2 state',
-  input: PROJECT_V1_STATE,
-  currentOutput: {
+export const PROJECT_V1_MIGRATED_STATE = {
+  ...PROJECT_V1_STATE,
+  schemaVersion: 2,
+  conversations: [],
+  pendingProjectId: null,
+} as const;
+
+export const PROJECT_V1_EMPTY_OPTIONAL_SOURCE_STATE = {
+  schemaVersion: 1,
+  projects: [{
+    id: 'project-empty-source',
+    name: 'Manual project',
+    description: '',
+    instructions: '',
+    source: {
+      kind: 'manual',
+      label: 'Manual project',
+      url: '',
+      owner: '',
+      repo: '',
+      ref: '',
+      importedAt: 320,
+    },
+    createdAt: 320,
+    updatedAt: 320,
+  }],
+  files: [],
+  activeProjectId: 'project-empty-source',
+  activeFileIds: [],
+} as const;
+
+export const PROJECT_REJECTED_STATES = {
+  future: {
+    schemaVersion: 3,
+    projects: PROJECT_V2_STATE.projects,
+    conversations: PROJECT_V2_STATE.conversations,
+    pendingProjectId: PROJECT_V2_STATE.pendingProjectId,
+    futureField: 'preserve-me',
+  },
+  corrupt: {
     schemaVersion: 2,
-    projects: [],
+    projects: 'not-an-array',
     conversations: [],
     pendingProjectId: null,
   },
-  classification: 'current-data-loss-gap',
-  target: 'migrate-v1-without-overwrite-after-T3.3',
 } as const;

@@ -32,6 +32,7 @@ describe('sync-owned local-state mutation lock', () => {
       'core/preset/store.ts',
       'core/project/store.ts',
       'core/saved-items/store.ts',
+      'core/scenario/store.ts',
       'core/skill/registry.ts',
     ]) {
       expect(readFileSync(path, 'utf8')).toContain('withSyncLocalStateLock');

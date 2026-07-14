@@ -5,6 +5,7 @@ export const SCENARIO_STORAGE = [
     template: 'Custom summary template: {text}',
     builtIn: true,
     enabled: false,
+    additiveField: { preserve: true },
   },
   {
     id: 'custom_contract',
@@ -12,11 +13,16 @@ export const SCENARIO_STORAGE = [
     template: 'Preserve exactly: {text}',
     builtIn: false,
     enabled: true,
+    additiveField: { preserve: 'custom' },
   },
 ] as const;
 
-export const SCENARIO_CURRENT_GAP = {
-  name: 'storage read failures silently return built-ins and a later save can overwrite unread data',
-  currentBehavior: 'default-builtins-on-any-read-error',
-  target: 'surface-read-failure-without-overwrite-after-T3.3',
+export const SCENARIO_REJECTED_STATES = {
+  future: {
+    schemaVersion: 2,
+    items: SCENARIO_STORAGE,
+  },
+  corrupt: {
+    scenarios: SCENARIO_STORAGE,
+  },
 } as const;

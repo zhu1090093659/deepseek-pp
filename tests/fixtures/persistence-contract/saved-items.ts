@@ -17,9 +17,12 @@ export const SAVED_ITEMS_V1_STATE = {
   items: [SAVED_ITEM],
 } as const;
 
-export const SAVED_ITEMS_FUTURE_VERSION_GAP = {
-  name: 'local decoder silently downgrades an explicit future saved-items version',
-  input: { schemaVersion: 2, items: [SAVED_ITEM], futureField: 'preserve-me' },
-  currentOutput: SAVED_ITEMS_V1_STATE,
-  target: 'reject-without-overwrite-after-T3.3',
+export const SAVED_ITEMS_VERSIONLESS_STATE = {
+  items: SAVED_ITEMS_V1_STATE.items,
+  additiveField: { preserve: true },
+} as const;
+
+export const SAVED_ITEMS_REJECTED_STATES = {
+  future: { schemaVersion: 2, items: [SAVED_ITEM], futureField: 'preserve-me' },
+  corrupt: { schemaVersion: 1, items: null },
 } as const;

@@ -15,7 +15,7 @@ import {
 } from '../project/store';
 import {
   SAVED_ITEMS_STORAGE_KEY,
-  replaceAllSavedItemsForSyncApply,
+  replaceSavedItemsStateForSyncApply,
 } from '../saved-items/store';
 import {
   SKILLS_STORAGE_KEY,
@@ -117,7 +117,7 @@ async function applyStep(step: SyncApplyStep, plan: SyncLocalApplyPlan): Promise
       return;
     case 'savedItems':
       if (!snapshot.savedItems) throw new Error('Saved items apply step was not staged');
-      await replaceAllSavedItemsForSyncApply(snapshot.savedItems.items);
+      await replaceSavedItemsStateForSyncApply(snapshot.savedItems);
       return;
   }
 }

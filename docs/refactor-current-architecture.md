@@ -9,6 +9,7 @@ This document replaces stale active planning documents. It describes the code th
 - `core/deepseek/active-client.ts` composes the active DeepSeek transport behind an injected automation port. Pure request/SSE codecs live beside it, `core/network/request-policy.ts` owns caller deadlines and UTF-8 body budgets, and `adapter.ts` is only a compatibility export for inline-agent/background callers not yet renamed.
 - `core/interceptor/fetch-hook.ts` is the passive page adapter over the shared DeepSeek route/SSE codecs. It injects memory/Skill/preset/tool context, strips executable tool XML from visible streams/history/IndexedDB cache, tracks token speed, and reports response-complete metadata.
 - `entrypoints/content.ts` is the isolated-world coordinator for runtime state, main-world messages, tool execution blocks, inline-agent traces, token speed UI, theme/background sync, and the pet overlay.
+- `core/persistence/versioned-repository.ts` owns the narrow raw storage-slot and versioned repository contract used by Project, Saved Items, and Scenario. Each domain owns one pure codec reused by local storage, sync, and Side Panel boundaries; legal legacy reads do not write eagerly, while future/corrupt state fails closed before replacement.
 
 ## Refactor Direction
 

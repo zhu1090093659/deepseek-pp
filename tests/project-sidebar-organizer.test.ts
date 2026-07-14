@@ -33,7 +33,10 @@ const labels: ProjectSidebarOrganizerLabels = {
 };
 
 let sendMessage: ReturnType<typeof vi.fn>;
-let runtimeListeners: Set<(message: { type?: string; state?: unknown }) => void>;
+let runtimeListeners: Set<(
+  message: { type?: string; state?: unknown },
+  sender: chrome.runtime.MessageSender,
+) => void>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -42,12 +45,20 @@ beforeEach(() => {
   sendMessage = vi.fn();
   vi.stubGlobal('chrome', {
     runtime: {
+      id: 'extension-id',
+      getURL: vi.fn((path: string) => `chrome-extension://extension-id${path}`),
       sendMessage,
       onMessage: {
-        addListener: vi.fn((listener: (message: { type?: string; state?: unknown }) => void) => {
+        addListener: vi.fn((listener: (
+          message: { type?: string; state?: unknown },
+          sender: chrome.runtime.MessageSender,
+        ) => void) => {
           runtimeListeners.add(listener);
         }),
-        removeListener: vi.fn((listener: (message: { type?: string; state?: unknown }) => void) => {
+        removeListener: vi.fn((listener: (
+          message: { type?: string; state?: unknown },
+          sender: chrome.runtime.MessageSender,
+        ) => void) => {
           runtimeListeners.delete(listener);
         }),
       },
@@ -158,6 +169,61 @@ describe('DeepSeek project sidebar organizer', () => {
 
     expect(row).not.toBeNull();
     expect(document.querySelector('.dpp-project-sidebar__project-row')).toBe(row);
+    controller.stop();
+  });
+
+  it('projects invalid repository responses through the shared Project codec', async () => {
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') {
+        return {
+          schemaVersion: 2,
+          projects: [{ id: 'incomplete-project' }],
+          conversations: [],
+          pendingProjectId: null,
+        };
+      }
+      return { ok: true };
+    });
+    mountHistoryDom();
+
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+
+    expect(document.getElementById('dpp-project-sidebar')?.textContent)
+      .toContain('项目操作失败：projectSidebarState.projects[0].name must be a non-empty string');
+    controller.stop();
+  });
+
+  it('keeps the last valid Project sidebar state when a corrupt update is broadcast', async () => {
+    const state = createProjectState();
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      return { ok: true };
+    });
+    mountHistoryDom();
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+
+    for (const listener of runtimeListeners) {
+      listener({
+        type: 'PROJECT_CONTEXT_UPDATED',
+        state: {
+          schemaVersion: 2,
+          projects: [{ id: 'incomplete-project' }],
+          conversations: [],
+          pendingProjectId: null,
+        },
+      }, {
+        id: 'extension-id',
+        url: 'chrome-extension://extension-id/background.js',
+      });
+    }
+    await flushProjectSidebar();
+
+    expect(document.getElementById('dpp-project-sidebar')?.textContent)
+      .toContain('项目操作失败：projectSidebarUpdate.projects[0].name must be a non-empty string');
+    expect(document.querySelector('.dpp-project-sidebar__project-name')?.textContent)
+      .toBe('deepseek-pp');
     controller.stop();
   });
 

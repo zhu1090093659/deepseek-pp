@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { SavedItem, SavedItemInput, SavedItemKind } from '../../../core/saved-items';
+import { decodeSavedItemsState } from '../../../core/saved-items/codec';
+import type { SavedItem, SavedItemInput, SavedItemKind } from '../../../core/saved-items/types';
 import { createSavedItemsJsonArtifact, createSavedItemsMarkdownArtifact, type SecondaryExportArtifact } from '../../../core/export/secondary-artifacts';
 import PageIntro from '../components/PageIntro';
 import { SegmentedControl, SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
@@ -11,6 +12,7 @@ export default function SavedPage() {
   const { t } = useI18n();
   const [items, setItems] = useState<SavedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<SavedItemKind>('snippet');
   const [title, setTitle] = useState('');
@@ -20,16 +22,32 @@ export default function SavedPage() {
   const { confirm, node: confirmNode } = useConfirm();
 
   const load = async () => {
-    const result = await chrome.runtime.sendMessage({ type: 'GET_SAVED_ITEMS' });
-    setItems(Array.isArray(result) ? result : []);
-    setLoading(false);
+    try {
+      const result = unwrapRuntimeResponse<unknown>(
+        await chrome.runtime.sendMessage({ type: 'GET_SAVED_ITEMS' }),
+        t('sidepanel.savedPage.backendUnavailable'),
+      );
+      setItems(decodeSavedItemsState(result, 'savedItemsResponse').items);
+      setLoadFailed(false);
+    } catch (error) {
+      setLoadFailed(true);
+      banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     void load();
     const handler = (message: { type?: string; savedItems?: SavedItem[] }) => {
       if (message.type === 'SAVED_ITEMS_UPDATED') {
-        setItems(Array.isArray(message.savedItems) ? message.savedItems : []);
+        try {
+          setItems(decodeSavedItemsState(message.savedItems, 'savedItemsUpdate').items);
+          setLoadFailed(false);
+        } catch (error) {
+          setLoadFailed(true);
+          banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+        }
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -82,8 +100,16 @@ export default function SavedPage() {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    await chrome.runtime.sendMessage({ type: 'DELETE_SAVED_ITEM', payload: { id } });
-    await load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse<{ ok: true }>(
+        await chrome.runtime.sendMessage({ type: 'DELETE_SAVED_ITEM', payload: { id } }),
+        t('sidepanel.savedPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
+    }
   };
 
   const insertPrompt = async (text: string) => {
@@ -201,7 +227,7 @@ export default function SavedPage() {
       <div className="space-y-2">
         {loading ? (
           <SkeletonList rows={3} />
-        ) : filtered.length === 0 && (
+        ) : !loadFailed && filtered.length === 0 && (
           <div className="ds-empty-state">
             <div className="ds-empty-state-icon">
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>

@@ -73,8 +73,6 @@ import {
   parseValidatedJson,
   validateImportedMemory,
   validatePreset,
-  validateProjectContextState,
-  validateSavedItemsState,
   validateSkillImportSource,
   validateSkill,
   validateSyncMemory,
@@ -110,6 +108,7 @@ import {
   addConversationToProject,
   bindPendingProjectConversation,
   createProjectContext,
+  decodeProjectContextState,
   deleteProjectContextAndMemories,
   formatProjectPromptContext,
   getProjectContextState,
@@ -123,6 +122,7 @@ import {
 import { getArtifact } from '../core/artifact';
 import {
   deleteSavedItem,
+  decodeSavedItemsState,
   getAllSavedItems,
   getSavedItemsState,
   saveSavedItem,
@@ -413,7 +413,8 @@ export default defineBackground(() => {
 
   chrome.storage.onChanged.addListener((changes) => {
     if ('deepseek_pp_chat_enabled' in changes || DEEPSEEK_API_KEY_STORAGE_KEY in changes) {
-      createContextMenus().catch(() => {});
+      createContextMenus()
+        .catch((error) => reportBackgroundStartupError('context_menu_refresh_failed', error));
       broadcastChatAuthStatus().catch(() => {});
     }
   });
@@ -476,18 +477,17 @@ async function refreshWhatsNewBadge() {
 async function createContextMenus() {
   const chatEnabled = await getChatEnabled();
   if (!chatEnabled) {
-    try { await chrome.contextMenus.removeAll(); } catch {}
+    await chrome.contextMenus.removeAll();
     return;
   }
-  try {
-    await chrome.contextMenus.removeAll();
-  } catch {}
   const apiKeyConfigured = await hasDeepSeekApiKey();
   const menuScope = apiKeyConfigured
     ? {}
     : { documentUrlPatterns: [DEEPSEEK_TAB_URL_PATTERN] };
   const scenarios = await getAllScenarios();
   const enabledScenarios = scenarios.filter((s) => s.enabled);
+
+  await chrome.contextMenus.removeAll();
 
   chrome.contextMenus.create({
     id: 'send-to-chat',
@@ -542,9 +542,9 @@ try {
           const scenario = scenarios.find((s) => s.id === scenarioId);
           if (!scenario) return;
           const processed = applyScenarioTemplate(scenario.template, selectedText);
-          openSidePanelAndSendText(processed, tab);
+          return openSidePanelAndSendText(processed, tab);
         })
-        .catch(() => {});
+        .catch((error) => reportBackgroundStartupError('scenario_context_menu_failed', error));
       return;
     }
   });
@@ -2364,10 +2364,10 @@ function parseRemoteSyncDataSnapshot(remoteFiles: ReadonlyMap<SyncFileKey, strin
     presets: parseValidatedArray(SYNC_FILE_KEYS.presets, remotePresetJson, validatePreset),
     projectContext: remoteProjectContextJson === null
       ? null
-      : parseValidatedJson(SYNC_FILE_KEYS.projectContext, remoteProjectContextJson, validateProjectContextState),
+      : parseValidatedJson(SYNC_FILE_KEYS.projectContext, remoteProjectContextJson, decodeProjectContextState),
     savedItems: remoteSavedItemsJson === null
       ? null
-      : parseValidatedJson(SYNC_FILE_KEYS.savedItems, remoteSavedItemsJson, validateSavedItemsState),
+      : parseValidatedJson(SYNC_FILE_KEYS.savedItems, remoteSavedItemsJson, decodeSavedItemsState),
   };
 }
 

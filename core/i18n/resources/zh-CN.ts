@@ -132,6 +132,10 @@ export const zhCN = {
       customTitle: '自定义场景',
       namePlaceholder: '场景名称',
       templatePlaceholder: 'Prompt 模板（含 {text}）',
+      operationFailed: '场景操作失败：{error}',
+      backgroundUnavailable: '后台右键菜单刷新失败。',
+      savedButReloadFailed: '场景已保存，但列表刷新失败：{error}',
+      savedButMenuFailed: '场景已保存，但后台右键菜单刷新失败：{error}',
     },
     githubSkillImport: {
       title: '从 GitHub 导入 Skill',

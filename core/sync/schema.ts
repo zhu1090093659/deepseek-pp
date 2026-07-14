@@ -9,22 +9,8 @@ import type {
   SkillSource,
   SystemPromptPreset,
 } from '../types';
-import {
-  SAVED_ITEMS_SCHEMA_VERSION,
-  type SavedItem,
-  type SavedItemKind,
-  type SavedItemsState,
-} from '../saved-items/types';
-import {
-  PROJECT_CONTEXT_SCHEMA_VERSION,
-  type ProjectContext,
-  type ProjectContextState,
-  type ProjectConversation,
-} from '../project/types';
-
 const MEMORY_TYPES: readonly MemoryType[] = ['user', 'feedback', 'topic', 'reference'];
 const SKILL_SOURCES: readonly SkillSource[] = ['builtin', 'third-party', 'official', 'custom', 'remote'];
-const SAVED_ITEM_KINDS: readonly SavedItemKind[] = ['snippet', 'bookmark'];
 
 export function parseValidatedArray<T>(
   file: string,
@@ -169,95 +155,6 @@ export function validatePreset(value: unknown, path = 'preset'): SystemPromptPre
     content: requiredString(object.content, `${path}.content`),
     createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
     updatedAt: requiredFiniteNumber(object.updatedAt, `${path}.updatedAt`),
-  };
-}
-
-export function validateSavedItem(value: unknown, path = 'savedItem'): SavedItem {
-  const object = objectValue(value, path);
-  return {
-    id: requiredString(object.id, `${path}.id`),
-    syncId: requiredString(object.syncId, `${path}.syncId`),
-    kind: enumValue(object.kind, SAVED_ITEM_KINDS, `${path}.kind`),
-    title: requiredString(object.title, `${path}.title`),
-    content: requiredString(object.content, `${path}.content`),
-    ...(object.sourceUrl === undefined ? {} : { sourceUrl: requiredString(object.sourceUrl, `${path}.sourceUrl`) }),
-    tags: stringArray(object.tags, `${path}.tags`),
-    createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
-    updatedAt: requiredFiniteNumber(object.updatedAt, `${path}.updatedAt`),
-  };
-}
-
-export function validateSavedItemsState(value: unknown, path = 'savedItems'): SavedItemsState {
-  const object = objectValue(value, path);
-  if (object.schemaVersion !== undefined && object.schemaVersion !== SAVED_ITEMS_SCHEMA_VERSION) {
-    throw new Error(`${path}.schemaVersion is not supported`);
-  }
-  return {
-    schemaVersion: SAVED_ITEMS_SCHEMA_VERSION,
-    items: arrayValue(object.items, `${path}.items`)
-      .map((item, index) => validateSavedItem(item, `${path}.items[${index}]`)),
-  };
-}
-
-export function validateProjectContext(value: unknown, path = 'project'): ProjectContext {
-  const object = objectValue(value, path);
-  return {
-    id: requiredString(object.id, `${path}.id`),
-    name: requiredString(object.name, `${path}.name`),
-    description: typeof object.description === 'string' ? object.description : '',
-    instructions: typeof object.instructions === 'string' ? object.instructions : '',
-    createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
-    updatedAt: requiredFiniteNumber(object.updatedAt, `${path}.updatedAt`),
-  };
-}
-
-export function validateProjectConversation(value: unknown, path = 'projectConversation'): ProjectConversation {
-  const object = objectValue(value, path);
-  return {
-    conversationId: requiredString(object.conversationId, `${path}.conversationId`),
-    projectId: requiredString(object.projectId, `${path}.projectId`),
-    title: requiredString(object.title, `${path}.title`),
-    url: typeof object.url === 'string' ? object.url : '',
-    addedAt: requiredFiniteNumber(object.addedAt, `${path}.addedAt`),
-    lastSeenAt: requiredFiniteNumber(object.lastSeenAt, `${path}.lastSeenAt`),
-  };
-}
-
-export function validateProjectContextState(value: unknown, path = 'projectContext'): ProjectContextState {
-  const object = objectValue(value, path);
-  if (object.schemaVersion !== undefined && object.schemaVersion !== PROJECT_CONTEXT_SCHEMA_VERSION) {
-    throw new Error(`${path}.schemaVersion is not supported`);
-  }
-
-  const projects = arrayValue(object.projects, `${path}.projects`)
-    .map((item, index) => validateProjectContext(item, `${path}.projects[${index}]`));
-  const projectIds = new Set(projects.map((project) => project.id));
-  const conversations = arrayValue(object.conversations, `${path}.conversations`)
-    .map((item, index) => validateProjectConversation(item, `${path}.conversations[${index}]`));
-  const conversationIds = new Set<string>();
-
-  for (const conversation of conversations) {
-    if (!projectIds.has(conversation.projectId)) {
-      throw new Error(`${path}.conversations contains conversation for unknown project: ${conversation.projectId}`);
-    }
-    if (conversationIds.has(conversation.conversationId)) {
-      throw new Error(`${path}.conversations contains duplicate conversation: ${conversation.conversationId}`);
-    }
-    conversationIds.add(conversation.conversationId);
-  }
-
-  const pendingProjectId = object.pendingProjectId === null
-    ? null
-    : requiredString(object.pendingProjectId, `${path}.pendingProjectId`);
-  if (pendingProjectId !== null && !projectIds.has(pendingProjectId)) {
-    throw new Error(`${path}.pendingProjectId references an unknown project`);
-  }
-
-  return {
-    schemaVersion: PROJECT_CONTEXT_SCHEMA_VERSION,
-    projects,
-    conversations,
-    pendingProjectId,
   };
 }
 

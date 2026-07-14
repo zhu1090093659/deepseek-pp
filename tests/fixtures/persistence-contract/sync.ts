@@ -1,5 +1,5 @@
 import { PROJECT_V1_STATE, PROJECT_V2_STATE } from './project';
-import { SAVED_ITEMS_V1_STATE } from './saved-items';
+import { SAVED_ITEMS_REJECTED_STATES, SAVED_ITEMS_V1_STATE } from './saved-items';
 
 export const SYNC_MEMORY_RECORD = {
   id: 77,
@@ -145,17 +145,17 @@ export const SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE = {
   },
 } as const;
 
-export const SYNC_CURRENT_GAPS = [
+export const SYNC_VERSIONING_FIXTURES = [
   {
-    name: 'released project v1 sync state is rejected instead of migrated',
+    name: 'released project v1 sync state migrates losslessly',
     file: 'project-context.json',
     content: JSON.stringify(PROJECT_V1_STATE),
-    target: 'migrate-v1-without-overwrite-after-T3.3',
+    expected: 'lossless-migration',
   },
   {
-    name: 'explicit future saved-items sync state is rejected while the local decoder downgrades it',
+    name: 'explicit future saved-items sync state is rejected everywhere',
     file: 'saved-items.json',
-    content: JSON.stringify({ schemaVersion: 2, items: SAVED_ITEMS_V1_STATE.items }),
-    target: 'unify-future-version-rejection-after-T3.3',
+    content: JSON.stringify(SAVED_ITEMS_REJECTED_STATES.future),
+    expected: 'reject-without-overwrite',
   },
 ] as const;

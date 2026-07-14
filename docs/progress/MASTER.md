@@ -57,7 +57,7 @@
 | R3.1 | [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351) | Create typed handler seam and migrate the two bootstrap commands | closed |
 | R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | closed |
 | R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | closed |
-| R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | open |
+| R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | closed |
 | R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | open |
 | R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | open |
 | R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | open |
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.4 / [Issue #354](https://github.com/zhu1090093659/deepseek-pp/issues/354) — passive DeepSeek interceptor codec reuse.
+**Active Task**: R3.5 / [Issue #355](https://github.com/zhu1090093659/deepseek-pp/issues/355) — versioned Project, Saved Items, and Scenario repositories.
 
-**Execution Branch**: `codex/354-passive-deepseek-protocol` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/354-passive-deepseek-protocol`, based on `main@58cd05d`.
+**Execution Branch**: `codex/355-versioned-browser-repositories` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/355-versioned-browser-repositories`, based on `main@03af09a`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `58cd05d` after R3.3. The baseline passes 105 test files / 783 tests, full PC quality/package checks, and R3.3 hosted validation through PR #384. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `03af09a` after R3.4. The baseline passes 105 test files / 798 tests, full PC quality/package checks, and R3.4 hosted validation through PR #385. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -254,12 +254,20 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted validation passes 10 files / 61 tests; TypeScript compile and the 60-second full suite pass at 105 files / 783 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero high production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, 84-file UTF-8 policy, manifest policy, and release-asset verification. New evidence covers exact routes/methods/headers/raw bodies, model aliases, split UTF-8 SSE, message IDs/usage, operation-specific budget boundaries, large per-session export compatibility, response-header and deferred stream cancellation, non-cooperative late fetch cleanup, semantic network phases, real Official API signal propagation, truthful pre/post-dispatch outcomes, and a production-client oversized PoW response that preserves its non-retryable policy error.
 - Hosted quality and corrected contribution-evidence runs `29288282399` / `29288361106` passed. PR #384 squash-merged at `58cd05d96df6775ab234cc81f4bd4fd3bf584d43`; Issue #353 closed after telemetry and Milestone #45 advanced to 3/10 completed with cumulative drift score 1.
 
-**R3.4 Evidence (implementation ready for hosted validation)**:
+**R3.4 Evidence (closed)**:
 
 - Replaced the permissive passive substring router with the shared exact Web route classifier. Fetch respects an explicit `RequestInit.method` over `Request.method`; XHR publishes tentative route/header state before native `open` can synchronously re-enter page handlers and restores the prior state if native `open` throws. Relative URLs resolve against the current document. Completion/regenerate require POST, history requires GET, and wrong-origin/query/suffix/method or non-string Web IDL inputs bypass extension logic without changing native behavior.
 - Added one raw-preserving LF/CRLF SSE frame decoder consumed by active byte decoding and passive Fetch/XHR. Passive processing now parses each frame once, reuses the shared message-id/reducer authority, preserves unknown events/fields/comments and explicit separators when visible text is rewritten, retains the released LF delimiter for an unterminated final passive frame, and deletes the interceptor parser/token-metric facades and local message-id/framing implementations.
 - Fetch and XHR share one passive response state for token metrics, tool accumulation, prompt cleanup, visible-stream filtering, and response-complete metadata. Fetch reads only on downstream pull, flushes split UTF-8 at EOF, waits for upstream reader cancellation before terminal notification, and suppresses late response/tool/token callbacks. XHR makes the final successful frame visible before pre-registered page load handlers, while abort/error/timeout publish one final inactive metric and never a false response completion.
 - Targeted validation passes 11 files / 151 tests, including every UTF-8 byte split, every CRLF character split, request unknown siblings, unknown/modified raw frames, response metadata, cancellation settlement, reader failure, backpressure, XHR synchronous re-entry/open rollback/load ordering/network or native-send failure, bridge schemas, and token metrics. TypeScript compile and the 60-second full suite pass at 105 files / 798 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings. Malformed JSON remains the explicit R5.1 gap.
+- Hosted quality and contribution-evidence runs `29291764748` / `29291764902` passed. PR #385 squash-merged at `03af09aba62d3bb16625abf34203c05f012f613e`; Issue #354 closed after telemetry and Milestone #45 advanced to 4/10 completed with cumulative drift score 1.
+
+**R3.5 Evidence (local validation complete)**:
+
+- Added one narrow raw storage-slot/versioned repository authority consumed by Project, Saved Items, and Scenario. Missing keys produce domain defaults without eager writes; present null, corrupt, duplicate, broken-reference, and explicit future values reject before clocks, UUIDs, or storage mutation. Sync replacement first decodes current raw state, preventing a valid remote snapshot from overwriting unsupported local data.
+- Added sole domain codecs for lossless Project v1→v2 projection, exact-preserving Saved Items legacy/versionless/v1 input, and the released bare Scenario array. Local stores, remote sync parsing, and Side Panel responses reuse these codecs; obsolete normalizers, duplicate sync validators, and unused direct replacement/delete exports were removed.
+- Project v1 sources/files/active IDs and additive fields survive until intentional deletion cleans legacy file references. Scenario keeps built-in order/Chinese labels and saved template/enabled semantics while preserving additive fields. Same-realm read-modify-writes share the local-state lock; cross-realm Scenario centralization remains R4.4, and Project/Memory cross-store cascade atomicity remains an explicit R3.6 boundary.
+- Project, Saved Items, and Scenario pages now report repository failures rather than rendering fake empty/default success; Background scenario/context-menu failures are logged. Targeted validation passes 11 files / 113 tests, and TypeScript plus the 60-second full suite pass at 106 files / 817 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings. Three independent final contract reviews report no remaining P0-P2 finding after the additive-field, Project v1 optional-source, invalid-broadcast, context-menu ordering, and post-commit notification fixes.
 
 ## Governance Status
 
@@ -283,9 +291,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete the 60-second full suite, PC Chrome/Edge/Firefox quality/package matrix, and release-asset verification for R3.4 / Issue #354.
-2. Run independent final diff review, then publish R3.4 for hosted quality and contribution-evidence validation.
-3. Record R3.4 telemetry, merge/close Issue #354, and enforce Phase 3 adaptive thresholds before starting R3.5.
+1. Publish R3.5 for hosted quality and contribution-evidence validation.
+2. Record R3.5 telemetry, merge/close Issue #355, and enforce Phase 3 adaptive thresholds.
+3. Begin R3.6 only after the R3.5 hosted closure is complete.
 
 ## Session Log
 
@@ -340,3 +348,6 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | R3.3 closure | PR #384 passed hosted quality/contribution gates and squash-merged at `58cd05d`; Issue #353 closed after telemetry and Milestone #45 advanced to 3/10 with cumulative drift score 1. |
 | 2026-07-13 | R3.4 execution start | Opened `codex/354-passive-deepseek-protocol` from `58cd05d`; audited passive Fetch/XHR route, request augmentation, SSE framing/reduction, visible stream filtering, cancellation, backpressure, and bridge boundaries. |
 | 2026-07-13 | R3.4 implementation | Reused the exact route and raw SSE authorities from passive Fetch/XHR, removed substring/facade/local framing paths, unified passive response state, and added CRLF/UTF-8/raw-frame/cancellation/backpressure regression coverage without changing prompt or bridge bytes. |
+| 2026-07-13 | R3.4 closure | PR #385 passed hosted quality/contribution gates and squash-merged at `03af09a`; Issue #354 closed after telemetry and Milestone #45 advanced to 4/10 with cumulative drift score 1. |
+| 2026-07-13 | R3.5 execution start | Opened `codex/355-versioned-browser-repositories` from `03af09a`; audited Project v1/v2, Saved Items legacy/v1/future, released Scenario arrays, sync replacement, UI error projection, and same-realm concurrency boundaries. |
+| 2026-07-13 | R3.5 implementation | Added one raw-slot/versioned repository contract and three sole domain codecs, removed duplicate normalizers/validators and silent fallbacks, preserved legal legacy/additive data, guarded future/corrupt state from local/sync overwrite, and added concurrency/UI regression coverage. |

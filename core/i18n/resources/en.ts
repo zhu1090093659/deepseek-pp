@@ -132,6 +132,10 @@ export const en = {
       customTitle: 'Custom scenarios',
       namePlaceholder: 'Scenario name',
       templatePlaceholder: 'Prompt template with {text}',
+      operationFailed: 'Scenario action failed: {error}',
+      backgroundUnavailable: 'Background context menu refresh failed.',
+      savedButReloadFailed: 'Scenario saved, but the list could not refresh: {error}',
+      savedButMenuFailed: 'Scenario saved, but the background context menu could not refresh: {error}',
     },
     githubSkillImport: {
       title: 'Import Skill from GitHub',

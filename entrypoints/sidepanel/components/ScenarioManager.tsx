@@ -7,6 +7,8 @@ import {
   addCustomScenario,
 } from '../../../core/scenario/store';
 import { useI18n } from '../i18n';
+import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { useBanner } from './settings/primitives';
 
 export default function ScenarioManager() {
   const { t } = useI18n();
@@ -15,20 +17,18 @@ export default function ScenarioManager() {
   const [editTemplate, setEditTemplate] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [newTemplate, setNewTemplate] = useState('');
+  const banner = useBanner();
 
   useEffect(() => {
-    getAllScenarios().then(setScenarios);
+    void getAllScenarios()
+      .then(setScenarios)
+      .catch((error) => {
+        banner.show('error', t('sidepanel.scenario.operationFailed', { error: getRuntimeErrorMessage(error) }));
+      });
   }, []);
 
-  const refresh = async () => {
-    const updated = await getAllScenarios();
-    setScenarios(updated);
-    chrome.runtime.sendMessage({ type: 'SCENARIOS_UPDATED' }).catch(() => {});
-  };
-
   const toggleEnabled = async (scenario: ScenarioConfig) => {
-    await saveScenario({ ...scenario, enabled: !scenario.enabled });
-    await refresh();
+    await runMutation(() => saveScenario({ ...scenario, enabled: !scenario.enabled }));
   };
 
   const startEdit = (scenario: ScenarioConfig) => {
@@ -37,22 +37,51 @@ export default function ScenarioManager() {
   };
 
   const saveTemplate = async (scenario: ScenarioConfig) => {
-    await saveScenario({ ...scenario, template: editTemplate });
-    setEditingId(null);
-    await refresh();
+    await runMutation(async () => {
+      await saveScenario({ ...scenario, template: editTemplate });
+      setEditingId(null);
+    });
   };
 
   const handleAdd = async () => {
     if (!newLabel.trim() || !newTemplate.trim()) return;
-    await addCustomScenario(newLabel.trim(), newTemplate.trim());
-    setNewLabel('');
-    setNewTemplate('');
-    await refresh();
+    await runMutation(async () => {
+      await addCustomScenario(newLabel.trim(), newTemplate.trim());
+      setNewLabel('');
+      setNewTemplate('');
+    });
   };
 
   const handleDelete = async (id: string) => {
-    await deleteScenario(id);
-    await refresh();
+    await runMutation(() => deleteScenario(id));
+  };
+
+  const runMutation = async (operation: () => Promise<unknown>) => {
+    try {
+      banner.clear();
+      await operation();
+    } catch (error) {
+      banner.show('error', t('sidepanel.scenario.operationFailed', { error: getRuntimeErrorMessage(error) }));
+      return;
+    }
+
+    const warnings: string[] = [];
+    try {
+      setScenarios(await getAllScenarios());
+    } catch (error) {
+      warnings.push(t('sidepanel.scenario.savedButReloadFailed', { error: getRuntimeErrorMessage(error) }));
+    }
+    try {
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'SCENARIOS_UPDATED' }),
+        t('sidepanel.scenario.backgroundUnavailable'),
+      );
+    } catch (error) {
+      warnings.push(t('sidepanel.scenario.savedButMenuFailed', { error: getRuntimeErrorMessage(error) }));
+    }
+    if (warnings.length > 0) {
+      banner.show('warning', warnings.join(' '));
+    }
   };
 
   return (
@@ -65,6 +94,7 @@ export default function ScenarioManager() {
           {t('sidepanel.scenario.description')}
         </p>
       </div>
+      {banner.node}
       <div className="ds-surface-panel rounded-xl p-4 space-y-1">
       {scenarios.filter((s) => s.builtIn).map((s) => (
         <div key={s.id} className="flex items-center gap-2 py-1.5">

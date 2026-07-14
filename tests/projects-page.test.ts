@@ -86,6 +86,27 @@ describe('ProjectsPage', () => {
     expect(container.textContent).not.toContain('0 个对话，0 条项目记忆');
   });
 
+  it('surfaces corrupt project repository values instead of accepting shallow shapes', async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') {
+        return {
+          schemaVersion: 2,
+          projects: [{ id: 'incomplete-project' }],
+          conversations: [],
+          pendingProjectId: null,
+        };
+      }
+      if (message.type === 'GET_MEMORIES') return [];
+      if (message.type === 'GET_CURRENT_DEEPSEEK_CONVERSATION') return { ok: false };
+      return { ok: true };
+    });
+
+    await renderProjectsPage(sendMessage);
+
+    expect(container.textContent)
+      .toContain('项目操作失败：projectContextResponse.projects[0].name must be a non-empty string');
+  });
+
   it('adds the current DeepSeek conversation to the selected project', async () => {
     const project = createProject('project-1', 'Alpha');
     let state: ProjectContextState = {

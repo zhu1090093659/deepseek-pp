@@ -7,7 +7,8 @@ import type {
   ProjectContextState,
   ProjectConversation,
 } from '../../../core/types';
-import { PROJECT_CONTEXT_SCHEMA_VERSION } from '../../../core/project';
+import { decodeProjectContextState } from '../../../core/project/codec';
+import { PROJECT_CONTEXT_SCHEMA_VERSION } from '../../../core/project/types';
 import MemoryCard from '../components/MemoryCard';
 import MemoryForm from '../components/MemoryForm';
 import PageIntro from '../components/PageIntro';
@@ -44,8 +45,12 @@ export default function ProjectsPage() {
     void loadAll().catch(showProjectError);
     void refreshCurrentConversation();
     const handler = (msg: { type?: string; state?: ProjectContextState; memories?: Memory[] }) => {
-      if (msg.type === 'PROJECT_CONTEXT_UPDATED' && isProjectContextState(msg.state)) {
-        applyState(msg.state);
+      if (msg.type === 'PROJECT_CONTEXT_UPDATED') {
+        try {
+          applyState(decodeProjectContextState(msg.state, 'projectContextUpdate'));
+        } catch (error) {
+          showProjectError(error);
+        }
         return;
       }
       if (msg.type === 'STATE_UPDATED' && Array.isArray(msg.memories)) {
@@ -99,11 +104,13 @@ export default function ProjectsPage() {
       chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
       chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
     ]);
-    const next = unwrapProjectResponse<ProjectContextState>(
-      projectState,
-      t('sidepanel.projectsPage.backendUnavailable'),
+    const next = decodeProjectContextState(
+      unwrapProjectResponse<ProjectContextState>(
+        projectState,
+        t('sidepanel.projectsPage.backendUnavailable'),
+      ),
+      'projectContextResponse',
     );
-    if (!isProjectContextState(next)) throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
     applyState(next);
     setMemories(Array.isArray(memoryList) ? memoryList : []);
     setLoading(false);
@@ -554,15 +561,6 @@ function FolderIcon() {
 
 function unwrapProjectResponse<T = unknown>(response: unknown, missingMessage: string): T {
   return unwrapRuntimeResponse<T>(response, missingMessage);
-}
-
-function isProjectContextState(value: unknown): value is ProjectContextState {
-  if (!value || typeof value !== 'object') return false;
-  const state = value as ProjectContextState;
-  return state.schemaVersion === PROJECT_CONTEXT_SCHEMA_VERSION &&
-    Array.isArray(state.projects) &&
-    Array.isArray(state.conversations) &&
-    (state.pendingProjectId === null || typeof state.pendingProjectId === 'string');
 }
 
 function formatAge(timestamp: number, t: ReturnType<typeof useI18n>['t']): string {

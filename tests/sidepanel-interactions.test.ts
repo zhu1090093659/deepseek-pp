@@ -8,6 +8,7 @@ import {
 } from '../core/prompt/settings';
 import PromptControlPanel from '../entrypoints/sidepanel/components/PromptControlPanel';
 import LocalSkillImportPanel from '../entrypoints/sidepanel/components/LocalSkillImportPanel';
+import ScenarioManager from '../entrypoints/sidepanel/components/ScenarioManager';
 import ChatPage from '../entrypoints/sidepanel/pages/ChatPage';
 import SavedPage from '../entrypoints/sidepanel/pages/SavedPage';
 
@@ -125,6 +126,106 @@ describe('sidepanel interactions', () => {
     await clickButton('插入到对话');
 
     expect(container.textContent).toContain('插入到对话失败：请先在 chat.deepseek.com 登录，或刷新 DeepSeek 页面后重试。');
+  });
+
+  it('shows saved-item repository failures instead of rendering a fake empty state', async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'GET_SAVED_ITEMS') {
+        return { ok: false, error: 'savedItems.schemaVersion is not supported' };
+      }
+      return null;
+    });
+    stubChrome(sendMessage);
+
+    await renderElement(React.createElement(SavedPage));
+    await flushPromises();
+
+    expect(container.textContent)
+      .toContain('保存项操作失败：savedItems.schemaVersion is not supported');
+    expect(container.textContent).not.toContain('暂无保存项');
+  });
+
+  it('keeps a saved item visible when repository deletion fails', async () => {
+    const item = {
+      id: 'saved-1',
+      syncId: 'sync-1',
+      kind: 'snippet',
+      title: 'Keep me',
+      content: 'Do not remove this item on failure.',
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'GET_SAVED_ITEMS') return [item];
+      if (message.type === 'DELETE_SAVED_ITEM') {
+        return { ok: false, error: 'delete blocked' };
+      }
+      return null;
+    });
+    stubChrome(sendMessage);
+
+    await renderElement(React.createElement(SavedPage));
+    await flushPromises();
+    await clickButtonByLabel('删除');
+    await clickButton('删除');
+    await flushPromises();
+
+    expect(container.textContent).toContain('保存项操作失败：delete blocked');
+    expect(container.textContent).toContain('Keep me');
+  });
+
+  it('shows scenario repository failures instead of silently loading built-ins', async () => {
+    vi.stubGlobal('chrome', {
+      storage: {
+        local: {
+          get: vi.fn(async () => ({
+            scenarioConfigs: { schemaVersion: 2, items: [] },
+          })),
+          set: vi.fn(),
+        },
+      },
+      runtime: {
+        sendMessage: vi.fn(),
+      },
+    });
+
+    await renderElement(React.createElement(ScenarioManager));
+    await flushPromises();
+
+    expect(container.textContent)
+      .toContain('场景操作失败：scenarios.schemaVersion is not supported');
+  });
+
+  it('reports a committed Scenario separately when background menu refresh fails', async () => {
+    let scenarioConfigs: unknown;
+    const sendMessage = vi.fn(async () => ({ ok: false, error: 'menu offline' }));
+    vi.stubGlobal('chrome', {
+      storage: {
+        local: {
+          get: vi.fn(async () => (
+            scenarioConfigs === undefined ? {} : { scenarioConfigs }
+          )),
+          set: vi.fn(async (patch: { scenarioConfigs: unknown }) => {
+            scenarioConfigs = patch.scenarioConfigs;
+          }),
+        },
+      },
+      runtime: { sendMessage },
+    });
+
+    await renderElement(React.createElement(ScenarioManager));
+    await flushPromises();
+    const firstToggle = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(firstToggle).toBeTruthy();
+    await act(async () => firstToggle?.click());
+    await flushPromises();
+
+    expect((scenarioConfigs as Array<{ id: string; enabled: boolean }>)[0])
+      .toMatchObject({ id: 'summarize', enabled: false });
+    expect(container.textContent)
+      .toContain('场景已保存，但后台右键菜单刷新失败：menu offline');
+    expect(container.textContent).not.toContain('场景操作失败：menu offline');
   });
 
   it('persists prompt control select changes instead of reverting to defaults', async () => {

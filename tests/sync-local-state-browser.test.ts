@@ -33,7 +33,7 @@ vi.mock('../core/project/store', () => ({
 
 vi.mock('../core/saved-items/store', () => ({
   SAVED_ITEMS_STORAGE_KEY: 'deepseek_pp_saved_items',
-  replaceAllSavedItemsForSyncApply: mocks.replaceSavedItems,
+  replaceSavedItemsStateForSyncApply: mocks.replaceSavedItems,
 }));
 
 vi.mock('../core/skill/registry', () => ({
@@ -115,7 +115,7 @@ describe('browser sync local-state adapter', () => {
     expect(mocks.replacePresets).toHaveBeenCalledWith(plan.snapshot.presets);
     expect(mocks.clearActivePreset).toHaveBeenCalledOnce();
     expect(mocks.saveProject).toHaveBeenCalledWith(plan.snapshot.projectContext);
-    expect(mocks.replaceSavedItems).toHaveBeenCalledWith(plan.snapshot.savedItems?.items);
+    expect(mocks.replaceSavedItems).toHaveBeenCalledWith(plan.snapshot.savedItems);
   });
 
   it('restores raw memory rows, opaque values, and key absence exactly', async () => {

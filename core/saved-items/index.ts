@@ -10,12 +10,15 @@ export {
 } from './types';
 
 export {
+  createEmptySavedItemsState,
+  decodeSavedItem,
+  decodeSavedItemsState,
+} from './codec';
+
+export {
   deleteSavedItem,
   getAllSavedItems,
   getSavedItemsState,
-  normalizeSavedItem,
-  normalizeSavedItemsState,
   SAVED_ITEMS_STORAGE_KEY,
-  replaceAllSavedItems,
   saveSavedItem,
 } from './store';
