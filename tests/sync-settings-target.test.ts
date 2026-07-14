@@ -250,7 +250,9 @@ async function renderDataSettings() {
   });
   await flushPromises();
   await click(buttonByExactText('数据'));
-  await flushPromises();
+  await vi.waitFor(() => {
+    expect(findButtonByExactText('上传本地')).toBeTruthy();
+  });
 }
 
 async function openUploadConfirmation() {
@@ -274,10 +276,14 @@ async function click(button: HTMLButtonElement) {
 }
 
 function buttonByExactText(label: string): HTMLButtonElement {
-  const button = Array.from(container.querySelectorAll('button'))
-    .find((candidate) => candidate.textContent === label);
+  const button = findButtonByExactText(label);
   expect(button).toBeTruthy();
   return button as HTMLButtonElement;
+}
+
+function findButtonByExactText(label: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button'))
+    .find((candidate) => candidate.textContent === label);
 }
 
 async function flushPromises() {
