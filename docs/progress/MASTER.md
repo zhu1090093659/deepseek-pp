@@ -64,7 +64,7 @@
 | R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | closed |
 | R3.9 | [#359](https://github.com/zhu1090093659/deepseek-pp/issues/359) | Remove dead platform facade and preserve PC capability truth | closed |
 | R3.10 | [#380](https://github.com/zhu1090093659/deepseek-pp/issues/380) | Version remaining Skill/Preset/History local state and cross-key mutations | closed |
-| R4.1 | [#360](https://github.com/zhu1090093659/deepseek-pp/issues/360) | Extract Background persistence and library handlers | open |
+| R4.1 | [#360](https://github.com/zhu1090093659/deepseek-pp/issues/360) | Extract Background persistence and library handlers | closed |
 | R4.2 | [#361](https://github.com/zhu1090093659/deepseek-pp/issues/361) | Extract Background MCP, tool, and browser-control handlers | open |
 | R4.3 | [#362](https://github.com/zhu1090093659/deepseek-pp/issues/362) | Extract Background DeepSeek, chat, multimodal, and export handlers | open |
 | R4.4 | [#363](https://github.com/zhu1090093659/deepseek-pp/issues/363) | Close Background sync, automation, usage, scenario, and lifecycle root | open |
@@ -111,7 +111,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [x] Phase 3: Authoritative Contracts and Real Ports (10/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
-- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
+- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (1/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
 
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 4 — Strangler Cutover of Runtime Hotspots (replanned; implementation active)
 
-**Active Task**: R4.1 / [Issue #360](https://github.com/zhu1090093659/deepseek-pp/issues/360) — extract Background persistence and library handlers.
+**Active Task**: R4.2 / [Issue #361](https://github.com/zhu1090093659/deepseek-pp/issues/361) — extract Background MCP, tool, browser-control, and sandbox handlers.
 
-**Execution Branch**: `codex/360-background-persistence-handlers` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/360-background-persistence-handlers`, based on `main@5fac6cb`.
+**Execution Branch**: `codex/361-background-mcp-tool-handlers` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/361-background-mcp-tool-handlers`, based on `main@a9e78ccc`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `5fac6cb` after R3.10. R3.10 passed 21 files / 153 targeted tests, 123 files / 964 full tests, and the complete PC quality/package matrix; hosted quality and contribution-evidence runs `29309184444` / `29309184486` passed before PR #391 squash-merged at `5fac6cb2b3d4075660294e596171e57ddd4b7623`. Issue #380 and Milestone #45 are closed at 10/10 with cumulative drift score 2. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `a9e78ccc` after R4.1. R4.1 passed 21 files / 170 targeted tests, 125 files / 980 full tests, and the complete PC quality/package matrix; hosted quality and contribution-evidence runs `29313960469` / `29314142912` passed before PR #392 squash-merged at `a9e78ccc4c23104d569212b65a81cb703f652f1f`. Issue #360 is closed, Milestone #46 is at 1/13 with cumulative drift score 2, and Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -321,7 +321,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted validation passes 21 files / 153 tests. TypeScript, seven prompt goldens, the 60-second full suite at 123 files / 964 tests, and the complete PC-only `ci:quality` matrix pass: workflow and zero-vulnerability production audit, i18n/automation checks, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/UTF-8 policy, release assets, diff checks, and no orphan process. The first full matrix rejected one hardcoded Chinese core error; it was removed and the complete matrix reran successfully. Android/mobile support remains absent.
 - Hosted quality and contribution-evidence runs `29309184444` / `29309184486` passed. PR #391 squash-merged at `5fac6cb2b3d4075660294e596171e57ddd4b7623`; Issue #380 closed after telemetry and Milestone #45 closed at 10/10 with cumulative drift score 2.
 
-**R4.1 Evidence (implementation active)**:
+**R4.1 Evidence (closed)**:
 
 - Added exact typed request/response contracts and five injected handler families for the 57 commands assigned to #360: Memory, Skill/Sources, Preset/Saved Items/Voice, Project/Artifact, and local visual/model preferences.
 - The existing registry remains the sole router. Production ownership is now `59 typed / 62 legacy / 2 client-only`; all 57 superseded switch cases were deleted, 38 payload-bearing requests cross receiving-side decoders, and the remaining legacy gap is `32 direct casts / 9 delegated readers` owned by R4.2–R4.4.
@@ -330,6 +330,16 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Handler dependencies reuse existing stores, recovery-journal mutations, notification paths, and released failure projection. Prompt bytes, wire names, response shapes, storage identities, cross-key mutation ordering, hidden project-context writes, and PC-only support are unchanged.
 - Independent final request-boundary and recovery-composition reviews report no remaining P0–P2; Android/mobile files, build targets, and runtime entrypoints remain absent.
 - Expanded persistence/recovery validation passes 21 files / 170 tests; the 60-second full suite passes 125 files / 980 tests. Full local `ci:quality` passes TypeScript, seven prompt goldens, workflow and zero-vulnerability production audit, i18n/automation checks, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/84-file UTF-8 policy, release assets, diff checks, and orphan-process checks. Builds emit only the existing Pyodide `node:*` externalization warnings.
+- Hosted quality and contribution-evidence runs `29313960469` / `29314142912` passed. PR #392 squash-merged at `a9e78ccc4c23104d569212b65a81cb703f652f1f`; Issue #360 closed after telemetry and Milestone #46 advanced to 1/13 with cumulative drift score 2.
+
+**R4.2 Evidence (implementation active)**:
+
+- Added exact request/response contracts, one exhaustive 20-command receiving-side payload decoder, and three injected handler families for the 29 commands assigned to #361: MCP, browser/web/permission, and tool authorization/execution/sandbox/history/platform.
+- The existing production registry remains the sole router. Ownership is now `88 typed / 33 legacy / 2 client-only`; all 29 superseded switch cases are deleted, `background.ts` is 2,395 lines, and the remaining transitional gap is `12 direct casts / 9 delegated readers` owned by R4.3–R4.4.
+- Receiving boundaries validate nested MCP settings, permissions, browser settings, sandbox requests, and the authoritative ToolCall record before privileged work. Released null/optional responses, notification order, permission-denial shapes, MCP secret redaction, Firefox receiver identity, unsupported browser/sandbox degradation, and content-vs-extension authorization remain explicit.
+- A real handler composition test drives CREATE → APPEND → EXECUTE → replay rejection → CLOSE through session/local storage, provider registry, externalized payload state, history, and authorization cache. It proves `collecting`/`executing`/`consumed`, one provider call, fail-closed missing authorization, per-call cache invalidation, grant cache invalidation, and namespace cleanup.
+- Expanded authorization/provider/permission/cancellation/ambiguous/error validation passes 17 files / 186 tests. The 60-second full suite passes 127 files / 1,007 tests. Full local `ci:quality` passes TypeScript, seven prompt goldens, workflow and zero-vulnerability production audit, i18n/automation checks, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/84-file UTF-8 policy, release assets, and diff checks; builds emit only the existing Pyodide `node:*` externalization warnings. Three independent final reviews report no remaining P0–P3, including after closing permission-rejection, malformed ToolCall pre-side-effect, and cache-invalidation test findings.
+- PC-only Chrome/Edge/Firefox scope is unchanged. Repository, build, runtime, and test scans find no Android/mobile implementation; only superseded historical records and explicit unsupported-scope statements remain.
 
 ## Governance Status
 
@@ -353,8 +363,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete the pre-commit staged diff audit.
-2. Commit and push R4.1, open its PR for #360, record telemetry, and squash-merge only after hosted quality plus contribution-evidence checks pass.
+1. Perform the final staged diff audit, commit and push R4.2, and open its PR for #361.
+2. Record telemetry and squash-merge only after hosted quality plus contribution-evidence checks pass.
 
 ## Session Log
 
@@ -438,3 +448,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R4.1 recovery and boundary review | Closed the field-decoding and source-string-only recovery findings with one exhaustive request-codec map, production-consumed mutation composition, and a real failed-journal/restart integration test; expanded 21-file / 170-test and full 125-file / 980-test suites pass. |
 | 2026-07-14 | R4.1 local validation | Passed full `ci:quality`: zero high production vulnerabilities, TypeScript, seven prompt goldens, 125 files / 980 tests, i18n/automation, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/UTF-8 policy, release assets, diff and orphan-process checks. |
 | 2026-07-14 | R4.1 final review | Independent request-boundary and recovery-composition reviewers found no remaining P0–P2; verified one decoder authority, real journal/restart coverage, and unchanged PC-only Chrome/Edge/Firefox scope. |
+| 2026-07-14 | R4.1 closure | Hosted quality/contribution runs passed; PR #392 squash-merged at `a9e78ccc`, Issue #360 closed after telemetry, and Milestone #46 advanced to 1/13 with cumulative drift score 2. |
+| 2026-07-14 | R4.2 execution start | Opened `codex/361-background-mcp-tool-handlers` from `a9e78ccc`; began the exact 29-command MCP/tool/browser-control/sandbox audit with Phase 2 authorization, payload-reservation, cancellation, provider-selection, and PC-only compatibility invariants held fixed. |
+| 2026-07-14 | R4.2 implementation | Added three injected handler families and one exhaustive 20-command decoder, moved exactly 29 commands to the sole typed registry, deleted their old switch paths, and preserved PC-only caller, response, permission, notification, provider, and Firefox degradation contracts. |
+| 2026-07-14 | R4.2 authorization review | Added a real CREATE→APPEND→EXECUTE→CLOSE composition test and closed independent findings on permission rejection shape, malformed ToolCall pre-side-effect rejection, and exact call/grant cache invalidation; final reviews report no remaining P0–P3. |
+| 2026-07-14 | R4.2 local validation | Passed the 60-second full suite at 127 files / 1,007 tests and full `ci:quality`: zero high production vulnerabilities, TypeScript, seven prompt goldens, i18n/automation, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/UTF-8 policy, release assets, and diff checks. |

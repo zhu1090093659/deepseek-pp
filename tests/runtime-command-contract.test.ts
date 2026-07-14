@@ -141,6 +141,7 @@ describe('runtime command compatibility contract', () => {
       'tool-result',
       'domain-error',
       'status-or-domain-error',
+      'status-or-domain-error-or-tool-result',
       'value-or-domain-error',
     ]));
     const responseFixtureFamilies = new Set(RUNTIME_RESPONSE_FIXTURES.map((fixture) => fixture.family));
@@ -164,7 +165,7 @@ describe('runtime command compatibility contract', () => {
 
   it('characterizes the remaining payload-decoding gap and resolved routing behavior', () => {
     expect(RUNTIME_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
-      'decoded-command-contract-during-R4.2-R4.4',
+      'decoded-command-contract-during-R4.3-R4.4',
     ]);
     expect(extractLegacyDefaultThrows(backgroundSource)).toBe(true);
     for (const resolved of RUNTIME_RESOLVED_ROUTING_CASES) {

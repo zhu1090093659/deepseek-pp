@@ -100,6 +100,7 @@ import {
   clearExternalizedToolPayloadNamespace,
 } from '../core/tool/externalized-payload';
 import {
+  createInvalidToolCallResult,
   createRuntimeToolRuntime,
   type RuntimeToolCallOptions,
 } from '../core/tool/runtime';
@@ -109,7 +110,6 @@ import {
   closeToolAuthorization,
   createToolAuthorization,
   createToolAuthorizationResult,
-  ToolAuthorizationError,
 } from '../core/tool/authorization';
 import { ExternalPayloadAuthorizationCache } from '../core/tool/external-payload-authorization-cache';
 import {
@@ -118,7 +118,6 @@ import {
   getBrowserControlState,
   saveBrowserControlSettings,
   setBrowserControlEnabled,
-  type BrowserControlSettings,
 } from '../core/browser-control';
 import { filterSidepanelChatToolDescriptors } from '../core/tool/sidepanel';
 import {
@@ -158,7 +157,6 @@ import {
 } from '../core/voice/settings';
 import {
   normalizeSandboxExecutionResult,
-  normalizeSandboxRunRequest,
   parseSandboxEnvelope,
   readSandboxRequestId,
   SANDBOX_MESSAGE_TYPES,
@@ -290,6 +288,8 @@ import { createBootstrapRuntimeHandlers } from './background/bootstrap-handlers'
 import { createTrackedLocalStateMutationRunner } from './background/local-state-mutation-runner';
 import { createPersistenceMutationBindings } from './background/persistence-mutation-bindings';
 import { createPersistenceRuntimeHandlers } from './background/persistence-handlers';
+import { createToolRuntimeHandlers } from './background/tool-runtime-handlers';
+import { createTrustedToolExecutionContext } from './background/tool-execution-handlers';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -301,7 +301,6 @@ import {
   getResolvedLocaleState,
   watchLocalePreference,
 } from '../core/i18n/store';
-import type { WebSearchToolName } from '../core/tool/web-search';
 import type {
   BackgroundConfig,
   CurrentDeepSeekConversation,
@@ -309,7 +308,6 @@ import type {
   PetConfig,
   SyncConfig,
   SyncCounts,
-  ToolAuthorizationSubject,
   ToolCall,
   ToolDescriptor,
   ToolExecutionRecord,
@@ -317,7 +315,7 @@ import type {
   ToolResult,
   UsageTurnInput,
 } from '../core/types';
-import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
+import type { McpServerConfig } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { AutomationExecutionContext } from '../core/automation/execution';
 import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
@@ -486,6 +484,60 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         savePetConfig,
         clearPetConfig,
         broadcastPetUpdate,
+      },
+    }),
+    ...createToolRuntimeHandlers({
+      mcp: {
+        getAllMcpServers,
+        getMcpServerById,
+        createMcpServer,
+        updateMcpServer,
+        deleteMcpServer,
+        getMcpToolCache,
+        refreshMcpServerDiscovery,
+        getMcpOriginPattern,
+        requestMcpServerOriginPermission,
+        broadcastMcpServersUpdate,
+        broadcastToolDescriptorsUpdate,
+      },
+      browser: {
+        getWebToolSettings,
+        setWebToolEnabled,
+        getBrowserControlSettings,
+        saveBrowserControlSettings,
+        setBrowserControlEnabled,
+        getBrowserControlState,
+        setBrowserControlTarget: (tabId) => browserControlService.setTarget(tabId),
+        detachBrowserControl: () => browserControlService.detach(),
+        requestHostPermission: (origins) => chrome.permissions.request({ origins }),
+        fetch: (input, init) => fetch(input, init),
+        broadcastToolDescriptorsUpdate,
+        broadcastBrowserControlUpdate,
+      },
+      execution: {
+        getLocale: () => currentBackgroundLocale,
+        getToolDescriptors: getRuntimeToolDescriptors,
+        getAuthorizationDescriptors: getRuntimeAuthorizationDescriptors,
+        refreshToolDescriptors: refreshRuntimeToolDescriptors,
+        createToolAuthorization,
+        closeToolAuthorization,
+        authorizeExternalToolPayloadChunk,
+        createToolAuthorizationResult,
+        createInvalidToolCallResult,
+        externalPayloadAuthorizationCache,
+        appendExternalizedToolPayloadChunk,
+        clearExternalizedToolPayloadNamespace,
+        executeToolCall: executeRuntimeToolCall,
+        runSandbox: runBrowserSandboxToolResult,
+        getToolCallHistory,
+        clearToolCallHistory,
+        getPlatformEnvironment: getCurrentPlatformEnvironment,
+        createRequestId: () => crypto.randomUUID(),
+        now: () => Date.now(),
+        sandboxInvalidRequestSummary: () => backgroundT('tool.sandbox.invalidRequest'),
+        broadcastToolDescriptorsUpdate,
+        broadcastMcpServersUpdate,
+        broadcastToolCallHistoryUpdate,
       },
     }),
   ],
@@ -770,308 +822,6 @@ async function handleLegacyMessage(
   context: RuntimeMessageContext,
 ) {
   switch (message.type) {
-    case 'GET_MCP_SERVERS':
-      return getAllMcpServers();
-
-    case 'GET_MCP_SERVER': {
-      const { id } = message.payload as { id: string };
-      return getMcpServerById(id);
-    }
-
-    case 'CREATE_MCP_SERVER': {
-      const server = await createMcpServer(message.payload as McpServerCreateInput);
-      await broadcastMcpServersUpdate(context.tabId);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return server;
-    }
-
-    case 'UPDATE_MCP_SERVER': {
-      const { id, patch } = message.payload as { id: string; patch: McpServerUpdateInput };
-      const server = await updateMcpServer(id, patch);
-      await broadcastMcpServersUpdate(context.tabId);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return server;
-    }
-
-    case 'DELETE_MCP_SERVER': {
-      const { id } = message.payload as { id: string };
-      await deleteMcpServer(id);
-      await broadcastMcpServersUpdate(context.tabId);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_MCP_TOOL_CACHE': {
-      const { serverId } = message.payload as { serverId: string };
-      return getMcpToolCache(serverId);
-    }
-
-    case 'REFRESH_MCP_SERVER_TOOLS': {
-      const { serverId } = message.payload as { serverId: string };
-      const cache = await refreshMcpServerDiscovery(serverId);
-      await broadcastMcpServersUpdate(context.tabId);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return cache;
-    }
-
-    case 'REQUEST_MCP_SERVER_PERMISSION': {
-      const { serverId } = message.payload as { serverId: string };
-      const server = await getMcpServerById(serverId);
-      if (!server) return { ok: false, error: 'mcp_server_not_found' };
-      if (server.transport.kind === 'native_messaging') return { ok: true, origin: null };
-      try {
-        const origin = getMcpOriginPattern(server);
-        const ok = await requestMcpServerOriginPermission(server);
-        return { ok, origin };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    }
-
-    case 'TEST_MCP_SERVER_CONNECTION': {
-      const { serverId } = message.payload as { serverId: string };
-      const cache = await refreshMcpServerDiscovery(serverId);
-      await broadcastMcpServersUpdate(context.tabId);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return {
-        ok: cache.health.status === 'ready',
-        cache,
-        health: cache.health,
-      };
-    }
-
-    case 'GET_WEB_TOOL_SETTINGS':
-      return getWebToolSettings();
-
-    case 'SET_WEB_TOOL_SETTING': {
-      const { name, enabled } = message.payload as { name: WebSearchToolName; enabled: boolean };
-      await setWebToolEnabled(name, enabled);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_BROWSER_CONTROL_SETTINGS':
-      return getBrowserControlSettings();
-
-    case 'SAVE_BROWSER_CONTROL_SETTINGS': {
-      const settings = await saveBrowserControlSettings(message.payload as Partial<BrowserControlSettings>);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      await broadcastBrowserControlUpdate(context.tabId);
-      return settings;
-    }
-
-    case 'SET_BROWSER_CONTROL_ENABLED': {
-      const { enabled } = message.payload as { enabled: boolean };
-      const settings = await setBrowserControlEnabled(enabled);
-      if (!enabled) await browserControlService.detach();
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      await broadcastBrowserControlUpdate(context.tabId);
-      return settings;
-    }
-
-    case 'GET_BROWSER_CONTROL_STATE':
-      return getBrowserControlState();
-
-    case 'SET_BROWSER_CONTROL_TARGET': {
-      const { tabId } = message.payload as { tabId: number };
-      const target = await browserControlService.setTarget(tabId);
-      await broadcastBrowserControlUpdate(context.tabId);
-      return { ok: true, target };
-    }
-
-    case 'DETACH_BROWSER_CONTROL': {
-      await browserControlService.detach();
-      await broadcastBrowserControlUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'DIAGNOSE_WEB_SEARCH': {
-      const q = typeof (message.payload as { query?: string })?.query === 'string'
-        ? (message.payload as { query: string }).query : 'test';
-      const diags: Record<string, { status: number; length: number; error?: string; preview?: string }> = {};
-      for (const domain of ['cn.bing.com', 'www.bing.com']) {
-        const url = `https://${domain}/search?q=${encodeURIComponent(q)}`;
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept-Language': 'zh-CN,zh;q=0.9',
-            },
-            signal: AbortSignal.timeout(10_000),
-          });
-          const text = await resp.text();
-          diags[domain] = {
-            status: resp.status,
-            length: text.length,
-            preview: text.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200),
-          };
-        } catch (e) {
-          diags[domain] = {
-            status: 0,
-            length: 0,
-            error: e instanceof Error ? e.message.slice(0, 150) : String(e).slice(0, 150),
-          };
-        }
-      }
-      return diags;
-    }
-
-    case 'REQUEST_HOST_PERMISSION': {
-      const { origins } = message.payload as { origins: string[] };
-      if (!origins?.length) return { ok: false, error: 'no_origins' };
-      try {
-        const granted = await chrome.permissions.request({ origins }).catch(() => false);
-        return { ok: granted, origins };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    }
-
-    case 'GET_TOOL_DESCRIPTORS':
-      return getRuntimeToolDescriptors(currentBackgroundLocale);
-
-    case 'REFRESH_TOOL_DESCRIPTORS': {
-      const tools = await refreshRuntimeToolDescriptors(currentBackgroundLocale);
-      await broadcastToolDescriptorsUpdate(context.tabId);
-      await broadcastMcpServersUpdate(context.tabId);
-      return tools;
-    }
-
-    case 'CREATE_TOOL_AUTHORIZATION': {
-      if (context.surface !== 'deepseek_content') {
-        return { ok: false, error: 'tool_authorization_requires_content_runtime' };
-      }
-      const payload = message.payload as {
-        requestId?: unknown;
-        trigger?: unknown;
-        chatSessionId?: unknown;
-        runId?: unknown;
-        descriptorIds?: unknown;
-      };
-      if (
-        typeof payload.requestId !== 'string' ||
-        (payload.trigger !== 'manual_chat' && payload.trigger !== 'agent_run') ||
-        (payload.chatSessionId !== undefined && payload.chatSessionId !== null && typeof payload.chatSessionId !== 'string') ||
-        (payload.runId !== undefined && typeof payload.runId !== 'string') ||
-        (payload.descriptorIds !== undefined && (
-          !Array.isArray(payload.descriptorIds) ||
-          !payload.descriptorIds.every((id) => typeof id === 'string')
-        ))
-      ) {
-        return { ok: false, error: 'invalid_tool_authorization_request' };
-      }
-
-      const currentDescriptors = await getRuntimeToolDescriptors(currentBackgroundLocale);
-      const requestedDescriptorIds = payload.descriptorIds
-        ? new Set(payload.descriptorIds as string[])
-        : null;
-      const descriptors = requestedDescriptorIds
-        ? currentDescriptors.filter((descriptor) => requestedDescriptorIds.has(descriptor.id))
-        : currentDescriptors;
-      if (requestedDescriptorIds && descriptors.length !== requestedDescriptorIds.size) {
-        return { ok: false, error: 'unknown_tool_authorization_descriptor' };
-      }
-
-      return createToolAuthorization({
-        requestId: payload.requestId,
-        trigger: payload.trigger,
-        chatSessionId: payload.chatSessionId as string | null | undefined,
-        runId: payload.runId as string | undefined,
-        subject: createToolAuthorizationSubject(context),
-        descriptors,
-      });
-    }
-
-    case 'CLOSE_TOOL_AUTHORIZATION': {
-      const { authorizationId } = (message.payload as { authorizationId?: unknown } | undefined) ?? {};
-      if (typeof authorizationId !== 'string') return { ok: false, error: 'invalid_tool_authorization_id' };
-      await closeToolAuthorization(authorizationId, createToolAuthorizationSubject(context));
-      externalPayloadAuthorizationCache.deleteGrant(authorizationId);
-      clearExternalizedToolPayloadNamespace(authorizationId);
-      return { ok: true };
-    }
-
-    case 'APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK': {
-      const payload = message.payload as {
-        authorizationId?: string;
-        callId?: string;
-        invocationName?: string;
-        chunk?: string;
-      };
-      if (
-        typeof payload.authorizationId !== 'string' ||
-        typeof payload.callId !== 'string' ||
-        typeof payload.invocationName !== 'string' ||
-        typeof payload.chunk !== 'string'
-      ) {
-        return { ok: false, error: 'invalid_external_payload_chunk' };
-      }
-      try {
-        const subject = createToolAuthorizationSubject(context);
-        const binding = {
-          grantId: payload.authorizationId,
-          subject,
-          callId: payload.callId,
-          invocationName: payload.invocationName,
-        };
-        if (!externalPayloadAuthorizationCache.has(binding)) {
-          const chunkAuthorization = await authorizeExternalToolPayloadChunk({
-            ...binding,
-            currentDescriptors: await getRuntimeAuthorizationDescriptors(currentBackgroundLocale),
-          });
-          externalPayloadAuthorizationCache.remember(binding, chunkAuthorization.expiresAt);
-        }
-        appendExternalizedToolPayloadChunk(
-          payload.callId,
-          payload.invocationName,
-          payload.chunk,
-          payload.authorizationId,
-        );
-      } catch (error) {
-        if (!(error instanceof ToolAuthorizationError)) throw error;
-        return createToolAuthorizationResult(error);
-      }
-      return { ok: true };
-    }
-
-    case 'EXECUTE_TOOL_CALL': {
-      const payload = message.payload as ToolCall & { authorizationId?: unknown };
-      const { authorizationId, ...call } = payload;
-      if (typeof authorizationId === 'string' && typeof call.id === 'string') {
-        externalPayloadAuthorizationCache.deleteCall(authorizationId, call.id);
-      }
-      const result = context.surface === 'deepseek_content'
-        ? await executeRuntimeToolCall(
-          call,
-          {
-            kind: 'grant',
-            grantId: typeof authorizationId === 'string' ? authorizationId : '',
-            subject: createToolAuthorizationSubject(context),
-          },
-          currentBackgroundLocale,
-        )
-        : await executeBackgroundRuntimeToolCall(call, 'manual_chat');
-      await broadcastToolCallHistoryUpdate(context.tabId);
-      return result;
-    }
-
-    case 'RUN_ARTIFACT_CODE':
-      return runBrowserSandboxToolResult(message.payload as SandboxRunRequest);
-
-    case 'GET_TOOL_CALL_HISTORY': {
-      const { limit } = (message.payload as { limit?: number } | undefined) ?? {};
-      return getToolCallHistory(limit);
-    }
-
-    case 'CLEAR_TOOL_CALL_HISTORY': {
-      await clearToolCallHistory();
-      await broadcastToolCallHistoryUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_PLATFORM_CAPABILITIES':
-      return getCurrentPlatformEnvironment();
-
     case 'GET_DEEPSEEK_API_KEY_STATUS':
       return { ok: true, configured: await hasDeepSeekApiKey() };
 
@@ -1511,37 +1261,12 @@ async function executeBackgroundRuntimeToolCall(
   source: ToolExecutionTrigger,
   options?: RuntimeToolCallOptions,
 ): Promise<ToolResult> {
-  return executeRuntimeToolCall(call, {
-    kind: 'trusted',
-    trigger: source,
-    requestId: call.source?.requestId ??
-      call.source?.automationRunId ??
-      call.source?.runId ??
-      crypto.randomUUID(),
-    chatSessionId: call.source?.chatSessionId ?? null,
-    taskId: call.source?.taskId,
-    runId: call.source?.runId,
-    automationId: call.source?.automationId,
-    automationRunId: call.source?.automationRunId,
-  }, currentBackgroundLocale, options);
-}
-
-function createToolAuthorizationSubject(
-  context: RuntimeMessageContext,
-): ToolAuthorizationSubject {
-  // Firefox may omit MessageSender.documentId. Keep the receiver-owned
-  // tab/frame identity stable across DeepSeek SPA route changes; a full
-  // navigation destroys the content runtime and revokes its in-memory grant.
-  const documentSessionId = context.documentId
-    ? context.documentSessionId
-    : `${context.surface}:${context.tabId ?? 'extension'}:${context.frameId ?? 'extension'}`;
-  return {
-    surface: context.surface,
-    documentSessionId,
-    tabId: context.tabId,
-    frameId: context.frameId,
-    chatSessionId: context.chatSessionId ?? null,
-  };
+  return executeRuntimeToolCall(
+    call,
+    createTrustedToolExecutionContext(call, source),
+    currentBackgroundLocale,
+    options,
+  );
 }
 
 async function analyzeMultimodalMedia(
@@ -1738,27 +1463,7 @@ function invalidMediaKind(index: number): never {
 
 async function runBrowserSandboxToolResult(request: SandboxRunRequest): Promise<ToolResult> {
   const startedAt = Date.now();
-  let normalizedRequest: SandboxRunRequest;
-  try {
-    normalizedRequest = normalizeSandboxRunRequest(request);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      ok: false,
-      summary: backgroundT('tool.sandbox.invalidRequest'),
-      detail,
-      error: {
-        code: 'sandbox_invalid_request',
-        message: detail,
-        retryable: false,
-      },
-      startedAt,
-      completedAt: Date.now(),
-      durationMs: 0,
-      truncated: false,
-    };
-  }
-  const result = await requestOffscreenSandboxRun(normalizedRequest);
+  const result = await requestOffscreenSandboxRun(request);
   const completedAt = Date.now();
   const detail = result.ok
     ? result.result || result.stdout || ''

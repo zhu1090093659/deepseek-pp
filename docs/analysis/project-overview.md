@@ -20,16 +20,16 @@
 
 ## Analysis Snapshot
 
-- 分支：`codex/320-sync-download-rollback`
-- 基线 HEAD：`2928d85`（T2.4 merge），本快照包含 #320 的本地同步恢复变更
-- 日期：2026-07-13
+- 分支：`codex/361-background-mcp-tool-handlers`
+- 基线 HEAD：`a9e78cc`（R4.1 / #360 merge），本快照包含 R4.2 / #361 的本地 typed-handler cutover
+- 日期：2026-07-14
 - 当前实现位于独立 Issue worktree；原仓库中的用户改动未被读取、覆盖或带入本分支。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
-  - `core/`：188 个 TypeScript/TSX 文件，约 34,131 行
-  - `entrypoints/`：54 个 TypeScript/TSX 文件，约 24,460 行
-  - `packages/shell-host/`：3 个可执行/库脚本，约 2,833 行（另含 README/package metadata）
-  - `tests/`：106 个 TypeScript 测试/fixture 源文件，其中 92 个 test files，约 18,026 行
-  - `scripts/`：16 个脚本，约 3,109 行
+  - `core/`：224 个 TypeScript/TSX 文件，约 40,559 行
+  - `entrypoints/`：69 个 TypeScript/TSX 文件，约 26,170 行
+  - `packages/shell-host/`：3 个可执行/库脚本，约 2,762 行（另含 README/package metadata）
+  - `tests/`：147 个 TypeScript 测试/fixture 源文件，其中 127 个 test files，约 29,047 行
+  - `scripts/`：16 个脚本，约 3,118 行
 
 ## Current Architecture
 
@@ -79,7 +79,7 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、chat/sync/automation/tool/export/sandbox orchestration | 根文件 2,690 行；R4.1 已将 57 个 persistence/library/project/local-preference commands 拆为五组 typed handlers，并抽取接收边界 codec 与 journal mutation composition；仍有 62 个 transitional cases 和多域职责 |
+| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、chat/sync/automation/tool/export/sandbox orchestration | 根文件 2,395 行；R4.1–R4.2 已将 86 个 persistence/library/project/local-preference/MCP/browser/tool commands 拆为 typed handlers，R4.2 以三组 handler 和一个穷尽 payload codec 固定 29 个接收边界；单一 registry 现为 `88 typed / 33 legacy`，仍有 33 个 transitional cases 和多域职责 |
 | `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
 | `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
 | `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |

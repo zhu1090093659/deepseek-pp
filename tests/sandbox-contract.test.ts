@@ -12,6 +12,7 @@ import {
   SANDBOX_MESSAGE_TYPES,
   SANDBOX_OFFSCREEN_PORT,
 } from '../core/sandbox';
+import { decodeToolRuntimePayload } from '../core/messaging/tool-runtime-request-codec';
 import type { ToolCall } from '../core/tool/types';
 import {
   SANDBOX_BOUNDARY_REGRESSION_CASES,
@@ -244,15 +245,26 @@ describe('sandbox compatibility contract', () => {
     }
   });
 
-  it('normalizes RUN_ARTIFACT_CODE before creating an offscreen document', () => {
-    const background = readFileSync('entrypoints/background.ts', 'utf8');
-    const start = background.indexOf('async function runBrowserSandboxToolResult');
-    const normalize = background.indexOf('normalizeSandboxRunRequest(request)', start);
-    const dispatch = background.indexOf('requestOffscreenSandboxRun(normalizedRequest)', start);
-
-    expect(start).toBeGreaterThan(-1);
-    expect(normalize).toBeGreaterThan(start);
-    expect(dispatch).toBeGreaterThan(normalize);
+  it('normalizes RUN_ARTIFACT_CODE at the typed handler boundary', () => {
+    expect(decodeToolRuntimePayload('RUN_ARTIFACT_CODE', {
+      language: 'javascript',
+      code: 'return 42;',
+    })).toEqual({
+      ok: true,
+      payload: {
+        language: 'javascript',
+        code: 'return 42;',
+        input: undefined,
+        timeoutMs: 5_000,
+      },
+    });
+    expect(decodeToolRuntimePayload('RUN_ARTIFACT_CODE', {
+      language: 'ruby',
+      code: 'puts 42',
+    })).toMatchObject({
+      ok: false,
+      detail: 'language must be javascript, typescript, python, or html',
+    });
   });
 });
 

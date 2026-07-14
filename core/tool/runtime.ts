@@ -89,17 +89,7 @@ async function executeRuntimeToolCall(
     ? { ...call, id: options.idempotencyKey }
     : call;
   if (!isToolCallRecord(identifiedCall)) {
-    return {
-      ok: false,
-      summary: translate(locale, 'tool.runtime.invalidFormat'),
-      detail: 'Runtime tool call does not match the released contract.',
-      name: typeof (identifiedCall as { name?: unknown })?.name === 'string' ? identifiedCall.name : undefined,
-      error: {
-        code: 'tool_call_payload_invalid',
-        message: 'Runtime tool call does not match the released contract.',
-        retryable: false,
-      },
-    };
+    return createInvalidToolCallResult(identifiedCall, locale);
   }
   const context = typeof authorization === 'string'
     ? createTrustedExecutionContext(identifiedCall, authorization)
@@ -168,6 +158,28 @@ async function executeRuntimeToolCall(
   }
   assertRuntimeExecutionActive(options);
   return result;
+}
+
+export function createInvalidToolCallResult(
+  value: unknown,
+  locale: SupportedLocale = DEFAULT_LOCALE,
+): ToolResult {
+  const message = 'Runtime tool call does not match the released contract.';
+  const name = value && typeof value === 'object'
+    && typeof (value as { name?: unknown }).name === 'string'
+    ? (value as { name: string }).name
+    : undefined;
+  return {
+    ok: false,
+    summary: translate(locale, 'tool.runtime.invalidFormat'),
+    detail: message,
+    name,
+    error: {
+      code: 'tool_call_payload_invalid',
+      message,
+      retryable: false,
+    },
+  };
 }
 
 function assertRuntimeExecutionActive(options: RuntimeToolCallOptions): void {

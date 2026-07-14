@@ -6,8 +6,8 @@ export const RUNTIME_TOPOLOGY = {
   declaredOnly: 2,
   readsPayload: 79,
   ignoresPayload: 42,
-  directPayloadCasts: 32,
-  decodedPayloads: 38,
+  directPayloadCasts: 12,
+  decodedPayloads: 58,
   delegatedPayloads: 9,
 } as const;
 
@@ -105,6 +105,23 @@ export const RUNTIME_RESPONSE_FIXTURES = [
     ],
   },
   {
+    name: 'status, domain rejection, or tool rejection',
+    family: 'status-or-domain-error-or-tool-result',
+    response: [
+      { ok: true },
+      { ok: false, error: 'invalid_external_payload_chunk' },
+      {
+        ok: false,
+        summary: 'Tool authorization rejected',
+        error: {
+          code: 'tool_authorization_missing',
+          message: 'Tool authorization is missing or closed.',
+          retryable: false,
+        },
+      },
+    ],
+  },
+  {
     name: 'domain value or rejection',
     family: 'value-or-domain-error',
     response: [
@@ -144,8 +161,8 @@ export const RUNTIME_ERROR_FIXTURES = {
 export const RUNTIME_CURRENT_GAPS = [
   {
     name: 'direct payload casts do not decode external input',
-    current: { type: 'GET_MCP_SERVER', payload: {} },
-    target: 'decoded-command-contract-during-R4.2-R4.4',
+    current: { type: 'SAVE_DEEPSEEK_API_KEY', payload: {} },
+    target: 'decoded-command-contract-during-R4.3-R4.4',
   },
 ] as const;
 

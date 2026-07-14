@@ -7,6 +7,7 @@ import {
   createRuntimeCommandRegistry,
   definePayloadlessRuntimeCommandHandler,
   getRuntimeCommandOwner,
+  TYPED_RUNTIME_COMMAND_TYPES,
   type RuntimeCommandHandler,
 } from '../core/messaging/runtime-command-registry';
 import type {
@@ -155,15 +156,16 @@ describe('R4.1 persistence runtime handler ownership', () => {
     const decodedTypes = Object.entries(RUNTIME_COMMAND_CONTRACTS)
       .filter(([, contract]) => contract.request.access === 'payload-decoded')
       .map(([type]) => type)
+      .filter((type) => expected.includes(type))
       .sort();
     expect(Object.keys(PERSISTENCE_RUNTIME_PAYLOAD_DECODERS).sort()).toEqual(decodedTypes);
 
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: [
+      typedHandlers: completeTypedHandlers([
         definePayloadlessRuntimeCommandHandler('GET_CONFIG', () => ({ version: '1.10.0' })),
         definePayloadlessRuntimeCommandHandler('WHATS_NEW_DISMISSED', () => ({ ok: true as const })),
         ...handlers,
-      ],
+      ]),
       handleLegacy: async () => null,
     });
     await expect(registry.dispatch({ type: 'GET_MEMORIES' }, context)).resolves.toEqual([memory]);
@@ -604,6 +606,19 @@ function dispatch(
   const handler = handlers.find((candidate) => candidate.type === message.type);
   if (!handler) throw new Error(`Handler not found: ${message.type}`);
   return handler.handle(message, context);
+}
+
+function completeTypedHandlers(
+  handlers: readonly RuntimeCommandHandler[],
+): RuntimeCommandHandler[] {
+  const provided = new Set<string>(handlers.map((handler) => handler.type));
+  const stubs = TYPED_RUNTIME_COMMAND_TYPES
+    .filter((type) => !provided.has(type))
+    .map((type) => ({
+      type,
+      handle: async () => null,
+    } as unknown as RuntimeCommandHandler));
+  return [...handlers, ...stubs];
 }
 
 function readInventoryCommands(heading: string): string[] {
