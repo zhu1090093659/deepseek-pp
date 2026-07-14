@@ -8,6 +8,7 @@ const settingsState = readFileSync(
 );
 const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');
 const syncHandlers = readFileSync('entrypoints/background/sync-runtime-handlers.ts', 'utf8');
+const syncService = readFileSync('entrypoints/background/sync-runtime-service.ts', 'utf8');
 const localSkillMerge = readFileSync('core/sync/local-skill-merge.ts', 'utf8');
 const memoryHandlers = readFileSync('entrypoints/background/memory-handlers.ts', 'utf8');
 const projectHandlers = readFileSync('entrypoints/background/project-handlers.ts', 'utf8');
@@ -42,9 +43,9 @@ describe('background sync recovery integration', () => {
   });
 
   it('fully stages the remote snapshot before the journaled local apply commit point', () => {
-    const downloadEffect = background.slice(
-      background.indexOf('async function downloadRemoteSyncTarget'),
-      background.indexOf('async function notifyDownloadedSyncState'),
+    const downloadEffect = syncService.slice(
+      syncService.indexOf('const download = async'),
+      syncService.indexOf('return Object.freeze({ test, authorize, upload, download })'),
     );
     const coordinatedDownload = syncCoordinator.slice(
       syncCoordinator.lastIndexOf('    download('),
@@ -58,13 +59,13 @@ describe('background sync recovery integration', () => {
     expect(syncHandlers).toContain("'WEBDAV_DOWNLOAD_REMOTE'");
     expect(syncHandlers).toContain('dependencies.coordinator.download(');
     expect(syncHandlers).toContain('target,');
-    expect(downloadEffect).toContain('const remoteSnapshot = await getRemoteSyncDataSnapshot(backend)');
+    expect(downloadEffect).toContain('const remoteSnapshot = await getRemoteSyncDataSnapshot(');
     expect(downloadEffect).toContain(
       '() => mergeSyncSnapshotWithLocalImports(remoteSnapshot)',
     );
-    expect(downloadEffect).toContain('const snapshot = await beginSyncLocalApply(');
-    expect(downloadEffect.indexOf('await getRemoteSyncDataSnapshot(backend)'))
-      .toBeLessThan(downloadEffect.indexOf('await beginSyncLocalApply('));
+    expect(downloadEffect).toContain('const snapshot = await dependencies.beginLocalApply(');
+    expect(downloadEffect.indexOf('await getRemoteSyncDataSnapshot('))
+      .toBeLessThan(downloadEffect.indexOf('await dependencies.beginLocalApply('));
     expect(coordinatedDownload.indexOf('await effects.download(config)'))
       .toBeLessThan(coordinatedDownload.indexOf('await updateLastSyncAfterEffect'));
     expect(coordinatedDownload.indexOf('await updateLastSyncAfterEffect'))
@@ -124,11 +125,11 @@ describe('background sync recovery integration', () => {
   });
 
   it('shares one local-only Skill sync policy across upload filtering and download preservation', () => {
-    expect(background).toContain('.filter(isSyncableSkill)');
-    expect(background).toContain('.filter(isSyncableSkillSource)');
+    expect(syncService).toContain('.filter(isSyncableSkill)');
+    expect(syncService).toContain('.filter(isSyncableSkillSource)');
     expect(localSkillMerge).toContain('.filter(isLocalOnlySkill)');
     expect(localSkillMerge).toContain('.filter(isLocalOnlySkillSource)');
-    expect(background).not.toContain('function isSyncableSkill(');
+    expect(syncService).not.toContain('function isSyncableSkill(');
     expect(localSkillMerge).not.toContain('function isLocalImportedSkill(');
   });
 

@@ -1,6 +1,5 @@
 import {
   getAllMemories,
-  getAllMemoriesAlreadyLocked,
   getMemoryById,
   importMemoriesAtomically,
   saveMemory,
@@ -12,10 +11,8 @@ import {
 import { filterMemoriesByProjectScope } from '../core/memory/scope';
 import {
   getAllSkillSources,
-  getAllSkillSourcesAlreadyLocked,
   getAllSkills,
   getSkillLibrary,
-  getUserSkillsAlreadyLocked,
   saveSkill,
   setSkillEnabled,
   setSkillsEnabled,
@@ -35,7 +32,6 @@ import {
 } from '../core/skill/local-importer';
 import {
   getAllPresets,
-  getAllPresetsAlreadyLocked,
   savePreset,
   getActivePreset,
   setActivePresetId,
@@ -50,49 +46,17 @@ import { getExtensionVersion } from '../core/version';
 import {
   createBrowserSyncConfigStoragePort,
   createSyncConfigStore,
-  type VersionedOAuthSyncConfig,
 } from '../core/sync/config';
 import {
   createSyncOperationCoordinator,
   type SyncDownloadResult,
 } from '../core/sync/operation-coordinator';
 import {
-  OPTIONAL_SYNC_FILE_KEYS,
-  REQUIRED_SYNC_FILE_KEYS,
-  SYNC_FILE_KEYS,
-  type SyncFileKey,
-} from '../core/sync/contracts';
-import {
-  readCurrentSyncGeneration,
-  uploadSyncGeneration,
-} from '../core/sync/generation';
-import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
-import { isSyncableSkill, isSyncableSkillSource } from '../core/skill/sync-policy';
-import {
   recoverPendingSyncLocalApply,
   runLocalStateMutationWithRecovery,
   stageAndApplySyncSnapshotLocally,
 } from '../core/sync/local-apply-runtime';
-import { withSyncLocalStateLock } from '../core/persistence/local-state-lock';
 import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
-import { createStorageBackend } from '../core/sync/backend-factory';
-import type { StorageBackend } from '../core/sync/storage-backend';
-import {
-  serializeSyncDataSnapshot,
-  type SyncDataSnapshot,
-} from '../core/sync/snapshot';
-import { authorizeGDrive } from '../core/sync/gdrive-client';
-import { authorizeOneDrive } from '../core/sync/onedrive-client';
-import {
-  parseValidatedArray,
-  parseValidatedJson,
-  validateSyncMemory,
-} from '../core/sync/schema';
-import { decodePresetCollection } from '../core/preset/codec';
-import {
-  decodeSkillSourceCollection,
-  decodeUserSkillCollection,
-} from '../core/skill/codec';
 import { clearToolCallHistory, getToolCallHistory } from '../core/tool/history';
 import {
   appendExternalizedToolPayloadChunk,
@@ -123,11 +87,9 @@ import {
   addConversationToProject,
   bindPendingProjectConversation,
   createProjectContext,
-  decodeProjectContextState,
   stageDeleteProjectContextAndMemoriesAlreadyLocked,
   formatProjectPromptContext,
   getProjectContextState,
-  getProjectContextStateAlreadyLocked,
   getProjectForConversation,
   getProjectPromptContextForConversation,
   refreshProjectConversation,
@@ -138,10 +100,8 @@ import {
 import { getArtifact } from '../core/artifact';
 import {
   deleteSavedItem,
-  decodeSavedItemsState,
   getAllSavedItems,
   getSavedItemsState,
-  getSavedItemsStateAlreadyLocked,
   saveSavedItem,
 } from '../core/saved-items';
 import {
@@ -279,6 +239,7 @@ import {
 } from './background/chat-runtime-service';
 import { createDeepSeekRuntimeHandlers } from './background/deepseek-runtime-handlers';
 import { createBackgroundRuntimeHandlers } from './background/background-runtime-handlers';
+import { createSyncRuntimeService } from './background/sync-runtime-service';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -295,8 +256,6 @@ import type {
   CurrentDeepSeekConversation,
   DeepSeekTheme,
   PetConfig,
-  SyncConfig,
-  SyncCounts,
   ToolCall,
   ToolDescriptor,
   ToolExecutionTrigger,
@@ -397,11 +356,17 @@ const syncConfigStore = createSyncConfigStore(
     commitIndeterminateMessage: () => backgroundT('background.sync.configCommitIndeterminate'),
   },
 );
+const syncRuntimeService = createSyncRuntimeService({
+  translate: (key, params) => backgroundT(key, params),
+  beginLocalApply(stage) {
+    return syncLocalRecoveryBarrier.trackApply(stageAndApplySyncSnapshotLocally(stage));
+  },
+});
 const syncOperationCoordinator = createSyncOperationCoordinator(syncConfigStore, {
-  test: testSyncTarget,
-  authorize: authorizeSyncTarget,
-  upload: uploadLocalSyncTarget,
-  download: downloadRemoteSyncTarget,
+  test: syncRuntimeService.test,
+  authorize: syncRuntimeService.authorize,
+  upload: syncRuntimeService.upload,
+  download: syncRuntimeService.download,
   authorizationNotRequiredMessage: () => backgroundT('background.sync.authorizationNotRequired'),
 });
 const SANDBOX_OFFSCREEN_URL = 'sandbox-offscreen.html';
@@ -735,11 +700,6 @@ function registerAutomationAlarmListener() {
         .catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error)))
       .catch(() => undefined);
   });
-}
-
-function beginSyncLocalApply(stage: () => Promise<SyncDataSnapshot>) {
-  const operation = stageAndApplySyncSnapshotLocally(stage);
-  return syncLocalRecoveryBarrier.trackApply(operation);
 }
 
 async function ensureAutomationWakeAlarm() {
@@ -1381,40 +1341,6 @@ async function executeAutomationWithContext(
   });
 }
 
-async function testSyncTarget(config: SyncConfig): Promise<void> {
-  await createStorageBackend(config, backgroundT).test();
-}
-
-async function authorizeSyncTarget(config: VersionedOAuthSyncConfig): Promise<string> {
-  // chrome.identity.launchWebAuthFlow is available only in the extension
-  // background context; the coordinator keeps this target immutable in queue.
-  if (config.provider === 'gdrive') return authorizeGDrive(config, backgroundT);
-  return authorizeOneDrive(config, backgroundT);
-}
-
-async function uploadLocalSyncTarget(config: SyncConfig): Promise<SyncCounts> {
-  const backend = createStorageBackend(config, backgroundT);
-  const [, snapshot] = await Promise.all([
-    backend.ensureStore(),
-    getLocalSyncDataSnapshot(),
-  ]);
-  await uploadSyncDataSnapshot(backend, snapshot);
-  return getSyncCounts(snapshot);
-}
-
-async function downloadRemoteSyncTarget(config: SyncConfig): Promise<SyncDownloadResult> {
-  const backend = createStorageBackend(config, backgroundT);
-  const remoteSnapshot = await getRemoteSyncDataSnapshot(backend);
-  const snapshot = await beginSyncLocalApply(
-    () => mergeSyncSnapshotWithLocalImports(remoteSnapshot),
-  );
-  return {
-    counts: getSyncCounts(snapshot),
-    projectContextChanged: snapshot.projectContext !== null,
-    savedItemsChanged: snapshot.savedItems !== null,
-  };
-}
-
 async function notifyDownloadedSyncState(
   result: SyncDownloadResult,
   context: RuntimeMessageContext,
@@ -1422,145 +1348,6 @@ async function notifyDownloadedSyncState(
   await broadcastStateUpdate(context.tabId);
   if (result.projectContextChanged) await broadcastProjectContextUpdate(context.tabId);
   if (result.savedItemsChanged) await broadcastSavedItemsUpdate(context.tabId);
-}
-
-async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
-  return withSyncLocalStateLock(async () => {
-    const [memories, userSkills, skillSources, presets, projectContext, savedItems] = await Promise.all([
-      getAllMemoriesAlreadyLocked(),
-      getUserSkillsAlreadyLocked(),
-      getAllSkillSourcesAlreadyLocked(),
-      getAllPresetsAlreadyLocked(),
-      getProjectContextStateAlreadyLocked(),
-      getSavedItemsStateAlreadyLocked(),
-    ]);
-
-    return {
-      memories: memories.map(({ id, ...memory }) => memory),
-      skills: userSkills.filter(isSyncableSkill),
-      skillSources: skillSources.filter(isSyncableSkillSource),
-      presets,
-      projectContext,
-      savedItems,
-    };
-  });
-}
-
-async function uploadSyncDataSnapshot(backend: StorageBackend, snapshot: SyncDataSnapshot): Promise<void> {
-  await uploadSyncGeneration(backend, serializeSyncDataSnapshot(snapshot));
-}
-
-async function getRemoteSyncDataSnapshot(backend: StorageBackend): Promise<SyncDataSnapshot> {
-  const generationFiles = await readCurrentSyncGeneration(backend);
-  const remoteFiles = generationFiles ?? await getLegacyRemoteSyncFiles(backend);
-  return parseRemoteSyncDataSnapshot(remoteFiles);
-}
-
-async function getLegacyRemoteSyncFiles(backend: StorageBackend): Promise<ReadonlyMap<SyncFileKey, string>> {
-  const [requiredFiles, optionalFiles] = await Promise.all([
-    Promise.all(REQUIRED_SYNC_FILE_KEYS.map((file) => backendGetRequired(backend, file))),
-    Promise.all(OPTIONAL_SYNC_FILE_KEYS.map((file) => backend.get(file))),
-  ]);
-  const entries: [SyncFileKey, string][] = REQUIRED_SYNC_FILE_KEYS.map(
-    (file, index) => [file, requiredFiles[index]],
-  );
-  OPTIONAL_SYNC_FILE_KEYS.forEach((file, index) => {
-    const content = optionalFiles[index];
-    if (content !== null) entries.push([file, content]);
-  });
-  return new Map(entries);
-}
-
-function parseRemoteSyncDataSnapshot(remoteFiles: ReadonlyMap<SyncFileKey, string>): SyncDataSnapshot {
-  const remoteMemJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.memories);
-  const remoteSkillJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.skills);
-  const remotePresetJson = getRequiredSyncFile(remoteFiles, SYNC_FILE_KEYS.presets);
-  const remoteSkillSourceJson = remoteFiles.get(SYNC_FILE_KEYS.skillSources) ?? null;
-  const remoteProjectContextJson = remoteFiles.get(SYNC_FILE_KEYS.projectContext) ?? null;
-  const remoteSavedItemsJson = remoteFiles.get(SYNC_FILE_KEYS.savedItems) ?? null;
-
-  const memories = parseValidatedArray(SYNC_FILE_KEYS.memories, remoteMemJson, validateSyncMemory);
-
-  const skills = parseValidatedJson(
-    SYNC_FILE_KEYS.skills,
-    remoteSkillJson,
-    decodeUserSkillCollection,
-  )
-    .filter(isSyncableSkill);
-  const skillSources = remoteSkillSourceJson === null
-    ? []
-    : parseValidatedJson(
-      SYNC_FILE_KEYS.skillSources,
-      remoteSkillSourceJson,
-      decodeSkillSourceCollection,
-    )
-      .filter(isSyncableSkillSource);
-
-  return {
-    memories,
-    skills,
-    skillSources,
-    presets: parseValidatedJson(
-      SYNC_FILE_KEYS.presets,
-      remotePresetJson,
-      decodePresetCollection,
-    ),
-    projectContext: remoteProjectContextJson === null
-      ? null
-      : parseValidatedJson(SYNC_FILE_KEYS.projectContext, remoteProjectContextJson, decodeProjectContextState),
-    savedItems: remoteSavedItemsJson === null
-      ? null
-      : parseValidatedJson(SYNC_FILE_KEYS.savedItems, remoteSavedItemsJson, decodeSavedItemsState),
-  };
-}
-
-function getRequiredSyncFile(files: ReadonlyMap<SyncFileKey, string>, file: SyncFileKey): string {
-  const content = files.get(file);
-  if (content === undefined) {
-    throw new Error(backgroundT('background.sync.missingRemoteFile', { file }));
-  }
-  return content;
-}
-
-async function mergeSyncSnapshotWithLocalImports(snapshot: SyncDataSnapshot): Promise<SyncDataSnapshot> {
-  const [userSkills, skillSources] = await Promise.all([
-    getUserSkillsAlreadyLocked(),
-    getAllSkillSourcesAlreadyLocked(),
-  ]);
-  const merged = mergeLocalSkillImportsIntoSyncSnapshot(
-    {
-      skills: snapshot.skills,
-      skillSources: snapshot.skillSources,
-    },
-    {
-      skills: userSkills,
-      skillSources,
-    },
-  );
-  return {
-    ...snapshot,
-    skills: merged.skills,
-    skillSources: merged.skillSources,
-  };
-}
-
-async function backendGetRequired(backend: StorageBackend, file: string): Promise<string> {
-  const content = await backend.get(file);
-  if (content === null) {
-    throw new Error(backgroundT('background.sync.missingRemoteFile', { file }));
-  }
-  return content;
-}
-
-function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
-  return {
-    memories: snapshot.memories.length,
-    skills: snapshot.skills.length,
-    presets: snapshot.presets.length,
-    projects: snapshot.projectContext?.projects.length ?? 0,
-    projectConversations: snapshot.projectContext?.conversations.length ?? 0,
-    savedItems: snapshot.savedItems?.items.length ?? 0,
-  };
 }
 
 async function buildSidepanelPrompt(request: ChatPromptBuildRequest): Promise<{

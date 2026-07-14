@@ -105,9 +105,9 @@ describe('versioned browser repositories', () => {
     const syncSchema = readFileSync('core/sync/schema.ts', 'utf8');
     expect(syncSchema).not.toContain('validateProjectContextState');
     expect(syncSchema).not.toContain('validateSavedItemsState');
-    expect(readFileSync('entrypoints/background.ts', 'utf8'))
+    expect(readFileSync('entrypoints/background/sync-runtime-service.ts', 'utf8'))
       .toContain('decodeProjectContextState');
-    expect(readFileSync('entrypoints/background.ts', 'utf8'))
+    expect(readFileSync('entrypoints/background/sync-runtime-service.ts', 'utf8'))
       .toContain('decodeSavedItemsState');
     const projectSidebar = readFileSync(
       'entrypoints/content/adapters/project-sidebar-organizer.ts',
