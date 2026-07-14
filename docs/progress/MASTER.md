@@ -119,9 +119,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Publication closure — Phase 4, Phase 5, and Phase 6 implementation plus the complete PC compatibility/package matrix are finished in the batch branch; their Issues remain open until the one batch PR merges.
 
-**Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries.
+**Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries. Execution telemetry is recorded on every Issue and [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) is the sole publication path; the Issues remain open until it merges.
 
-**Integration Branch**: `codex/362-background-deepseek-chat-handlers` in `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`; Content, Side Panel, and Shell use isolated batch worktrees and merge back as internal commits. One final batch PR replaces one-Issue/one-PR execution.
+**Integration Branch**: `codex/362-background-deepseek-chat-handlers` in `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`; Content, Side Panel, and Shell owner lanes are integrated as internal commits. [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) replaces one-Issue/one-PR execution.
 
 **Blockers**: No code blocker. Work is isolated from the original repository's user-owned changes. Real Chrome Content smoke remains an explicit evidence gap because Chrome 150 did not load the command-line unpacked build in either headless or temporary-profile mode; no runtime pass is claimed.
 
@@ -342,7 +342,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - PC-only Chrome/Edge/Firefox scope is unchanged. Repository, build, runtime, and test scans find no Android/mobile implementation; only superseded historical records and explicit unsupported-scope statements remain.
 - Hosted quality and contribution-evidence runs `29317518877` / `29317814924` passed. PR #393 squash-merged at `8fa922285937675db9871b4c5a1f6fc1773f7408`; Issue #361 closed after telemetry and Milestone #46 advanced to 2/13 with cumulative drift score 2.
 
-**Remaining batch implementation evidence (Issues #362–#379; PR pending)**:
+**Remaining batch implementation evidence (Issues #362–#379; PR #394 open)**:
 
 - R4.3–R4.4: all remaining DeepSeek/chat/multimodal/export/sync/automation/usage/scenario commands use typed handlers and receiving codecs. The legacy switch/type/registry guard is deleted; Background is the sole Scenario cross-realm mutation authority; sync recovery, broadcast, context-menu, export-tail, and startup failure ownership are explicit. Root `background.ts` is 1,416 LOC.
 - R4.5–R4.7 + R6.1: one epoch kernel owns listeners, observers, timers, animation frames, DOM roots, ports, and cleanup tasks across reinjection, BFCache, navigation, startup failure, and teardown. MAIN root is 89 LOC; tool-block and inline-trace storage each use one strict codec/repository. The fixed mutation trace improves `126 → 21` hub deliveries with one relevant subscriber callback, two 500ms route watchers improve a 10-second idle trace `40 → 0`, and teardown returns the ledger to zero. The lane passed 32 files / 260 tests, compile, prompt freeze, and Chrome build.
@@ -375,8 +375,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Record per-Issue telemetry for #362–#379.
-2. Push the one batch branch and open one PR covering #362–#379.
+1. Keep [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) on its final head until hosted quality and contribution-evidence checks finish.
+2. Merge PR #394 after review; its closing keywords then close #362–#379 together.
 
 ## Session Log
 
@@ -473,3 +473,5 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | Measured performance batch | Added exact Pyodide and bundled-Skill package inventories, lazy Skill resources, lazy Side Panel route ceilings, Content mutation/navigation traces, and persistence burst budgets without changing PC browser targets or released storage/wire shapes. |
 | 2026-07-14 | Post-integration checkpoint | Passed 20 files / 160 integrated targeted tests, TypeScript, seven prompt goldens, Chrome build, and unchanged Side Panel budgets. Real Chrome Content smoke was not executable because Chrome 150 did not load the command-line unpacked extension; this is recorded as a gap rather than a pass. |
 | 2026-07-14 | R5.1 audit start | Static checks find one Background listener, zero legacy router symbols, one Side Panel request transport, no permanent Content route poller, and zero SCCs across 350 core/entrypoint source files; independent review remains in progress. |
+| 2026-07-14 | Final local closure | Closed five bounded R5.1 findings, passed 6 files / 107 targeted tests and the complete 161-file / 1,166-test `ci:quality` matrix, and recorded the real Chrome Content smoke as an explicit non-pass gap. |
+| 2026-07-14 | Batch publication | Recorded execution telemetry on #362–#379, pushed the single integration branch, and opened ready PR #394 as the sole closing path. Hosted quality is pending on the final documentation-synchronized head. |
