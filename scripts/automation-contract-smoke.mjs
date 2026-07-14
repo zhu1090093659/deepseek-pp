@@ -28,10 +28,16 @@ const requiredFiles = [
   'core/shell/policy.ts',
   'entrypoints/sidepanel/pages/AutomationPage.tsx',
   'entrypoints/background/automation-runtime-handlers.ts',
+  'entrypoints/content/controllers/isolated-bridge-controller.ts',
+  'entrypoints/content/controllers/main-world-bridge-controller.ts',
   'scripts/shell-mcp-host.mjs',
   'scripts/install-shell-host.mjs',
   'packages/shell-host/package.json',
   'packages/shell-host/lib/installer.mjs',
+  'packages/shell-host/lib/officecli-installer.mjs',
+  'packages/shell-host/native/contracts.mjs',
+  'packages/shell-host/native/os-adapter.mjs',
+  'packages/shell-host/native/process-provider.mjs',
   'packages/shell-host/native/shell-mcp-host.mjs',
 ];
 
@@ -55,7 +61,7 @@ for (const removed of removedPaths) {
 assertContains('entrypoints/sidepanel/App.tsx', "labelKey: 'app.tabs.capabilities'");
 assertContains('entrypoints/sidepanel/App.tsx', "import('./pages/CapabilitiesPage')");
 assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "labelKey: 'sidepanel.capabilitiesPage.tabs.automation'");
-assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "import AutomationPage from './AutomationPage'");
+assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "const AutomationPage = lazy(() => import('./AutomationPage'))");
 assertContains('entrypoints/sidepanel/pages/CapabilitiesPage.tsx', "sub === 'automation' && <AutomationPage />");
 assertContains('entrypoints/sidepanel/pages/AutomationPage.tsx', 'export default function AutomationPage');
 assertContains('core/automation/runner.ts', 'runDeepSeekAutomation');
@@ -70,10 +76,10 @@ assertContains('entrypoints/background/automation-runtime-handlers.ts', "'RUN_AU
 assertNotContains('entrypoints/background.ts', "case 'CREATE_AUTOMATION'");
 assertNotContains('entrypoints/background.ts', "case 'RUN_AUTOMATION_NOW'");
 assertContains('entrypoints/content.ts', 'runInlineAgentLoop');
-assertContains('entrypoints/content.ts', 'const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
+assertContains('entrypoints/content/controllers/isolated-bridge-controller.ts', 'const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
 assertContains('entrypoints/content.ts', 'restorePersistedInlineAgentTraces');
 assertContains('entrypoints/main-world.content.ts', 'requestAugmentedBody');
-assertContains('entrypoints/main-world.content.ts', 'const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request');
+assertContains('entrypoints/content/controllers/main-world-bridge-controller.ts', 'const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request');
 assertNotContains('entrypoints/main-world.content.ts', 'EXECUTE_TOOL_CALL');
 assertContains('core/messaging/schema.ts', "request: 'DPP_BRIDGE_REQUEST'");
 assertContains('core/messaging/schema.ts', "init: 'DPP_BRIDGE_INIT'");
@@ -89,12 +95,12 @@ assertContains('core/shell/index.ts', 'createShellMcpPresetInput');
 assertContains('scripts/shell-mcp-host.mjs', '../packages/shell-host/native/shell-mcp-host.mjs');
 assertContains('scripts/install-shell-host.mjs', '../packages/shell-host/lib/installer.mjs');
 assertContains('packages/shell-host/package.json', 'deepseek-pp-shell-host');
-assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'shell_exec');
-assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'readWindowsUserMachinePathDirs');
-assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'WINDOWS_POWERSHELL_UTF8_PREAMBLE');
-assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'getExplicitPathOverride');
-assertContains('packages/shell-host/native/shell-mcp-host.mjs', 'windowsVersion');
-assertContains('packages/shell-host/lib/installer.mjs', 'OFFICECLI_REQUIRED_HELP_PATTERNS');
+assertContains('packages/shell-host/native/contracts.mjs', "name: 'shell_exec'");
+assertContains('packages/shell-host/native/contracts.mjs', 'WINDOWS_POWERSHELL_UTF8_PREAMBLE');
+assertContains('packages/shell-host/native/os-adapter.mjs', 'readWindowsUserMachinePathDirs');
+assertContains('packages/shell-host/native/os-adapter.mjs', 'getExplicitPathOverride');
+assertContains('packages/shell-host/native/process-provider.mjs', 'windowsVersion');
+assertContains('packages/shell-host/lib/officecli-installer.mjs', 'OFFICECLI_REQUIRED_HELP_PATTERNS');
 assertContains('.github/workflows/release.yml', 'npm publish --workspace packages/shell-host --access public');
 assertContains('.github/workflows/release.yml', 'NPM_TOKEN secret is required');
 assertNotContains('README.md', ['Agent', '任务'].join(' '));
