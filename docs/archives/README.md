@@ -87,3 +87,14 @@
 - GitHub repository: `zhu1090093659/deepseek-pp`
 - GitHub milestones: #37-#42
 - GitHub issues: #189-#207
+
+### deepseek-pp-reliability-compatibility-refactor
+
+- Description: PC-only reliability, compatibility, maintainability, and measured-performance refactor across Background, Content, Side Panel, sync/persistence, automation, floating chat, and Shell Host; Android/mobile support was retired.
+- Date range: 2026-07-13 - 2026-07-14
+- Tracking mode: GITHUB_STANDARD
+- Archived progress: [MASTER.md](deepseek-pp-reliability-compatibility-refactor/progress/MASTER.md)
+- GitHub repository: `zhu1090093659/deepseek-pp`
+- GitHub milestones: #43-#48
+- GitHub issues: #311-#336, #345, #351-#380
+- Final batch PR: #394

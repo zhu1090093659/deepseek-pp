@@ -11,8 +11,8 @@
 
 - **Project Board**: Not used in `GITHUB_STANDARD` mode.
 - **Run labels**: `spec-driven` + `spec:core-refactor-2026-07`
-- **Issue range**: completed/superseded history [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311)–[#345](https://github.com/zhu1090093659/deepseek-pp/issues/345); replanned active work [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351)–[#380](https://github.com/zhu1090093659/deepseek-pp/issues/380)
-- **Task state authority**: GitHub Issues; this file is the local continuity index.
+- **Issue range**: completed/superseded history [#311](https://github.com/zhu1090093659/deepseek-pp/issues/311)–[#345](https://github.com/zhu1090093659/deepseek-pp/issues/345); completed replanned work [#351](https://github.com/zhu1090093659/deepseek-pp/issues/351)–[#380](https://github.com/zhu1090093659/deepseek-pp/issues/380)
+- **Task state authority**: GitHub Issues; this file is the final archived snapshot.
 - **Adaptive state authority**: Each GitHub Milestone description; task telemetry is recorded in Issue comments before closure.
 
 ## References
@@ -20,11 +20,11 @@
 - [Project Overview](../analysis/project-overview.md)
 - [Module Inventory](../analysis/module-inventory.md)
 - [Risk Assessment](../analysis/risk-assessment.md)
-- [Compatibility Contract Registry](../compatibility/README.md)
+- [Compatibility Contract Registry](../../../compatibility/README.md)
 - [Task Breakdown](../plan/task-breakdown.md)
 - [Dependency Graph](../plan/dependency-graph.md)
 - [Milestones](../plan/milestones.md)
-- [Governance Resolution](./governance-resolution.md)
+- [Governance Resolution](../governance/instruction-surfaces.md)
 
 ## Milestones
 
@@ -33,9 +33,9 @@
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
 | 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 0 | 10 | 5 | 10 |
-| 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
-| 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
-| 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
+| 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 0 | 13 | 5 | 13 |
+| 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 0 | 2 | 2 | 2 |
+| 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 0 | 5 | 3 | 5 |
 
 ## Issue Mapping
 
@@ -66,24 +66,24 @@
 | R3.10 | [#380](https://github.com/zhu1090093659/deepseek-pp/issues/380) | Version remaining Skill/Preset/History local state and cross-key mutations | closed |
 | R4.1 | [#360](https://github.com/zhu1090093659/deepseek-pp/issues/360) | Extract Background persistence and library handlers | closed |
 | R4.2 | [#361](https://github.com/zhu1090093659/deepseek-pp/issues/361) | Extract Background MCP, tool, and browser-control handlers | closed |
-| R4.3 | [#362](https://github.com/zhu1090093659/deepseek-pp/issues/362) | Extract Background DeepSeek, chat, multimodal, and export handlers | open |
-| R4.4 | [#363](https://github.com/zhu1090093659/deepseek-pp/issues/363) | Close Background sync, automation, usage, scenario, and lifecycle root | open |
-| R4.5 | [#364](https://github.com/zhu1090093659/deepseek-pp/issues/364) | Build Content lifecycle kernel and bridge controller | open |
-| R4.6 | [#365](https://github.com/zhu1090093659/deepseek-pp/issues/365) | Extract Content tool, inline-agent, and chat controllers | open |
-| R4.7 | [#366](https://github.com/zhu1090093659/deepseek-pp/issues/366) | Extract remaining Content DOM capability controllers | open |
-| R4.8 | [#367](https://github.com/zhu1090093659/deepseek-pp/issues/367) | Model floating-chat permission and lifecycle state | open |
-| R4.9 | [#368](https://github.com/zhu1090093659/deepseek-pp/issues/368) | Extract Side Panel typed runtime client and async-state core | open |
-| R4.10 | [#369](https://github.com/zhu1090093659/deepseek-pp/issues/369) | Move Side Panel MCP and Tools policy into controllers | open |
-| R4.11 | [#370](https://github.com/zhu1090093659/deepseek-pp/issues/370) | Move Side Panel Chat, Settings, and Library policy into controllers | open |
-| R4.12 | [#371](https://github.com/zhu1090093659/deepseek-pp/issues/371) | Split Shell Host framing, router, and session/process providers | open |
-| R4.13 | [#372](https://github.com/zhu1090093659/deepseek-pp/issues/372) | Split Shell file, Skill, picker, OS adapters, and installer | open |
-| R5.1 | [#373](https://github.com/zhu1090093659/deepseek-pp/issues/373) | Audit changed-path failure, legacy, cycle, and second-truth gaps | open |
-| R5.2 | [#374](https://github.com/zhu1090093659/deepseek-pp/issues/374) | Close PC Chrome, Edge, and Firefox compatibility | open |
-| R6.1 | [#375](https://github.com/zhu1090093659/deepseek-pp/issues/375) | Optimize Content observers, polling, and callback work | open |
-| R6.2 | [#376](https://github.com/zhu1090093659/deepseek-pp/issues/376) | Audit packaged Pyodide cost and eliminate proven duplication | open |
-| R6.3 | [#377](https://github.com/zhu1090093659/deepseek-pp/issues/377) | Load bundled Skill resources on demand | open |
-| R6.4 | [#378](https://github.com/zhu1090093659/deepseek-pp/issues/378) | Split heavy Side Panel pages and chunks on demand | open |
-| R6.5 | [#379](https://github.com/zhu1090093659/deepseek-pp/issues/379) | Coalesce persistence burst writes | open |
+| R4.3 | [#362](https://github.com/zhu1090093659/deepseek-pp/issues/362) | Extract Background DeepSeek, chat, multimodal, and export handlers | closed via PR #394 |
+| R4.4 | [#363](https://github.com/zhu1090093659/deepseek-pp/issues/363) | Close Background sync, automation, usage, scenario, and lifecycle root | closed via PR #394 |
+| R4.5 | [#364](https://github.com/zhu1090093659/deepseek-pp/issues/364) | Build Content lifecycle kernel and bridge controller | closed via PR #394 |
+| R4.6 | [#365](https://github.com/zhu1090093659/deepseek-pp/issues/365) | Extract Content tool, inline-agent, and chat controllers | closed via PR #394 |
+| R4.7 | [#366](https://github.com/zhu1090093659/deepseek-pp/issues/366) | Extract remaining Content DOM capability controllers | closed via PR #394 |
+| R4.8 | [#367](https://github.com/zhu1090093659/deepseek-pp/issues/367) | Model floating-chat permission and lifecycle state | closed via PR #394 |
+| R4.9 | [#368](https://github.com/zhu1090093659/deepseek-pp/issues/368) | Extract Side Panel typed runtime client and async-state core | closed via PR #394 |
+| R4.10 | [#369](https://github.com/zhu1090093659/deepseek-pp/issues/369) | Move Side Panel MCP and Tools policy into controllers | closed via PR #394 |
+| R4.11 | [#370](https://github.com/zhu1090093659/deepseek-pp/issues/370) | Move Side Panel Chat, Settings, and Library policy into controllers | closed via PR #394 |
+| R4.12 | [#371](https://github.com/zhu1090093659/deepseek-pp/issues/371) | Split Shell Host framing, router, and session/process providers | closed via PR #394 |
+| R4.13 | [#372](https://github.com/zhu1090093659/deepseek-pp/issues/372) | Split Shell file, Skill, picker, OS adapters, and installer | closed via PR #394 |
+| R5.1 | [#373](https://github.com/zhu1090093659/deepseek-pp/issues/373) | Audit changed-path failure, legacy, cycle, and second-truth gaps | closed via PR #394 |
+| R5.2 | [#374](https://github.com/zhu1090093659/deepseek-pp/issues/374) | Close PC Chrome, Edge, and Firefox compatibility | closed via PR #394 |
+| R6.1 | [#375](https://github.com/zhu1090093659/deepseek-pp/issues/375) | Optimize Content observers, polling, and callback work | closed via PR #394 |
+| R6.2 | [#376](https://github.com/zhu1090093659/deepseek-pp/issues/376) | Audit packaged Pyodide cost and eliminate proven duplication | closed via PR #394 |
+| R6.3 | [#377](https://github.com/zhu1090093659/deepseek-pp/issues/377) | Load bundled Skill resources on demand | closed via PR #394 |
+| R6.4 | [#378](https://github.com/zhu1090093659/deepseek-pp/issues/378) | Split heavy Side Panel pages and chunks on demand | closed via PR #394 |
+| R6.5 | [#379](https://github.com/zhu1090093659/deepseek-pp/issues/379) | Coalesce persistence burst writes | closed via PR #394 |
 
 ## Quick Status Commands
 
@@ -99,10 +99,10 @@ gh issue list -R zhu1090093659/deepseek-pp \
 gh api 'repos/zhu1090093659/deepseek-pp/milestones?state=all&per_page=100' \
   --jq '.[] | select(.title | startswith("[core-refactor-2026-07]")) | {number,title,open_issues,closed_issues,description}'
 
-# Open replanned Phase 4 tasks
+# Archived Phase 4 task state
 gh issue list -R zhu1090093659/deepseek-pp \
   --milestone '[core-refactor-2026-07] Phase 4: Strangler Cutover of Runtime Hotspots' \
-  --state open \
+  --state all \
   --json number,title
 ```
 
@@ -111,21 +111,19 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [x] Phase 3: Authoritative Contracts and Real Ports (10/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
-- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (2/13 GitHub-closed; 13/13 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
-- [ ] Phase 5: Stability and Compatibility Closure (0/2 GitHub-closed; 2/2 implemented, publication pending) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
-- [ ] Phase 6: Measured Performance Optimization (0/5 GitHub-closed; 5/5 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
+- [x] Phase 4: Strangler Cutover of Runtime Hotspots (13/13 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
+- [x] Phase 5: Stability and Compatibility Closure (2/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
+- [x] Phase 6: Measured Performance Optimization (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
 
 ## Current Status
 
-**Active Phase**: Publication closure — Phase 4, Phase 5, and Phase 6 implementation plus the complete PC compatibility/package matrix are finished in [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394); their Issues remain open until it merges.
+**Status**: Complete and archived. [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) is the single batch closure for Issues #362–#379; all six phases are complete.
 
-**Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries. Execution telemetry is recorded on every Issue and [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) is the sole publication path; the Issues remain open until it merges.
+**Delivery Model**: Issues #362–#379 remained acceptance checklists while one isolated integration branch and one PR carried the final batch. Hotspot owner lanes and internal commits stayed separable, and every mapped Issue received execution telemetry before closure.
 
-**Integration Branch**: `codex/362-background-deepseek-chat-handlers` in `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`; Content, Side Panel, and Shell owner lanes are integrated as internal commits. [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394) replaces one-Issue/one-PR execution.
+**Known Evidence Gap**: Real Chrome Content smoke remains explicitly unverified because Chrome 150 did not load the command-line unpacked build in either headless or temporary-profile mode; no runtime pass is claimed. This does not replace the passing automated Chrome/Edge/Firefox build, package, manifest, and offline-runtime evidence.
 
-**Blockers**: No code blocker. Work is isolated from the original repository's user-owned changes. Real Chrome Content smoke remains an explicit evidence gap because Chrome 150 did not load the command-line unpacked build in either headless or temporary-profile mode; no runtime pass is claimed.
-
-**Current Evidence**: PC-only main baseline is `8fa92228`; the integration branch changes 225 files. Background ownership is `121 typed / 0 legacy / 2 client-only` with `80 decoded / 0 direct-cast / 0 delegated`; Content owns one lifecycle/resource ledger and removes both 500ms route pollers; Side Panel has one request transport and lazy route budgets; Shell roots are composition-only; Pyodide, bundled Skills, and persistence bursts have executable budgets. The R5.1 repair slice passes 6 files / 107 tests plus TypeScript: either bridge world can restart alone, malformed Settings config cannot strand loading, `PET_UPDATED` wins over stale bootstrap data, runtime error projection has one authority, and unexpected auth-refresh delivery failures remain visible. The complete R5.2 `ci:quality` matrix passes 161 test files / 1,166 tests, seven prompt goldens, compile, workflow/audit/i18n/automation, MCP/Shell/PoW smoke, all PC browser builds/zips, package/manifest/UTF-8/release checks, persistence budgets, and offline Pyodide. Android project/build/runtime/test support remains retired.
+**Final Evidence**: Background ownership is `121 typed / 0 legacy / 2 client-only` with `80 decoded / 0 direct-cast / 0 delegated`; Content owns one lifecycle/resource ledger and removes both 500ms route pollers; Side Panel has one request transport and lazy route budgets; Shell roots are composition-only; Pyodide, bundled Skills, and persistence bursts have executable budgets. The R5.1 repair slice passes 6 files / 107 tests plus TypeScript. The complete R5.2 `ci:quality` matrix passes 161 test files / 1,166 tests, seven prompt goldens, compile, workflow/audit/i18n/automation, MCP/Shell/PoW smoke, all PC browser builds/zips, package/manifest/UTF-8/release checks, persistence budgets, and offline Pyodide. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -342,7 +340,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - PC-only Chrome/Edge/Firefox scope is unchanged. Repository, build, runtime, and test scans find no Android/mobile implementation; only superseded historical records and explicit unsupported-scope statements remain.
 - Hosted quality and contribution-evidence runs `29317518877` / `29317814924` passed. PR #393 squash-merged at `8fa922285937675db9871b4c5a1f6fc1773f7408`; Issue #361 closed after telemetry and Milestone #46 advanced to 2/13 with cumulative drift score 2.
 
-**Remaining batch implementation evidence (Issues #362–#379; PR #394 open)**:
+**Final batch implementation evidence (Issues #362–#379; PR #394)**:
 
 - R4.3–R4.4: all remaining DeepSeek/chat/multimodal/export/sync/automation/usage/scenario commands use typed handlers and receiving codecs. The legacy switch/type/registry guard is deleted; Background is the sole Scenario cross-realm mutation authority; sync recovery, broadcast, context-menu, export-tail, and startup failure ownership are explicit. Root `background.ts` is 1,416 LOC.
 - R4.5–R4.7 + R6.1: one epoch kernel owns listeners, observers, timers, animation frames, DOM roots, ports, and cleanup tasks across reinjection, BFCache, navigation, startup failure, and teardown. MAIN root is 89 LOC; tool-block and inline-trace storage each use one strict codec/repository. The fixed mutation trace improves `126 → 21` hub deliveries with one relevant subscriber callback, two 500ms route watchers improve a 10-second idle trace `40 → 0`, and teardown returns the ledger to zero. The lane passed 32 files / 260 tests, compile, prompt freeze, and Chrome build.
@@ -375,8 +373,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Review and merge [PR #394](https://github.com/zhu1090093659/deepseek-pp/pull/394); its closing keywords then close #362–#379 together.
-2. After merge, record the final merge SHA and verify the Issue/Milestone closure counts.
+No active implementation task remains. GitHub Issues, PR #394, and Milestones #43–#48 are the authoritative live closure record; start any future transformation as a new spec-driven run rather than reopening this archive.
 
 ## Session Log
 
@@ -475,3 +472,4 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R5.1 audit start | Static checks find one Background listener, zero legacy router symbols, one Side Panel request transport, no permanent Content route poller, and zero SCCs across 350 core/entrypoint source files; independent review remains in progress. |
 | 2026-07-14 | Final local closure | Closed five bounded R5.1 findings, passed 6 files / 107 targeted tests and the complete 161-file / 1,166-test `ci:quality` matrix, and recorded the real Chrome Content smoke as an explicit non-pass gap. |
 | 2026-07-14 | Batch publication | Recorded execution telemetry on #362–#379, pushed the single integration branch, and opened ready PR #394 as the sole closing path; review and merge are the remaining publication steps. |
+| 2026-07-14 | Archive and closure | Archived analysis, plan, progress, governance, and workflow Skill evidence under `docs/archives/deepseek-pp-reliability-compatibility-refactor/`; PR #394 closes #362–#379 and completes Milestones #46–#48 without restoring Android/mobile scope. |

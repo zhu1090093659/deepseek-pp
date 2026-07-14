@@ -104,7 +104,7 @@ flowchart LR
 
 重构期间不得无迁移地重命名 `deepseek_pp_*` keys、IndexedDB 名称/表、schema version、message type、MCP transport 配置或 tool XML。当前兼容机制并不统一：部分 store 有版本化 migration，部分只做读取时 normalize，`project` 对旧 schema 会直接清空，artifact 又同时维护 IndexedDB 与 legacy storage fallback。
 
-完整、带稳定 ID 的兼容性清单见 [`docs/compatibility/README.md`](../compatibility/README.md)。T1.1 只登记当前合同和缺口；T1.2-T1.5 负责把这些清单转成可执行 fixtures。
+完整、带稳定 ID 的兼容性清单见 [`docs/compatibility/README.md`](../../../compatibility/README.md)。T1.1 只登记当前合同和缺口；T1.2-T1.5 负责把这些清单转成可执行 fixtures。
 
 ## Performance Baseline
 
@@ -164,9 +164,9 @@ flowchart LR
 | `.claude/settings.local.json` | 仅包含本机命令权限，不是工程规则真相源 |
 | Cursor/Windsurf/Cline/Codex repo rules | 未发现现有等价规则文件 |
 | Repo-local memory fallback | 不允许创建 |
-| Active `docs/progress/MASTER.md` | 存在；记录当前 run、GitHub mapping、证据和 resume point |
+| Active `docs/progress/MASTER.md` | 分析时存在；run 完成后已归档为 `../progress/MASTER.md` |
 
-分析开始时，共享规则的 canonical source 已断裂：`AGENTS.md` 声称来自一个不存在的上游。用户在 Phase 2 确认停止这条生成关系，并指定 `AGENTS.md` 为唯一项目级 agent instruction truth source。Phase 4 已将它改为可直接维护的 Codex-first 规则面；根 `CLAUDE.md` 继续保持不存在，且不创建 repo-local memory fallback。完整决议见 `docs/progress/governance-resolution.md`。
+分析开始时，共享规则的 canonical source 已断裂：`AGENTS.md` 声称来自一个不存在的上游。用户在 Phase 2 确认停止这条生成关系，并指定 `AGENTS.md` 为唯一项目级 agent instruction truth source。Phase 4 已将它改为可直接维护的 Codex-first 规则面；根 `CLAUDE.md` 继续保持不存在，且不创建 repo-local memory fallback。完整决议见 [`governance/instruction-surfaces.md`](../governance/instruction-surfaces.md)。
 
 ## External Integrations
 

@@ -1,4 +1,4 @@
-# Governance Surface Resolution
+# Governance Surface Resolution — Archived Snapshot
 
 ## Instruction Surfaces
 
@@ -22,8 +22,8 @@
 | Resolved memory surface | Unavailable |
 | Repo fallback approved | No |
 | Repo fallback path | None |
-| Durable project knowledge | Record stable engineering rules in `AGENTS.md`; record active execution state in GitHub and `docs/progress/MASTER.md` |
+| Durable project knowledge | Stable engineering rules remain in root `AGENTS.md`; completed execution state is preserved in GitHub and this archive's `progress/MASTER.md` |
 
 ## Resolution
 
-The applicable `AGENTS.md` is authoritative at the repository root and in the HyperFrames subtree. No project memory fallback or additional agent-specific instruction file will be created. If a future tool generates another rule surface, shared durable content must be merged into the applicable `AGENTS.md` and duplication removed before that surface can affect project decisions.
+The applicable live `AGENTS.md` remains authoritative at the repository root and in the HyperFrames subtree. `governance/AGENTS.md` is only the completion-time snapshot for this archived run. No project memory fallback or additional agent-specific instruction file was created. If a future tool generates another rule surface, shared durable content must be merged into the applicable live `AGENTS.md` and duplication removed before that surface can affect project decisions.

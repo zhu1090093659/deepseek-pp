@@ -39,7 +39,7 @@ The refactor therefore starts with compatibility contracts, addresses critical b
 - Multi-record durability needs an atomic commit point or recovery journal. Partial mutation is not reported as compatible success.
 - New validators, routers, permission policies, and persistence paths replace the old source of truth; they do not run indefinitely beside it.
 
-The detailed contract inventory and current gaps are maintained under [`docs/compatibility/README.md`](../compatibility/README.md). Security-sensitive Issues contain only repair objectives and publicly verifiable outcomes.
+The detailed contract inventory and current gaps are maintained under [`docs/compatibility/README.md`](../../../compatibility/README.md). Security-sensitive Issues contain only repair objectives and publicly verifiable outcomes.
 
 ## Validation Risks
 
