@@ -23,6 +23,7 @@ import {
 export const SKILLS_STORAGE_KEY = 'deepseek_pp_skills';
 export const SKILL_SOURCES_STORAGE_KEY = 'deepseek_pp_skill_sources';
 const BUNDLED_ENABLED_STORAGE_KEY = 'deepseek_pp_bundled_skill_enabled';
+const BUNDLED_SKILL_ORDER_ANCHOR = 'shell';
 
 const TOGGLEABLE_BUNDLED_SKILL_SOURCES = new Set(['third-party', 'official']);
 
@@ -59,11 +60,13 @@ export async function getAllSkills(
     resolveBundledSkillNames(bundledEnabled, options.includeDisabled === true),
   );
   const skills = [
-    ...applyBundledSkillEnabledOverrides(
-      getLocalizedBuiltinSkills(options.locale ?? DEFAULT_LOCALE),
-      bundledEnabled,
+    ...mergeBuiltinAndBundledSkills(
+      applyBundledSkillEnabledOverrides(
+        getLocalizedBuiltinSkills(options.locale ?? DEFAULT_LOCALE),
+        bundledEnabled,
+      ),
+      applyBundledSkillEnabledOverrides(bundledSkills, bundledEnabled),
     ),
-    ...applyBundledSkillEnabledOverrides(bundledSkills, bundledEnabled),
     ...userSkills,
   ];
   if (options.includeDisabled) return skills;
@@ -85,6 +88,22 @@ export async function getSkillCollisionCandidates(): Promise<SkillCollisionCandi
 
 export async function getUserSkills(): Promise<Skill[]> {
   return userSkillRepository.read();
+}
+
+function mergeBuiltinAndBundledSkills(
+  builtinSkills: readonly Skill[],
+  bundledSkills: readonly Skill[],
+): Skill[] {
+  const anchorIndex = builtinSkills.findIndex(({ name }) => name === BUNDLED_SKILL_ORDER_ANCHOR);
+  if (anchorIndex < 0) {
+    throw new Error(`Bundled Skill order anchor is missing: ${BUNDLED_SKILL_ORDER_ANCHOR}`);
+  }
+  const insertionIndex = anchorIndex + 1;
+  return [
+    ...builtinSkills.slice(0, insertionIndex),
+    ...bundledSkills,
+    ...builtinSkills.slice(insertionIndex),
+  ];
 }
 
 export async function getUserSkillsAlreadyLocked(): Promise<Skill[]> {
