@@ -12,7 +12,7 @@
 2. **Strategy**：采用 compatibility-contract-first 的渐进式重构。先固定历史数据和行为合同，再修安全/数据/取消语义，之后建立有真实消费者的 ports、拆分大型入口，最后依据测量结果优化性能。
 3. **Compatibility**：保留全部现有用户功能、prompt 输出、storage keys、IndexedDB、sync/MCP/runtime message/Native Host 契约和 Chrome/Edge/Firefox 支持；任何 schema 变化必须有显式 migration，不允许静默丢弃旧数据。
 4. **Testing policy**：不把建设完整 E2E、coverage 或 performance 基础设施作为独立项目目标；但任何行为、数据、安全、schema、routing、permission、persistence 或 caching 变更都必须增加或更新相应自动化测试，并通过现有相关质量门。
-5. **Tracking**：使用 `GITHUB_STANDARD` 的 Issues + Milestones + PR；不创建 Project board。安全敏感任务的公开 Issue 只描述修复目标和可公开验收条件，详细信任边界证据保留在本地分析中。
+5. **Tracking**：使用 `GITHUB_STANDARD` 的 Issues + Milestones + PR；不创建 Project board。2026-07-14 起，Issues 作为验收清单，剩余重构通过隔离 owner lanes 汇入一个 batch branch 和一个最终 PR。安全敏感 Issue 只描述可公开目标与验收结果。
 6. **Governance**：`AGENTS.md` 是唯一 agent instruction truth source。根 `CLAUDE.md` 不再使用；若存在则先把仍有效内容合并进 `AGENTS.md` 后删除。当前根 `CLAUDE.md` 已不存在；`videos/deepseek-pp-promo/CLAUDE.md` 与同目录 `AGENTS.md` 完全相同，已保留后者并删除重复文件。
 7. **Deferred**：任意全局 coverage 数字、独立的大型测试平台建设，以及没有现有消费者的预留 abstraction。
 
@@ -20,10 +20,10 @@
 
 ## Analysis Snapshot
 
-- 分支：`codex/361-background-mcp-tool-handlers`
-- 基线 HEAD：`a9e78cc`（R4.1 / #360 merge），本快照包含 R4.2 / #361 的本地 typed-handler cutover
+- 集成分支：`codex/362-background-deepseek-chat-handlers`
+- 基线 HEAD：`8fa92228`（R4.2 / #361 merge）；当前 Background 批次检查点为 `8e2158d`
 - 日期：2026-07-14
-- 当前实现位于独立 Issue worktree；原仓库中的用户改动未被读取、覆盖或带入本分支。
+- 当前实现位于隔离 batch worktree；原仓库中的用户改动未被覆盖或带入本分支。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
   - `core/`：224 个 TypeScript/TSX 文件，约 40,559 行
   - `entrypoints/`：69 个 TypeScript/TSX 文件，约 26,170 行
@@ -79,7 +79,7 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、sync/automation/tool composition 与 lifecycle | 根文件 1,719 行；R4.1–R4.3 已将 102 个 persistence/library/project/local-preference/MCP/browser/tool/DeepSeek/chat/multimodal/export commands 拆为 typed handlers；R4.3 以单一 chat turn owner、owner-bound export coordinator 和一个穷尽 payload codec 固定 16 个接收边界；单一 registry 现为 `104 typed / 17 legacy`，剩余多域职责由 R4.4 收口 |
+| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、sync/automation/tool composition 与 lifecycle | 根文件约 1,600 行；R4.1–R4.4 已将全部 121 个 live commands 拆为 typed handlers，单一 registry 为 `121 typed / 0 legacy`；80 个 payload-bearing commands 均在接收边界解码，旧 switch/router 已删除 |
 | `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
 | `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
 | `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |

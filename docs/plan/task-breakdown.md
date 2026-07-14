@@ -313,8 +313,8 @@ The replacement plan has these constraints:
 
 ## Execution Guardrails
 
-1. Implement one Issue per branch/worktree and PR. Do not mix unrelated cleanup into a task.
+1. Issues are acceptance checklists. The active Phase 4–6 run uses one batch integration branch and one final PR, with isolated owner-lane worktrees and reviewable internal commits; unrelated cleanup remains out of scope.
 2. A task may create a port only if the same diff wires a production consumer and removes the superseded direct dependency.
 3. A central hotspot (`entrypoints/background.ts`, `entrypoints/content.ts`, root contracts) has a single integration owner; parallel lanes submit isolated modules and tests before central wiring.
 4. Before starting R4.8, re-check the original working tree and preserve the current user-owned floating-chat changes byte-for-byte unless the user explicitly folds them into that task.
-5. After every task, record adaptive-control telemetry on its Issue and update the Milestone state before starting another task.
+5. Record adaptive-control telemetry on every mapped Issue before the batch PR closes it; update this tracker at meaningful batch checkpoints instead of serially blocking the next independent lane.

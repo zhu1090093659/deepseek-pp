@@ -85,7 +85,7 @@ Backend/unit tests use a hard 60-second timeout. After timeout or interruption, 
 
 - The active refactor uses GitHub Issues + Milestones + PRs in `GITHUB_STANDARD` mode; no Project board is required.
 - Filter the active run with both `spec-driven` and `spec:core-refactor-2026-07`.
-- Implement one Issue per branch/worktree and PR. Record execution telemetry on the Issue before closing it through the merged PR.
+- Use Issues as acceptance checklists. Closely related Issues may share one isolated batch branch and one PR when the user authorizes batch execution; keep hotspot owner lanes and internal commits separable, record telemetry on every mapped Issue, and close them through the merged batch PR.
 - Update `docs/progress/MASTER.md` when phase status, active task, blockers, GitHub mappings, or the resume point changes.
 - Stable rules discovered during execution belong here. Transient findings, task notes, and progress do not.
 

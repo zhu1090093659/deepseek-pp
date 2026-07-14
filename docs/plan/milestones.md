@@ -15,7 +15,7 @@ This run uses `PC-browser compatibility firewall + telemetry-corrected vertical 
 
 ## Milestone Exit Gates
 
-1. All milestone Issues are closed by merged PRs or explicitly deferred through adaptive replanning.
+1. All milestone Issues are closed by the merged batch PR, another merged PR, or explicitly deferred through adaptive replanning.
 2. Each completed Issue contains execution telemetry: estimated/actual effort, S.U.P.E.R score/delta, unplanned dependencies, task drift, and cumulative milestone drift.
 3. Targeted tests pass before compile/build checks; backend/unit test processes respect the 60-second hard timeout and leave no orphan processes.
 4. Milestone completion never relies on a narrower test run to claim global compatibility. Phase 5 is the first full compatibility-closure gate.

@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 4 — Strangler Cutover of Runtime Hotspots (replanned; implementation active)
 
-**Active Task**: R4.3 / [Issue #362](https://github.com/zhu1090093659/deepseek-pp/issues/362) — extract Background DeepSeek, chat, multimodal, export, and auth-notification handlers.
+**Active Batch**: Phase 4 remaining hotspot cutover, using Issues #362–#372 as acceptance checklists rather than serial PR boundaries.
 
-**Execution Branch**: `codex/362-background-deepseek-chat-handlers` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`, based on `main@8fa92228`.
+**Integration Branch**: `codex/362-background-deepseek-chat-handlers` in `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`; Content, Side Panel, and Shell use isolated batch worktrees and merge back as internal commits. One final batch PR replaces one-Issue/one-PR execution.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `8fa92228` after R4.2. R4.2 passed 17 files / 186 targeted tests, 127 files / 1,007 full tests, and the complete PC quality/package matrix; hosted quality and contribution-evidence runs `29317518877` / `29317814924` passed before PR #393 squash-merged at `8fa922285937675db9871b4c5a1f6fc1773f7408`. Issue #361 is closed, Milestone #46 is at 2/13 with cumulative drift score 2, and Android project/build/runtime/test support remains retired.
+**Current Evidence**: PC-only main baseline is `8fa92228`. The Background batch migrates all 33 remaining commands: production ownership is `121 typed / 0 legacy / 2 client-only`, payload topology is `80 decoded / 0 direct-cast / 0 delegated`, and the legacy switch is deleted. TypeScript, automation smoke, 14 files / 151 broad targeted tests, and the Scenario cross-realm 6-file / 66-test slice pass. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -364,8 +364,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Inventory the exact 16 R4.3 commands, callers, response contracts, network-policy consumers, and cancellation/late-side-effect invariants.
-2. Design the narrow DeepSeek/chat/multimodal/export handler composition, then implement receiving-side validation and fault coverage without adding a second router or I/O policy.
+1. Complete the parallel Content (#364–#366), Side Panel (#368–#370), and Shell (#371–#372) owner lanes; preserve the user-owned floating-chat provenance before #367.
+2. Integrate lane commits, run one changed-path audit, update compatibility evidence, then run the complete PC Chrome/Edge/Firefox quality/package gate once before one batch PR.
 
 ## Session Log
 
@@ -456,3 +456,5 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R4.2 local validation | Passed the 60-second full suite at 127 files / 1,007 tests and full `ci:quality`: zero high production vulnerabilities, TypeScript, seven prompt goldens, i18n/automation, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, manifest/UTF-8 policy, release assets, and diff checks. |
 | 2026-07-14 | R4.2 closure | Hosted quality/contribution runs passed; PR #393 squash-merged at `8fa92228`, Issue #361 closed after telemetry, and Milestone #46 advanced to 2/13 with cumulative drift score 2. |
 | 2026-07-14 | R4.3 execution start | Opened `codex/362-background-deepseek-chat-handlers` from `8fa92228`; began the exact 16-command DeepSeek/chat/multimodal/export audit with R3.3 network policy, cancellation, conservative replay, output, and PC-only compatibility invariants held fixed. |
+| 2026-07-14 | Phase 4 batch acceleration | User replaced one-Issue/one-PR serial execution with one remaining-refactor batch and one final PR. Issues remain acceptance checklists; Content, Side Panel, and Shell advance in isolated owner lanes while full quality/package validation runs once after integration. |
+| 2026-07-14 | Background batch checkpoint | Internal commits `671db6e` and `8e2158d` extract all R4.3/R4.4 command families and delete the legacy router. The follow-up extends the existing Scenario command with an optional backward-compatible mutation protocol so Background becomes the cross-realm writer; ownership is `121/0/2`, payload topology is `80/0/0`, and TypeScript plus targeted suites pass. |
