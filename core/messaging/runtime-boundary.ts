@@ -97,7 +97,7 @@ export class RuntimeBoundaryError extends Error {
 }
 
 export function decodeRuntimeMessageEnvelope(value: unknown): RuntimeMessageEnvelope {
-  if (!isPlainRecord(value) || typeof value.type !== 'string' || value.type.length === 0) {
+  if (!isPlainRuntimeRecord(value) || typeof value.type !== 'string' || value.type.length === 0) {
     throw new RuntimeBoundaryError(
       RUNTIME_BOUNDARY_ERROR_CODES.invalidMessage,
       'Runtime message must be a plain object with a non-empty type.',
@@ -292,7 +292,7 @@ function throwUnauthorized(message: string): never {
   throw new RuntimeBoundaryError(RUNTIME_BOUNDARY_ERROR_CODES.unauthorizedSender, message);
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainRuntimeRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;

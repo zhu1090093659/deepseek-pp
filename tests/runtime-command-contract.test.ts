@@ -42,13 +42,18 @@ const CUTOVER_LEDGER_SECTIONS = [
 describe('runtime command compatibility contract', () => {
   it('matches the live router, MessageAction union, and checked-in human inventory', () => {
     const legacyContracts = extractLegacyMessageContracts(backgroundSource);
-    const typedContracts: RuntimeCaseContract[] = TYPED_RUNTIME_COMMAND_TYPES.map((type) => ({
-      type,
-      readsPayload: false,
-      directPayloadCast: false,
-      requestAccess: 'none',
-      error: 'background-error',
-    }));
+    const typedContracts: RuntimeCaseContract[] = TYPED_RUNTIME_COMMAND_TYPES.map((type) => {
+      const registered = RUNTIME_COMMAND_CONTRACTS[
+        type as keyof typeof RUNTIME_COMMAND_CONTRACTS
+      ];
+      return {
+        type,
+        readsPayload: registered.request.access !== 'none',
+        directPayloadCast: false,
+        requestAccess: registered.request.access,
+        error: registered.error,
+      };
+    });
     const liveContracts = [...legacyContracts, ...typedContracts];
     const live = liveContracts.map((contract) => contract.type);
     const declaredContracts = extractMessageActionContracts(typesSource);
@@ -101,6 +106,12 @@ describe('runtime command compatibility contract', () => {
       readsPayload: liveContracts.filter((contract) => contract.readsPayload).length,
       ignoresPayload: liveContracts.filter((contract) => !contract.readsPayload).length,
       directPayloadCasts: liveContracts.filter((contract) => contract.directPayloadCast).length,
+      decodedPayloads: liveContracts.filter((contract) => (
+        contract.requestAccess === 'payload-decoded'
+      )).length,
+      delegatedPayloads: liveContracts.filter((contract) => (
+        contract.requestAccess === 'payload-delegated'
+      )).length,
     }).toEqual(RUNTIME_TOPOLOGY);
     expect(new Set(live).size).toBe(live.length);
     expect(new Set(declared).size).toBe(declared.length);
@@ -153,7 +164,7 @@ describe('runtime command compatibility contract', () => {
 
   it('characterizes the remaining payload-decoding gap and resolved routing behavior', () => {
     expect(RUNTIME_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
-      'decoded-command-contract-during-R4.1-R4.4',
+      'decoded-command-contract-during-R4.2-R4.4',
     ]);
     expect(extractLegacyDefaultThrows(backgroundSource)).toBe(true);
     for (const resolved of RUNTIME_RESOLVED_ROUTING_CASES) {
@@ -167,6 +178,12 @@ describe('runtime command compatibility contract', () => {
       expect(resolved.target).toBe('explicit-rejection-at-T2.1-boundary');
       expect(() => decodeRuntimeMessageEnvelope(resolved.input)).toThrow();
     }
+  });
+
+  it('classifies nullable typed responses consistently with their exact contracts', () => {
+    expect(RUNTIME_COMMAND_CONTRACTS.GET_DEEPSEEK_THEME.response).toBe('nullable-value');
+    expect(RUNTIME_COMMAND_CONTRACTS.GET_MODEL_TYPE.response).toBe('nullable-value');
+    expect(RUNTIME_COMMAND_CONTRACTS.GET_BACKGROUND.response).toBe('nullable-value');
   });
 
   it('freezes all runtime notifications and tab RPC names', () => {

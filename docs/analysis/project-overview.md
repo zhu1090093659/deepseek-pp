@@ -79,7 +79,7 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` | Service worker bootstrap、119 类消息、chat/sync/automation/tool/export/sandbox orchestration | 2,813 行、约 65 个静态内部依赖；sync apply 已移入 service/ports，但单一 dispatcher 仍承担多域职责 |
+| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、chat/sync/automation/tool/export/sandbox orchestration | 根文件 2,690 行；R4.1 已将 57 个 persistence/library/project/local-preference commands 拆为五组 typed handlers，并抽取接收边界 codec 与 journal mutation composition；仍有 62 个 transitional cases 和多域职责 |
 | `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
 | `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
 | `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |

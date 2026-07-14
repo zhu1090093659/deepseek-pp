@@ -8,6 +8,7 @@ import {
   TYPED_RUNTIME_COMMAND_TYPES,
   getRuntimeCommandOwner,
 } from './runtime-command-contracts';
+import type { PersistenceRuntimeCommandContracts } from './persistence-runtime-contracts';
 
 export {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
@@ -24,7 +25,7 @@ export const RUNTIME_COMMAND_ERROR_CODES = {
   unknownCommand: 'runtime_command_unknown',
 } as const;
 
-export interface TypedRuntimeCommandContracts {
+export interface TypedRuntimeCommandContracts extends PersistenceRuntimeCommandContracts {
   GET_CONFIG: {
     request: { type: 'GET_CONFIG' };
     response: { version: string };
@@ -66,18 +67,24 @@ export type LegacyRuntimeCommandHandler = (
 
 export function defineRuntimeCommandHandler<
   TType extends TypedRuntimeCommandType,
+  TDecoded = TypedRuntimeCommandRequest<TType>,
 >(definition: {
   readonly type: TType;
-  decode(message: RuntimeMessageEnvelope & { type: TType }): TypedRuntimeCommandRequest<TType>;
+  decode(message: RuntimeMessageEnvelope): TDecoded;
   handle(
-    request: TypedRuntimeCommandRequest<TType>,
+    request: TDecoded,
     context: RuntimeMessageContext,
   ): MaybePromise<TypedRuntimeCommandResponse<TType>>;
 }): RuntimeCommandHandler<TType> {
   return {
     type: definition.type,
     async handle(message, context) {
-      const request = definition.decode(message as RuntimeMessageEnvelope & { type: TType });
+      if (message.type !== definition.type) {
+        throw new Error(
+          `Runtime command handler ${definition.type} received ${message.type}.`,
+        );
+      }
+      const request = definition.decode(message);
       return definition.handle(request, context);
     },
   };
@@ -93,7 +100,7 @@ export function definePayloadlessRuntimeCommandHandler<
 ): RuntimeCommandHandler<TType> {
   return defineRuntimeCommandHandler({
     type,
-    decode: () => ({ type }) as TypedRuntimeCommandRequest<TType>,
+    decode: () => undefined,
     handle: (_request, context) => handle(context),
   });
 }

@@ -1,18 +1,18 @@
 # Runtime Command Name Inventory
 
-Compatibility-run baseline: v1.10.0, commit `165ec46`, with 119 live-router names and 89 `MessageAction` names. Current authority: `main@2bbc105` plus R3.1, after T2.2 added the released `CREATE_TOOL_AUTHORIZATION` / `CLOSE_TOOL_AUTHORIZATION` lifecycle. This annex is the name-level authority for `RT-001`; it freezes the 121 live names and 91 declared names while documenting, rather than accepting, the router/union split.
+Compatibility-run baseline: v1.10.0, commit `165ec46`, with 119 live-router names and 89 `MessageAction` names. Current authority: `main@5fac6cb` plus R4.1, after T2.2 added the released `CREATE_TOOL_AUTHORIZATION` / `CLOSE_TOOL_AUTHORIZATION` lifecycle. This annex is the name-level authority for `RT-001`; it freezes the 121 live names and 91 declared names while documenting, rather than accepting, the router/union split.
 
 ## Invariants
 
-- The production registry owns 121 live commands exactly once: two typed handlers and 119 transitional cases in `entrypoints/background.ts::handleLegacyMessage`.
+- The production registry owns 121 live commands exactly once: 59 typed handlers and 62 transitional cases in `entrypoints/background.ts::handleLegacyMessage`.
 - `core/types.ts::MessageAction` declares 91 unique command names.
 - Eighty-nine names are shared, 32 are live-router-only, and two are declared-only.
 - A live name and its legal behavior remain compatible until an explicit migration changes the contract.
 - `TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` are client-only notifications, not live background commands; direct background dispatch rejects them with `runtime_command_unknown`.
-- R3.1 / #351 establishes the typed handler seam and explicit unknown-command failure. R4.1–R4.4 replace the remaining 119-case transitional switch by vertical family.
+- R3.1 / #351 establishes the typed handler seam and explicit unknown-command failure. R4.1 / #360 migrates its exact 57-command vertical slice; R4.2–R4.4 own the remaining 62 cases.
 - The ownership ledger below is authoritative for cutover scope. A live command appears exactly once; a task must not absorb a command assigned to another Issue.
 
-The production ownership model and the future cutover ledger serve different purposes. `core/messaging/runtime-command-contracts.ts` is the single 123-name metadata and current-owner authority (`2 typed / 119 legacy / 2 client-only`), consumed by the dispatch registry; the Issue sections below exclusively assign each of the 121 live commands to its final migration task (`2 / 57 / 29 / 16 / 17`). Contract tests parse both models and fail on a duplicate, missing, or cross-owner name.
+The production ownership model and the cutover ledger serve different purposes. `core/messaging/runtime-command-contracts.ts` is the single 123-name metadata and current-owner authority (`59 typed / 62 legacy / 2 client-only`), consumed by the dispatch registry; the Issue sections below exclusively assign each of the 121 live commands to its migration task (`2 / 57 / 29 / 16 / 17`). Contract tests parse both models and fail on a duplicate, missing, or cross-owner name.
 
 ## Replanned Cutover Ownership — 121 Live Commands
 
@@ -432,4 +432,4 @@ MEMORIES_UPDATED
 
 ## Validation Method
 
-`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive the 119 literal cases inside `handleLegacyMessage`, combines them with the two typed registry commands, and derives literal `type` fields and payload presence from `MessageAction`. It compares those results with this inventory, the production 123-name contract map, and the frozen `121/91/89/32/2` plus `79/42/68` topology. It also parses all five future cutover sections and proves their `2/57/29/16/17` counts, unique 121-name union, and equality with the live surface. Separate serializable specimens cover each request/response/error family without creating another command-name authority. R3.7 moves the five sync mutation/action requests from casts or payload-less dispatch to one decoded confirmed-target contract; R4.1–R4.4 own decoded schemas and handler cutover for the remaining transitional commands.
+`tests/runtime-command-contract.test.ts` uses the TypeScript AST to derive the 62 literal cases inside `handleLegacyMessage`, combines them with the 59 typed registry commands, and derives literal `type` fields and payload presence from `MessageAction`. It compares those results with this inventory, the production 123-name contract map, and the frozen `121/91/89/32/2` plus `79/42`, `38 decoded / 32 direct-cast / 9 delegated` topology. It also parses all five cutover sections and proves their `2/57/29/16/17` counts, unique 121-name union, and equality with the live surface. Separate serializable specimens cover each request/response/error family without creating another command-name authority. R4.1 moves its 38 payload-bearing commands to decoded handlers; R4.2–R4.4 own decoded schemas and handler cutover for the remaining transitional commands.

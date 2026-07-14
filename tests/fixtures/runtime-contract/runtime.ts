@@ -6,7 +6,9 @@ export const RUNTIME_TOPOLOGY = {
   declaredOnly: 2,
   readsPayload: 79,
   ignoresPayload: 42,
-  directPayloadCasts: 68,
+  directPayloadCasts: 32,
+  decodedPayloads: 38,
+  delegatedPayloads: 9,
 } as const;
 
 export const RUNTIME_REQUEST_FIXTURES = [
@@ -142,8 +144,8 @@ export const RUNTIME_ERROR_FIXTURES = {
 export const RUNTIME_CURRENT_GAPS = [
   {
     name: 'direct payload casts do not decode external input',
-    current: { type: 'GET_MEMORY_BY_ID', payload: {} },
-    target: 'decoded-command-contract-during-R4.1-R4.4',
+    current: { type: 'GET_MCP_SERVER', payload: {} },
+    target: 'decoded-command-contract-during-R4.2-R4.4',
   },
 ] as const;
 

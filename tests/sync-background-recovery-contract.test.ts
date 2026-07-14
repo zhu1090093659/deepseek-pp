@@ -8,6 +8,18 @@ const settingsState = readFileSync(
 );
 const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');
 const localSkillMerge = readFileSync('core/sync/local-skill-merge.ts', 'utf8');
+const memoryHandlers = readFileSync('entrypoints/background/memory-handlers.ts', 'utf8');
+const projectHandlers = readFileSync('entrypoints/background/project-handlers.ts', 'utf8');
+const skillHandlers = readFileSync('entrypoints/background/skill-handlers.ts', 'utf8');
+const libraryHandlers = readFileSync('entrypoints/background/library-handlers.ts', 'utf8');
+const mutationRunner = readFileSync(
+  'entrypoints/background/local-state-mutation-runner.ts',
+  'utf8',
+);
+const persistenceMutations = readFileSync(
+  'entrypoints/background/persistence-mutation-bindings.ts',
+  'utf8',
+);
 
 describe('background sync recovery integration', () => {
   it('establishes the recovery barrier before startup mutation and runtime dispatch', () => {
@@ -22,6 +34,10 @@ describe('background sync recovery integration', () => {
     expect(automationScan).toBeGreaterThan(startup);
     expect(background).not.toContain('syncLocalStateReady');
     expect(background).toContain('syncLocalRecoveryBarrier.trackApply(operation)');
+    expect(background).toContain('createTrackedLocalStateMutationRunner({');
+    expect(mutationRunner).toContain(
+      'dependencies.trackApply(dependencies.runWithRecovery(stage))',
+    );
   });
 
   it('fully stages the remote snapshot before the journaled local apply commit point', () => {
@@ -61,43 +77,52 @@ describe('background sync recovery integration', () => {
   });
 
   it('journals project deletion and its Memory cascade in one recoverable local-state mutation', () => {
-    const deleteProjectCase = background.slice(
-      background.indexOf("case 'DELETE_PROJECT_CONTEXT':"),
-      background.indexOf("case 'ADD_CONVERSATION_TO_PROJECT':"),
+    const projectComposition = background.slice(
+      background.indexOf('project: {'),
+      background.indexOf('localPreference: {'),
     );
 
-    expect(deleteProjectCase).toContain(
-      'const operation = runLocalStateMutationWithRecovery(() =>',
+    expect(projectComposition).toContain(
+      'deleteProjectContext: persistenceMutations.deleteProjectContext',
     );
-    expect(deleteProjectCase).toContain('stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)');
-    expect(deleteProjectCase).toContain('await syncLocalRecoveryBarrier.trackApply(operation)');
-    expect(deleteProjectCase).not.toContain('deleteMemoriesForProject(');
+    expect(persistenceMutations).toContain(
+      '() => dependencies.stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)',
+    );
+    expect(projectHandlers).toContain('await dependencies.deleteProjectContext(payload.projectId)');
+    expect(projectHandlers).toContain('await dependencies.notifyCommittedProjectContextUpdate(context.tabId)');
+    expect(projectHandlers).not.toContain('deleteMemoriesForProject(');
   });
 
   it('routes Skill/Source imports and deletes plus Preset deletion through the same recovery journal', () => {
-    const deleteSkillCase = background.slice(
-      background.indexOf("case 'DELETE_SKILL':"),
-      background.indexOf("case 'SET_SKILL_ENABLED':"),
-    );
-    const importSkillCases = background.slice(
-      background.indexOf("case 'IMPORT_GITHUB_SKILL_SOURCE':"),
-      background.indexOf("case 'GET_PRESETS':"),
-    );
-    const deletePresetCase = background.slice(
-      background.indexOf("case 'DELETE_PRESET':"),
-      background.indexOf("case 'SET_ACTIVE_PRESET':"),
+    const persistenceComposition = background.slice(
+      background.indexOf('...createPersistenceRuntimeHandlers({'),
+      background.indexOf('handleLegacy: handleLegacyMessage'),
     );
 
-    expect(deleteSkillCase).toContain(
-      'beginLocalStateMutation(() => stageDeleteSkillAlreadyLocked(name))',
+    expect(persistenceComposition).toContain('deleteSkill: persistenceMutations.deleteSkill');
+    expect(persistenceComposition).toContain(
+      'importGitHubSkillSource: persistenceMutations.importGitHubSkillSource',
     );
-    expect(importSkillCases).toContain('runLocalStateMutation: beginLocalStateMutation');
-    expect(importSkillCases).toContain(
-      'beginLocalStateMutation(() => stageDeleteSkillSourceAlreadyLocked(sourceId))',
+    expect(persistenceComposition).toContain(
+      'importLocalSkillSource: persistenceMutations.importLocalSkillSource',
     );
-    expect(deletePresetCase).toContain(
-      'beginLocalStateMutation(() => stageDeletePresetAlreadyLocked(presetId))',
+    expect(persistenceComposition).toContain(
+      'deleteGitHubSkillSource: persistenceMutations.deleteGitHubSkillSource',
     );
+    expect(persistenceComposition).toContain('deletePreset: persistenceMutations.deletePreset');
+    expect(persistenceMutations).toContain(
+      '() => dependencies.stageDeleteSkillAlreadyLocked(name)',
+    );
+    expect(persistenceMutations).toContain('runner,');
+    expect(persistenceMutations).toContain(
+      '() => dependencies.stageDeleteSkillSourceAlreadyLocked(sourceId)',
+    );
+    expect(persistenceMutations).toContain(
+      '() => dependencies.stageDeletePresetAlreadyLocked(id)',
+    );
+    expect(skillHandlers).toContain('await dependencies.deleteSkill(payload.name)');
+    expect(skillHandlers).toContain('await dependencies.deleteGitHubSkillSource(payload.sourceId)');
+    expect(libraryHandlers).toContain('await dependencies.deletePreset(payload.id)');
   });
 
   it('shares one local-only Skill sync policy across upload filtering and download preservation', () => {
@@ -114,15 +139,10 @@ describe('background sync recovery integration', () => {
       settingsState.indexOf('const handleImport = useCallback'),
       settingsState.indexOf('const handleClearAllMemories = useCallback'),
     );
-    const backgroundImport = background.slice(
-      background.indexOf("case 'IMPORT_MEMORY_DRAFTS':"),
-      background.indexOf("case 'UPDATE_MEMORY':"),
-    );
-
     expect(settingsImport).toContain("type: 'IMPORT_MEMORY_DRAFTS'");
     expect(settingsImport).not.toContain("type: 'SAVE_MEMORY'");
-    expect(backgroundImport).toContain('ids = await importMemoriesAtomically(memories)');
-    expect(backgroundImport).toContain('await notifyCommittedStateUpdate(context.tabId)');
-    expect(backgroundImport).not.toContain('for (const memory');
+    expect(memoryHandlers).toContain('ids = await dependencies.importMemoriesAtomically(payload.memories)');
+    expect(memoryHandlers).toContain('await dependencies.notifyCommittedStateUpdate(context.tabId)');
+    expect(memoryHandlers).not.toContain('for (const memory');
   });
 });

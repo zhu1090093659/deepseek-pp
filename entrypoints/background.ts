@@ -75,7 +75,6 @@ import {
   stageAndApplySyncSnapshotLocally,
 } from '../core/sync/local-apply-runtime';
 import { withSyncLocalStateLock } from '../core/persistence/local-state-lock';
-import type { LocalStateMutationStage } from '../core/persistence/local-state-mutation';
 import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
 import { createStorageBackend } from '../core/sync/backend-factory';
 import type { StorageBackend } from '../core/sync/storage-backend';
@@ -288,6 +287,9 @@ import {
 } from '../core/messaging/runtime-boundary';
 import { createRuntimeCommandRegistry } from '../core/messaging/runtime-command-registry';
 import { createBootstrapRuntimeHandlers } from './background/bootstrap-handlers';
+import { createTrackedLocalStateMutationRunner } from './background/local-state-mutation-runner';
+import { createPersistenceMutationBindings } from './background/persistence-mutation-bindings';
+import { createPersistenceRuntimeHandlers } from './background/persistence-handlers';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -300,7 +302,21 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
+import type {
+  BackgroundConfig,
+  CurrentDeepSeekConversation,
+  DeepSeekTheme,
+  PetConfig,
+  SyncConfig,
+  SyncCounts,
+  ToolAuthorizationSubject,
+  ToolCall,
+  ToolDescriptor,
+  ToolExecutionRecord,
+  ToolExecutionTrigger,
+  ToolResult,
+  UsageTurnInput,
+} from '../core/types';
 import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { AutomationExecutionContext } from '../core/automation/execution';
@@ -342,6 +358,21 @@ const syncLocalRecoveryBarrier = createSyncRecoveryBarrier({
     reportBackgroundStartupError('sync_local_recovery_broadcast_failed', error);
   },
 });
+const beginLocalStateMutation = createTrackedLocalStateMutationRunner({
+  runWithRecovery: runLocalStateMutationWithRecovery,
+  trackApply: (operation) => syncLocalRecoveryBarrier.trackApply(operation),
+});
+const persistenceMutations = createPersistenceMutationBindings({
+  runLocalStateMutation: beginLocalStateMutation,
+  stageDeleteSkillAlreadyLocked,
+  stageDeleteSkillSourceAlreadyLocked,
+  stageDeletePresetAlreadyLocked,
+  stageDeleteProjectContextAndMemoriesAlreadyLocked,
+  importGitHubSkillSource,
+  importLocalSkillSource,
+  updateGitHubSkillSource,
+  executeLocalSkillImporterToolCall,
+});
 const syncConfigStore = createSyncConfigStore(
   createBrowserSyncConfigStoragePort(),
   {
@@ -361,11 +392,103 @@ const browserSandboxRuntime: SandboxToolRuntime = {
   runSandbox: (request) => runBrowserSandboxToolResult(request),
 };
 const runtimeCommandRegistry = createRuntimeCommandRegistry({
-  typedHandlers: createBootstrapRuntimeHandlers({
-    getVersion: getExtensionVersion,
-    dismissWhatsNew,
-    refreshWhatsNewBadge,
-  }),
+  typedHandlers: [
+    ...createBootstrapRuntimeHandlers({
+      getVersion: getExtensionVersion,
+      dismissWhatsNew,
+      refreshWhatsNewBadge,
+    }),
+    ...createPersistenceRuntimeHandlers({
+      memory: {
+        getAllMemories,
+        getMemoryById,
+        saveMemory,
+        importMemoriesAtomically,
+        updateMemory,
+        deleteMemory,
+        touchMemories,
+        notifyCommittedStateUpdate,
+      },
+      skill: {
+        getLocale: () => currentBackgroundLocale,
+        getAllSkills: (locale) => getAllSkills({ locale }),
+        getSkillLibrary,
+        getAllSkillSources,
+        saveSkill,
+        deleteSkill: persistenceMutations.deleteSkill,
+        setSkillEnabled,
+        setSkillsEnabled,
+        previewGitHubSkillSource,
+        importGitHubSkillSource: persistenceMutations.importGitHubSkillSource,
+        previewLocalSkillSource: (rootPath) => previewLocalSkillSource(
+          rootPath,
+          { executeToolCall: executeLocalSkillImporterToolCall },
+        ),
+        pickLocalSkillFolder: (defaultPath) => pickLocalSkillFolder(
+          defaultPath,
+          { executeToolCall: executeLocalSkillImporterToolCall },
+        ),
+        importLocalSkillSource: persistenceMutations.importLocalSkillSource,
+        checkGitHubSkillSourceUpdates,
+        updateGitHubSkillSource: persistenceMutations.updateGitHubSkillSource,
+        deleteGitHubSkillSource: persistenceMutations.deleteGitHubSkillSource,
+        broadcastStateUpdate,
+      },
+      library: {
+        getAllPresets,
+        savePreset,
+        deletePreset: persistenceMutations.deletePreset,
+        setActivePresetId,
+        getActivePreset,
+        getPromptInjectionSettings,
+        savePromptInjectionSettings,
+        getAllSavedItems,
+        saveSavedItem,
+        deleteSavedItem,
+        insertPromptIntoActiveDeepSeekTab,
+        getVoiceSettings,
+        saveVoiceSettings,
+        detectVoiceCapabilities,
+        broadcastStateUpdate,
+        broadcastSavedItemsUpdate,
+        broadcastVoiceSettingsUpdate,
+      },
+      project: {
+        getProjectContextState,
+        createProjectContext,
+        updateProjectContext,
+        deleteProjectContext: persistenceMutations.deleteProjectContext,
+        addConversationToProject,
+        removeConversationFromProject,
+        setPendingProjectContext,
+        getCurrentDeepSeekConversation,
+        bindPendingProjectConversation,
+        refreshProjectConversation,
+        getProjectForConversation,
+        getProjectPromptContextForConversation,
+        formatProjectPromptContext,
+        getArtifact,
+        notifyCommittedProjectContextUpdate,
+        notifyCommittedStateUpdate,
+      },
+      localPreference: {
+        getDeepSeekTheme,
+        saveDeepSeekTheme,
+        broadcastThemeUpdate,
+        getModelType,
+        setModelType,
+        broadcastStateUpdate,
+        getBackgroundConfig,
+        saveBackgroundConfig,
+        clearBackgroundConfig,
+        broadcastBackgroundUpdate,
+        getPetConfig,
+        savePetConfig,
+        clearPetConfig,
+        broadcastPetUpdate,
+      },
+    }),
+  ],
   handleLegacy: handleLegacyMessage,
 });
 
@@ -466,11 +589,6 @@ function registerAutomationAlarmListener() {
 
 function beginSyncLocalApply(stage: () => Promise<SyncDataSnapshot>) {
   const operation = stageAndApplySyncSnapshotLocally(stage);
-  return syncLocalRecoveryBarrier.trackApply(operation);
-}
-
-function beginLocalStateMutation<T>(stage: LocalStateMutationStage<T>): Promise<T> {
-  const operation = runLocalStateMutationWithRecovery(stage);
   return syncLocalRecoveryBarrier.trackApply(operation);
 }
 
@@ -652,227 +770,6 @@ async function handleLegacyMessage(
   context: RuntimeMessageContext,
 ) {
   switch (message.type) {
-    case 'GET_MEMORIES':
-      return getAllMemories();
-
-    case 'GET_MEMORY_BY_ID': {
-      const { id: memId } = message.payload as { id: number };
-      return (await getMemoryById(memId)) ?? null;
-    }
-
-    case 'SAVE_MEMORY': {
-      const id = await saveMemory(message.payload as NewMemory);
-      await notifyCommittedStateUpdate(context.tabId);
-      return { id };
-    }
-
-    case 'IMPORT_MEMORY_DRAFTS': {
-      const { memories } = message.payload as { memories?: NewMemory[] };
-      if (!Array.isArray(memories)) return { ok: false, error: 'invalid_memories' };
-      let ids: number[];
-      try {
-        ids = await importMemoriesAtomically(memories);
-      } catch (error) {
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : 'invalid_memories',
-        };
-      }
-      await notifyCommittedStateUpdate(context.tabId);
-      return { ok: true, ids, count: ids.length };
-    }
-
-    case 'UPDATE_MEMORY': {
-      await updateMemory(message.payload as Memory);
-      await notifyCommittedStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'DELETE_MEMORY': {
-      const { id } = message.payload as { id: number };
-      await deleteMemory(id);
-      await notifyCommittedStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'TOUCH_MEMORIES': {
-      const { ids } = message.payload as { ids: number[] };
-      await touchMemories(ids);
-      return { ok: true };
-    }
-
-    case 'GET_SKILLS':
-      return getAllSkills({ locale: currentBackgroundLocale });
-
-    case 'GET_SKILL_LIBRARY':
-      return getSkillLibrary(currentBackgroundLocale);
-
-    case 'GET_SKILL_SOURCES':
-      return getAllSkillSources();
-
-    case 'GET_GITHUB_SKILL_SOURCES':
-      return (await getAllSkillSources()).filter((source) => source.provider === 'github');
-
-    case 'SAVE_SKILL': {
-      const payload = message.payload as Skill | { skill: Skill; previousName?: string };
-      const { skill, previousName } = 'skill' in payload ? payload : { skill: payload, previousName: undefined };
-      await saveSkill(skill, previousName);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'DELETE_SKILL': {
-      const { name } = message.payload as { name: string };
-      await beginLocalStateMutation(() => stageDeleteSkillAlreadyLocked(name));
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'SET_SKILL_ENABLED': {
-      const { name, enabled } = message.payload as { name: string; enabled: boolean };
-      await setSkillEnabled(name, enabled);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'SET_SKILLS_ENABLED': {
-      const { updates } = message.payload as { updates: Array<{ name: string; enabled: boolean }> };
-      await setSkillsEnabled(updates);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'PREVIEW_GITHUB_SKILL_SOURCE': {
-      const { url } = message.payload as { url: string };
-      return previewGitHubSkillSource(url);
-    }
-
-    case 'IMPORT_GITHUB_SKILL_SOURCE': {
-      const result = await importGitHubSkillSource(
-        message.payload as GitHubSkillImportRequest,
-        { runLocalStateMutation: beginLocalStateMutation },
-      );
-      await broadcastStateUpdate(context.tabId);
-      return result;
-    }
-
-    case 'PREVIEW_LOCAL_SKILL_SOURCE': {
-      const { rootPath } = message.payload as { rootPath: string };
-      return previewLocalSkillSource(rootPath, { executeToolCall: executeLocalSkillImporterToolCall });
-    }
-
-    case 'PICK_LOCAL_SKILL_FOLDER': {
-      const { defaultPath } = (message.payload ?? {}) as { defaultPath?: string };
-      return {
-        path: await pickLocalSkillFolder(defaultPath, {
-          executeToolCall: executeLocalSkillImporterToolCall,
-        }),
-      };
-    }
-
-    case 'IMPORT_LOCAL_SKILL_SOURCE': {
-      const result = await importLocalSkillSource(
-        message.payload as LocalSkillImportRequest,
-        {
-          executeToolCall: executeLocalSkillImporterToolCall,
-          runLocalStateMutation: beginLocalStateMutation,
-        },
-      );
-      if (!result.ok) return result;
-      await broadcastStateUpdate(context.tabId);
-      return result;
-    }
-
-    case 'CHECK_GITHUB_SKILL_SOURCE_UPDATES': {
-      const { sourceId } = message.payload as { sourceId: string };
-      return checkGitHubSkillSourceUpdates(sourceId);
-    }
-
-    case 'UPDATE_GITHUB_SKILL_SOURCE': {
-      const { sourceId } = message.payload as { sourceId: string };
-      const result = await updateGitHubSkillSource(
-        sourceId,
-        { runLocalStateMutation: beginLocalStateMutation },
-      );
-      await broadcastStateUpdate(context.tabId);
-      return result;
-    }
-
-    case 'DELETE_GITHUB_SKILL_SOURCE': {
-      const { sourceId } = message.payload as { sourceId: string };
-      await beginLocalStateMutation(() => stageDeleteSkillSourceAlreadyLocked(sourceId));
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_PRESETS':
-      return getAllPresets();
-
-    case 'SAVE_PRESET': {
-      await savePreset(message.payload as SystemPromptPreset);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'DELETE_PRESET': {
-      const { id: presetId } = message.payload as { id: string };
-      await beginLocalStateMutation(() => stageDeletePresetAlreadyLocked(presetId));
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'SET_ACTIVE_PRESET': {
-      const { id: activeId } = message.payload as { id: string | null };
-      await setActivePresetId(activeId);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_ACTIVE_PRESET':
-      return getActivePreset();
-
-    case 'GET_PROMPT_INJECTION_SETTINGS':
-      return getPromptInjectionSettings();
-
-    case 'SAVE_PROMPT_INJECTION_SETTINGS': {
-      const settings = await savePromptInjectionSettings(message.payload as Parameters<typeof savePromptInjectionSettings>[0]);
-      await broadcastStateUpdate(context.tabId);
-      return settings;
-    }
-
-    case 'GET_SAVED_ITEMS':
-      return getAllSavedItems();
-
-    case 'SAVE_SAVED_ITEM': {
-      const item = await saveSavedItem(message.payload as SavedItemInput);
-      await broadcastSavedItemsUpdate(context.tabId);
-      return item;
-    }
-
-    case 'DELETE_SAVED_ITEM': {
-      const { id } = message.payload as { id: string };
-      await deleteSavedItem(id);
-      await broadcastSavedItemsUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'INSERT_SAVED_PROMPT_INTO_CHAT': {
-      const { text } = (message.payload ?? {}) as { text?: unknown };
-      return insertPromptIntoActiveDeepSeekTab(typeof text === 'string' ? text : '');
-    }
-
-    case 'GET_VOICE_SETTINGS':
-      return getVoiceSettings();
-
-    case 'SAVE_VOICE_SETTINGS': {
-      const settings = await saveVoiceSettings(message.payload as Parameters<typeof saveVoiceSettings>[0]);
-      await broadcastVoiceSettingsUpdate(context.tabId);
-      return settings;
-    }
-
-    case 'GET_VOICE_CAPABILITIES':
-      return detectVoiceCapabilities();
-
     case 'GET_MCP_SERVERS':
       return getAllMcpServers();
 
@@ -1175,81 +1072,6 @@ async function handleLegacyMessage(
     case 'GET_PLATFORM_CAPABILITIES':
       return getCurrentPlatformEnvironment();
 
-    case 'GET_PROJECT_CONTEXT_STATE':
-      return getProjectContextState();
-
-    case 'CREATE_PROJECT_CONTEXT': {
-      const project = await createProjectContext(message.payload as Parameters<typeof createProjectContext>[0]);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      return project;
-    }
-
-    case 'UPDATE_PROJECT_CONTEXT': {
-      const { projectId, patch } = message.payload as { projectId: string; patch: Parameters<typeof updateProjectContext>[1] };
-      const project = await updateProjectContext(projectId, patch);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      return project;
-    }
-
-    case 'DELETE_PROJECT_CONTEXT': {
-      const { projectId } = message.payload as { projectId: string };
-      const operation = runLocalStateMutationWithRecovery(() => (
-        stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)
-      ));
-      const deletedMemories = await syncLocalRecoveryBarrier.trackApply(operation);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      if (deletedMemories > 0) await notifyCommittedStateUpdate(context.tabId);
-      return { ok: true, deletedMemories };
-    }
-
-    case 'ADD_CONVERSATION_TO_PROJECT': {
-      const { projectId, conversation } = message.payload as { projectId: string; conversation: Parameters<typeof addConversationToProject>[1] };
-      const added = await addConversationToProject(projectId, conversation);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      return { ok: true, conversation: added };
-    }
-
-    case 'REMOVE_CONVERSATION_FROM_PROJECT': {
-      const { conversationId } = message.payload as { conversationId: string };
-      await removeConversationFromProject(conversationId);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'SET_PENDING_PROJECT_CONTEXT': {
-      const { projectId } = message.payload as { projectId: string | null };
-      await setPendingProjectContext(projectId);
-      await notifyCommittedProjectContextUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_CURRENT_DEEPSEEK_CONVERSATION':
-      return getCurrentDeepSeekConversation();
-
-    case 'GET_PROJECT_CONTEXT_FOR_CONVERSATION': {
-      const { conversation, bindPendingProject } = message.payload as {
-        conversation: Parameters<typeof bindPendingProjectConversation>[0];
-        bindPendingProject?: boolean;
-      };
-      const bound = bindPendingProject === true
-        ? await bindPendingProjectConversation(conversation)
-        : await refreshProjectConversation(conversation);
-      if (bound) await notifyCommittedProjectContextUpdate(context.tabId);
-      const project = await getProjectForConversation(conversation.conversationId);
-      if (!project) return null;
-      const projectContext = await getProjectPromptContextForConversation(conversation.conversationId);
-      return {
-        projectId: project.id,
-        context: projectContext ? formatProjectPromptContext(projectContext) : null,
-      };
-    }
-
-    case 'GET_ARTIFACT': {
-      const { id } = message.payload as { id: string };
-      const artifact = await getArtifact(id);
-      return artifact ? { ok: true, artifact } : { ok: false, error: 'artifact_not_found' };
-    }
-
     case 'GET_DEEPSEEK_API_KEY_STATUS':
       return { ok: true, configured: await hasDeepSeekApiKey() };
 
@@ -1291,31 +1113,6 @@ async function handleLegacyMessage(
       return response;
     }
 
-    case 'GET_DEEPSEEK_THEME':
-      return getDeepSeekTheme();
-
-    case 'SET_DEEPSEEK_THEME': {
-      const { theme } = message.payload as { theme?: DeepSeekTheme };
-      if (theme !== 'light' && theme !== 'dark') return { ok: false, error: 'invalid_theme' };
-      const current = await getDeepSeekTheme();
-      if (current === theme) return { ok: true };
-      await saveDeepSeekTheme(theme);
-      await broadcastThemeUpdate(theme, context.tabId);
-      return { ok: true };
-    }
-
-    case 'GET_MODEL_TYPE':
-      return getModelType();
-
-    case 'SET_MODEL_TYPE': {
-      const newModelType = message.payload as ModelType;
-      const current = await getModelType();
-      if (newModelType === current) return { ok: true };
-      await setModelType(newModelType);
-      await broadcastStateUpdate(context.tabId);
-      return { ok: true };
-    }
-
     case 'RECORD_USAGE_TURN':
       return recordUsageTurn(message.payload as UsageTurnInput);
 
@@ -1327,38 +1124,6 @@ async function handleLegacyMessage(
     case 'CLEAR_USAGE_STATS':
       await clearUsageRecords();
       return { ok: true };
-
-    case 'GET_BACKGROUND':
-      return getBackgroundConfig();
-
-    case 'SAVE_BACKGROUND': {
-      const bgConfig = message.payload as BackgroundConfig;
-      await saveBackgroundConfig(bgConfig);
-      await broadcastBackgroundUpdate(bgConfig);
-      return { ok: true };
-    }
-
-    case 'CLEAR_BACKGROUND': {
-      await clearBackgroundConfig();
-      await broadcastBackgroundUpdate(null);
-      return { ok: true };
-    }
-
-    case 'GET_PET':
-      return getPetConfig();
-
-    case 'SAVE_PET': {
-      const petConfig = message.payload as PetConfig;
-      await savePetConfig(petConfig);
-      await broadcastPetUpdate(petConfig);
-      return { ok: true };
-    }
-
-    case 'CLEAR_PET': {
-      await clearPetConfig();
-      await broadcastPetUpdate(await getPetConfig());
-      return { ok: true };
-    }
 
     case 'GET_SYNC_CONFIG':
       return syncOperationCoordinator.getConfig();

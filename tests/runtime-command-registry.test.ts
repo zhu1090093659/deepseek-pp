@@ -31,8 +31,15 @@ describe('runtime command registry', () => {
       ...CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
     ];
 
-    expect(TYPED_RUNTIME_COMMAND_TYPES).toEqual(['GET_CONFIG', 'WHATS_NEW_DISMISSED']);
-    expect(LEGACY_RUNTIME_COMMAND_TYPES).toHaveLength(119);
+    expect(TYPED_RUNTIME_COMMAND_TYPES).toHaveLength(59);
+    expect(TYPED_RUNTIME_COMMAND_TYPES).toEqual(expect.arrayContaining([
+      'GET_MEMORIES',
+      'GET_ARTIFACT',
+      'GET_CONFIG',
+      'WHATS_NEW_DISMISSED',
+      'CLEAR_PET',
+    ]));
+    expect(LEGACY_RUNTIME_COMMAND_TYPES).toHaveLength(62);
     expect(CLIENT_ONLY_RUNTIME_COMMAND_TYPES).toEqual(['TOOL_CALL_EXECUTED', 'MEMORIES_UPDATED']);
     expect(new Set(allTypes).size).toBe(123);
     for (const type of TYPED_RUNTIME_COMMAND_TYPES) {
@@ -52,10 +59,10 @@ describe('runtime command registry', () => {
     const handle = vi.fn(() => ({ version: '1.10.0' }));
     const handleLegacy = vi.fn(async () => ({ legacy: true }));
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: [
+      typedHandlers: completeTypedHandlers([
         defineRuntimeCommandHandler({ type: 'GET_CONFIG', decode, handle }),
         definePayloadlessRuntimeCommandHandler('WHATS_NEW_DISMISSED', () => ({ ok: true as const })),
-      ],
+      ]),
       handleLegacy,
     });
 
@@ -65,7 +72,7 @@ describe('runtime command registry', () => {
     expect(handle).toHaveBeenCalledTimes(1);
     expect(handleLegacy).not.toHaveBeenCalled();
 
-    await expect(registry.dispatch({ type: 'GET_MEMORIES' }, context))
+    await expect(registry.dispatch({ type: 'GET_MCP_SERVERS' }, context))
       .resolves.toEqual({ legacy: true });
     expect(handleLegacy).toHaveBeenCalledOnce();
   });
@@ -76,34 +83,35 @@ describe('runtime command registry', () => {
     const handleLegacy = vi.fn(async () => null);
 
     expect(() => createRuntimeCommandRegistry({
-      typedHandlers: [config, config, dismissed],
+      typedHandlers: completeTypedHandlers([config, config, dismissed]),
       handleLegacy,
     })).toThrow('Duplicate runtime command handler: GET_CONFIG');
     expect(() => createRuntimeCommandRegistry({
-      typedHandlers: [config],
+      typedHandlers: completeTypedHandlers([config, dismissed])
+        .filter((handler) => handler.type !== 'WHATS_NEW_DISMISSED'),
       handleLegacy,
     })).toThrow('Missing typed runtime command handler: WHATS_NEW_DISMISSED');
     expect(() => createRuntimeCommandRegistry({
-      typedHandlers: [
+      typedHandlers: completeTypedHandlers([
         config,
         dismissed,
         {
-          type: 'GET_MEMORIES',
+          type: 'GET_MCP_SERVERS',
           handle: async () => [],
         } as unknown as RuntimeCommandHandler,
-      ],
+      ]),
       handleLegacy,
-    })).toThrow('Runtime command is not owned by the typed registry: GET_MEMORIES');
+    })).toThrow('Runtime command is not owned by the typed registry: GET_MCP_SERVERS');
   });
 
   it('rejects unknown and client-only commands without entering legacy dispatch', async () => {
     const handleLegacy = vi.fn(async () => null);
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: createBootstrapRuntimeHandlers({
+      typedHandlers: completeTypedHandlers(createBootstrapRuntimeHandlers({
         getVersion: () => '1.10.0',
         dismissWhatsNew: async () => undefined,
         refreshWhatsNewBadge: async () => undefined,
-      }),
+      })),
       handleLegacy,
     });
 
@@ -119,12 +127,12 @@ describe('runtime command registry', () => {
   it('does not fall back when a typed handler fails', async () => {
     const handleLegacy = vi.fn(async () => null);
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: [
+      typedHandlers: completeTypedHandlers([
         definePayloadlessRuntimeCommandHandler('GET_CONFIG', () => {
           throw new Error('manifest unavailable');
         }),
         definePayloadlessRuntimeCommandHandler('WHATS_NEW_DISMISSED', () => ({ ok: true as const })),
-      ],
+      ]),
       handleLegacy,
     });
 
@@ -132,16 +140,26 @@ describe('runtime command registry', () => {
       .rejects.toThrow('manifest unavailable');
     expect(handleLegacy).not.toHaveBeenCalled();
   });
+
+  it('rejects a message delivered to a mismatched typed handler', async () => {
+    const handler = definePayloadlessRuntimeCommandHandler(
+      'GET_CONFIG',
+      () => ({ version: '1.10.0' }),
+    );
+
+    await expect(handler.handle({ type: 'WHATS_NEW_DISMISSED' }, context))
+      .rejects.toThrow('Runtime command handler GET_CONFIG received WHATS_NEW_DISMISSED.');
+  });
 });
 
 describe('bootstrap runtime handlers and client', () => {
   it('preserves config response bytes and ignored request siblings', async () => {
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: createBootstrapRuntimeHandlers({
+      typedHandlers: completeTypedHandlers(createBootstrapRuntimeHandlers({
         getVersion: () => '1.10.0',
         dismissWhatsNew: async () => undefined,
         refreshWhatsNewBadge: async () => undefined,
-      }),
+      })),
       handleLegacy: async () => null,
     });
 
@@ -156,7 +174,7 @@ describe('bootstrap runtime handlers and client', () => {
   it('dismisses before badge refresh and returns success only after both settle', async () => {
     const events: string[] = [];
     const registry = createRuntimeCommandRegistry({
-      typedHandlers: createBootstrapRuntimeHandlers({
+      typedHandlers: completeTypedHandlers(createBootstrapRuntimeHandlers({
         getVersion: () => '1.10.0',
         async dismissWhatsNew() {
           events.push('dismiss');
@@ -164,7 +182,7 @@ describe('bootstrap runtime handlers and client', () => {
         async refreshWhatsNewBadge() {
           events.push('refresh');
         },
-      }),
+      })),
       handleLegacy: async () => null,
     });
 
@@ -176,11 +194,11 @@ describe('bootstrap runtime handlers and client', () => {
   it('surfaces each dismiss stage failure and does not report premature success', async () => {
     const refreshAfterDismissFailure = vi.fn(async () => undefined);
     const dismissFailureRegistry = createRuntimeCommandRegistry({
-      typedHandlers: createBootstrapRuntimeHandlers({
+      typedHandlers: completeTypedHandlers(createBootstrapRuntimeHandlers({
         getVersion: () => '1.10.0',
         dismissWhatsNew: async () => Promise.reject(new Error('storage unavailable')),
         refreshWhatsNewBadge: refreshAfterDismissFailure,
-      }),
+      })),
       handleLegacy: async () => null,
     });
     await expect(dismissFailureRegistry.dispatch({ type: 'WHATS_NEW_DISMISSED' }, context))
@@ -193,11 +211,11 @@ describe('bootstrap runtime handlers and client', () => {
     )).toEqual({ ok: false, error: 'storage unavailable' });
 
     const badgeFailureRegistry = createRuntimeCommandRegistry({
-      typedHandlers: createBootstrapRuntimeHandlers({
+      typedHandlers: completeTypedHandlers(createBootstrapRuntimeHandlers({
         getVersion: () => '1.10.0',
         dismissWhatsNew: async () => undefined,
         refreshWhatsNewBadge: async () => Promise.reject('badge unavailable'),
-      }),
+      })),
       handleLegacy: async () => null,
     });
     await expect(badgeFailureRegistry.dispatch({ type: 'WHATS_NEW_DISMISSED' }, context))
@@ -257,3 +275,16 @@ describe('bootstrap runtime handlers and client', () => {
     await expect(request).rejects.toThrow(`Invalid ${type} runtime response.`);
   });
 });
+
+function completeTypedHandlers(
+  handlers: readonly RuntimeCommandHandler[],
+): RuntimeCommandHandler[] {
+  const provided = new Set<string>(handlers.map((handler) => handler.type));
+  const stubs = TYPED_RUNTIME_COMMAND_TYPES
+    .filter((type) => !provided.has(type))
+    .map((type) => ({
+      type,
+      handle: async () => null,
+    } as unknown as RuntimeCommandHandler));
+  return [...handlers, ...stubs];
+}
