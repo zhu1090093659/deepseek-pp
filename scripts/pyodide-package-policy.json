@@ -1,0 +1,34 @@
+{
+  "assets": [
+    {
+      "file": "pyodide.mjs",
+      "bytes": 17880,
+      "sha256": "3abfa8bfc2d1dc9d733f4b0b5c3b35bb469295e455abf13f5c0fac70a1c2e961"
+    },
+    {
+      "file": "pyodide.asm.mjs",
+      "bytes": 1249764,
+      "sha256": "7808c4d7a9fee23a02b0c8b7bbd51b1358e8d41bbe89e5c0ee9c0c4db7b9328f"
+    },
+    {
+      "file": "pyodide.asm.wasm",
+      "bytes": 9610179,
+      "sha256": "4d23bd074cc536a96660c9168e223e3aaf01944096ad829737a9c87fec4b28eb"
+    },
+    {
+      "file": "python_stdlib.zip",
+      "bytes": 2552165,
+      "sha256": "1215cd239a270c13a3ecb1a84c84b7b3241baf7ea7f54615f00d79ff69c82787"
+    },
+    {
+      "file": "pyodide-lock.json",
+      "bytes": 115407,
+      "sha256": "f545248ab161ead36adf7110a358334974e97b08f40c7219e97077d380f7247b"
+    }
+  ],
+  "budgets": {
+    "assetCount": 5,
+    "maxRawBytes": 13545395,
+    "maxZipCompressedBytes": 6340173
+  }
+}

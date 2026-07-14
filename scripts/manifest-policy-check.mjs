@@ -151,7 +151,8 @@ assertIncludes(wxtConfig, "default_locale: 'en'", 'manifest config must declare 
 assertIncludes(wxtConfig, '__MSG_extension_name__', 'manifest config must use localized name');
 assertIncludes(wxtConfig, '__MSG_extension_description__', 'manifest config must use localized description');
 assertIncludes(wxtConfig, '__MSG_extension_action_title__', 'manifest config must use localized action title');
-assertIncludes(wxtConfig, 'pyodideAssetsPlugin', 'manifest build must bundle Pyodide assets for browser Python sandbox');
+assertIncludes(wxtConfig, 'copyPyodideAssets', 'manifest build must bundle Pyodide assets for browser Python sandbox');
+assertIncludes(wxtConfig, "'build:done'", 'Pyodide assets must be copied once after WXT entrypoint builds finish');
 
 for (const permission of ['storage', 'alarms', 'contextMenus', 'nativeMessaging', 'offscreen', 'debugger', 'tabs', 'identity', 'sidePanel']) {
   assertIncludes(privacyPolicy, `\`${permission}\``, `privacy policy must document ${permission}`);

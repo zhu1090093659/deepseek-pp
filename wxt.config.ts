@@ -10,6 +10,7 @@ import {
   readdirSync,
   writeFileSync,
 } from 'node:fs';
+import pyodidePackagePolicy from './scripts/pyodide-package-policy.json';
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 const safeWxtBrowser = resolve(rootDir, 'core/browser/safe-wxt-browser.ts');
@@ -27,13 +28,7 @@ const SANDBOX_CSP = [
   "connect-src 'self' blob:",
   "object-src 'none'",
 ].join('; ');
-const PYODIDE_ASSET_FILES = [
-  'pyodide.mjs',
-  'pyodide.asm.mjs',
-  'pyodide.asm.wasm',
-  'python_stdlib.zip',
-  'pyodide-lock.json',
-];
+const PYODIDE_ASSET_FILES = pyodidePackagePolicy.assets.map(({ file }) => file);
 
 function readPackageVersion(): string {
   const packageJson = JSON.parse(
@@ -143,21 +138,19 @@ function asciiJavaScriptOutputPlugin(): Plugin {
   };
 }
 
-function pyodideAssetsPlugin(): Plugin {
-  return {
-    name: 'deepseek-pp-pyodide-assets',
-    apply: 'build',
-    generateBundle() {
-      const pyodideDir = resolve(rootDir, 'node_modules/pyodide');
-      for (const file of PYODIDE_ASSET_FILES) {
-        this.emitFile({
-          type: 'asset',
-          fileName: `pyodide/${file}`,
-          source: readFileSync(resolve(pyodideDir, file)),
-        });
-      }
-    },
-  };
+function copyPyodideAssets(
+  outputDir: string,
+  publicAssets: Array<{ type: 'asset'; fileName: string }>,
+): void {
+  const sourceDir = resolve(rootDir, 'node_modules/pyodide');
+  const targetDir = resolve(outputDir, 'pyodide');
+  mkdirSync(targetDir, { recursive: true });
+
+  for (const file of PYODIDE_ASSET_FILES) {
+    const fileName = `pyodide/${file}`;
+    copyFileSync(resolve(sourceDir, file), resolve(outputDir, fileName));
+    publicAssets.push({ type: 'asset', fileName });
+  }
 }
 
 function copyBundledSkillAssets(
@@ -247,10 +240,11 @@ export default defineConfig({
   hooks: {
     'build:done'(wxt, output) {
       copyBundledSkillAssets(wxt.config.outDir, output.publicAssets);
+      copyPyodideAssets(wxt.config.outDir, output.publicAssets);
     },
   },
   vite: () => ({
-    plugins: [tailwindcss(), pyodideAssetsPlugin(), asciiJavaScriptOutputPlugin()],
+    plugins: [tailwindcss(), asciiJavaScriptOutputPlugin()],
     resolve: {
       alias: {
         '@wxt-dev/browser': safeWxtBrowser,
