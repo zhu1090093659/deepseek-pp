@@ -45,6 +45,18 @@ describe('sidepanel runtime client', () => {
     expect(error).toMatchObject({ kind: 'protocol', command: 'GET_CONFIG' });
     expect(error.message).toBe('invalid config');
   });
+
+  it('lets a controller decode commands whose typed status can be ok false', async () => {
+    const client = createSidepanelRuntimeClient(async () => ({ ok: false, origins: [] }));
+
+    await expect(client.request(
+      { type: 'REQUEST_HOST_PERMISSION', payload: { origins: ['https://example.com/*'] } },
+      {
+        acceptFailure: true,
+        decode: (value) => (value as { ok: boolean }).ok,
+      },
+    )).resolves.toBe(false);
+  });
 });
 
 describe('sidepanel request generation fence', () => {

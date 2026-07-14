@@ -6,6 +6,7 @@ import {
   MULTIMODAL_MCP_NATIVE_HOST,
   MULTIMODAL_MCP_SERVER_NAME,
 } from '../core/multimodal/contracts';
+import { createMcpDescriptorId, createMcpInvocationName } from '../core/mcp/descriptor-identity';
 import type { McpServerConfig, McpToolCacheEntry, ToolDescriptor } from '../core/types';
 import McpPage from '../entrypoints/sidepanel/pages/McpPage';
 
@@ -25,7 +26,7 @@ beforeEach(() => {
       getManifest: vi.fn(() => ({ version: '0.7.5' })),
       sendMessage: vi.fn(async (message: { type?: string }) => {
         if (message.type === 'GET_MCP_SERVERS') return [multimodalServer];
-        if (message.type === 'GET_PLATFORM_CAPABILITIES') return null;
+        if (message.type === 'GET_PLATFORM_CAPABILITIES') return platformEnvironment;
         if (message.type === 'GET_MCP_TOOL_CACHE') return multimodalCache;
         if (message.type === 'GET_TOOL_CALL_HISTORY') return historyResponse;
         return null;
@@ -114,6 +115,12 @@ function findExactText(text: string): HTMLElement {
 
 const now = 1_718_000_000_000;
 
+const platformEnvironment = {
+  kind: 'browser_extension',
+  name: 'WebExtension',
+  capabilities: { nativeMessaging: true },
+};
+
 const multimodalServer: McpServerConfig = {
   version: 1,
   id: 'multimodal',
@@ -196,7 +203,7 @@ const toolHistoryRecord = {
 
 function toolDescriptor(name: string, title: string): ToolDescriptor {
   return {
-    id: `multimodal:${name}`,
+    id: createMcpDescriptorId(multimodalServer.id, name),
     provider: {
       kind: 'mcp',
       id: multimodalServer.id,
@@ -204,7 +211,7 @@ function toolDescriptor(name: string, title: string): ToolDescriptor {
       transport: 'native_messaging',
     },
     name,
-    invocationName: name,
+    invocationName: createMcpInvocationName(multimodalServer.id, name),
     title,
     description: title,
     inputSchema: {

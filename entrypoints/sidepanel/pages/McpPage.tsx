@@ -1,19 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
-  SHELL_MCP_NATIVE_HOST,
-  SHELL_MCP_SERVER_NAME,
-  createShellMcpPresetInput,
-} from '../../../core/shell';
-import {
-  MULTIMODAL_MCP_NATIVE_HOST,
   MULTIMODAL_MCP_PACKAGE_NAME,
-  MULTIMODAL_MCP_SERVER_NAME,
-  createMultimodalMcpPresetInput,
 } from '../../../core/multimodal';
-import {
-  getSupportedMcpTransportKinds,
-  isShellNativeHostSupported,
-} from '../../../core/platform';
 import type { LocaleMessageKey, MessageParams, SupportedLocale } from '../../../core/i18n';
 import type {
   McpHeaderValue,
@@ -22,17 +10,24 @@ import type {
   McpServerCreateInput,
   McpServerStatus,
   McpServerTransportConfig,
-  McpToolAllowlist,
   McpToolCacheEntry,
   ToolCallHistoryRecord,
   ToolDescriptor,
   ToolExecutionMode,
   PlatformEnvironment,
 } from '../../../core/types';
-import { decodeToolCallHistory } from '../../../core/tool/history-codec';
 import PageIntro from '../components/PageIntro';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import {
+  countEnabledMcpTools,
+  getAllowedMcpTransportKinds,
+  isMcpNativeMessagingSupported,
+  isMcpToolEnabled,
+  isMultimodalMcpServer,
+  isShellMcpServer,
+  mcpServerNeedsOriginPermission,
+} from '../controllers/mcp-tools-controller';
+import { useMcpPageController } from '../controllers/useMcpPageController';
 import {
   SettingsSection,
   StatusMessage,
@@ -41,11 +36,8 @@ import {
 } from '../components/settings/primitives';
 
 type McpTransportKind = McpServerTransportConfig['kind'];
-type CacheByServer = Record<string, McpToolCacheEntry | null>;
 type BusyAction = 'refresh' | 'test' | 'permission';
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
-type MessageTone = 'success' | 'error' | 'info';
-type Banner = { tone: MessageTone; text: string };
 
 type FormState = {
   displayName: string;
@@ -99,290 +91,35 @@ const DEFAULT_FORM: FormState = {
 
 export default function McpPage() {
   const { t, locale } = useI18n();
-  const [servers, setServers] = useState<McpServerConfig[]>([]);
-  const [caches, setCaches] = useState<CacheByServer>({});
-  const [history, setHistory] = useState<ToolCallHistoryRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<McpServerConfig | null>(null);
-  const [busy, setBusy] = useState<Record<string, BusyAction | null>>({});
-  const [banner, setBanner] = useState<Banner | null>(null);
-  const [platform, setPlatform] = useState<PlatformEnvironment | null>(null);
-  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const selectionInitialized = useRef(false);
-
   const { confirm, node: confirmNode } = useConfirm();
-
-  const showBanner = (tone: MessageTone, text: string) => {
-    if (dismissTimer.current) clearTimeout(dismissTimer.current);
-    setBanner({ tone, text });
-    // Success banners auto-dismiss after 4s; errors/info stay until replaced.
-    if (tone === 'success') {
-      dismissTimer.current = setTimeout(() => setBanner(null), 4000);
-    }
-  };
-  const clearBanner = () => {
-    if (dismissTimer.current) clearTimeout(dismissTimer.current);
-    setBanner(null);
-  };
-
-  const selected = selectedId ? servers.find((server) => server.id === selectedId) ?? null : null;
-  const enabledCount = servers.filter((server) => server.enabled).length;
-  const toolCount = useMemo(
-    () => servers.reduce((sum, server) => sum + enabledToolCount(server, caches[server.id]?.descriptors ?? []), 0),
-    [servers, caches],
-  );
-  const mcpHistory = history.filter((record) => record.call.provider?.kind === 'mcp');
-  const nativeMessagingSupported = isShellNativeHostSupported(platform);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [list, environment]: [McpServerConfig[], PlatformEnvironment | null] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_MCP_SERVERS' }),
-        chrome.runtime.sendMessage({ type: 'GET_PLATFORM_CAPABILITIES' }),
-      ]);
-      const nextServers = list ?? [];
-      setPlatform(environment ?? null);
-      setServers(nextServers);
-      const shouldSelectInitialServer = !selectionInitialized.current && nextServers.length > 0;
-      if (shouldSelectInitialServer) selectionInitialized.current = true;
-      setSelectedId((current) => {
-        if (current && nextServers.some((server) => server.id === current)) return current;
-        return shouldSelectInitialServer ? nextServers[0]?.id ?? null : null;
-      });
-
-      const cacheEntries = await Promise.all(
-        nextServers.map(async (server) => {
-          const cache: McpToolCacheEntry | null = await chrome.runtime.sendMessage({
-            type: 'GET_MCP_TOOL_CACHE',
-            payload: { serverId: server.id },
-          });
-          return [server.id, cache] as const;
-        }),
-      );
-      setCaches(Object.fromEntries(cacheEntries));
-
-      const historyResponse = await chrome.runtime.sendMessage({
-        type: 'GET_TOOL_CALL_HISTORY',
-        payload: { limit: 12 },
-      });
-      const recent = unwrapRuntimeResponse<unknown>(
-        historyResponse,
-        t('sidepanel.mcpPage.messages.loadFailed'),
-      );
-      setHistory(decodeToolCallHistory(recent, 'GET_TOOL_CALL_HISTORY response'));
-    } catch (err) {
-      showBanner('error', getRuntimeErrorMessage(err) || t('sidepanel.mcpPage.messages.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-
-    const handleUpdate = (msg: { type?: string; servers?: McpServerConfig[] }) => {
-      if (msg.type === 'MCP_SERVERS_UPDATED' && Array.isArray(msg.servers)) {
-        setServers(msg.servers);
-      }
-      if (
-        msg.type === 'MCP_SERVERS_UPDATED' ||
-        msg.type === 'TOOL_DESCRIPTORS_UPDATED' ||
-        msg.type === 'TOOL_CALL_HISTORY_UPDATED'
-      ) {
-        void load();
-      }
-    };
-    const refreshWhenVisible = () => {
-      if (!document.hidden) void load();
-    };
-
-    chrome.runtime.onMessage.addListener(handleUpdate);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-    window.addEventListener('focus', refreshWhenVisible);
-
-    return () => {
-      chrome.runtime.onMessage.removeListener(handleUpdate);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-      window.removeEventListener('focus', refreshWhenVisible);
-    };
-  }, []);
-
-  const startCreate = () => {
-    setEditing(null);
-    clearBanner();
-    setShowForm((prev) => !prev);
-  };
-
-  const createShellPreset = async () => {
-    clearBanner();
-    if (!nativeMessagingSupported) {
-      showBanner('error', t('sidepanel.mcpPage.messages.nativeMessagingUnsupported'));
-      return;
-    }
-    const existing = servers.find((server) =>
-      server.displayName === SHELL_MCP_SERVER_NAME ||
-      server.transport.nativeHost === SHELL_MCP_NATIVE_HOST
-    );
-    if (existing) {
-      setSelectedId(existing.id);
-      showBanner('info', t('sidepanel.mcpPage.messages.shellExistsSelected'));
-      return;
-    }
-
-    const server: McpServerConfig | null = await chrome.runtime.sendMessage({
-      type: 'CREATE_MCP_SERVER',
-      payload: createShellMcpPresetInput(),
-    });
-    if (!server) {
-      showBanner('error', t('sidepanel.mcpPage.messages.shellCreateFailed'));
-      return;
-    }
-    setSelectedId(server.id);
-    showBanner('success', t('sidepanel.mcpPage.messages.shellCreated'));
-    await load();
-  };
-
-  const createMultimodalPreset = async () => {
-    clearBanner();
-    if (!nativeMessagingSupported) {
-      showBanner('error', t('sidepanel.mcpPage.messages.nativeMessagingUnsupported'));
-      return;
-    }
-    const existing = servers.find((server) =>
-      server.displayName === MULTIMODAL_MCP_SERVER_NAME ||
-      server.transport.nativeHost === MULTIMODAL_MCP_NATIVE_HOST
-    );
-    if (existing) {
-      setSelectedId(existing.id);
-      showBanner('info', t('sidepanel.mcpPage.messages.multimodalExistsSelected'));
-      return;
-    }
-
-    const server: McpServerConfig | null = await chrome.runtime.sendMessage({
-      type: 'CREATE_MCP_SERVER',
-      payload: createMultimodalMcpPresetInput(),
-    });
-    if (!server) {
-      showBanner('error', t('sidepanel.mcpPage.messages.multimodalCreateFailed'));
-      return;
-    }
-    setSelectedId(server.id);
-    showBanner('success', t('sidepanel.mcpPage.messages.multimodalCreated'));
-    await load();
-  };
-
-  const startEdit = (server: McpServerConfig) => {
-    setEditing(server);
-    clearBanner();
-    setShowForm(true);
-  };
-
-  const saveServer = async (payload: McpServerCreateInput) => {
-    const editingServer = editing ? servers.find((server) => server.id === editing.id) ?? editing : null;
-    const requestPayload = editingServer
-      ? { ...payload, allowlist: editingServer.allowlist }
-      : payload;
-    const response = editing
-      ? await chrome.runtime.sendMessage({
-        type: 'UPDATE_MCP_SERVER',
-        payload: { id: editing.id, patch: requestPayload },
-      })
-      : await chrome.runtime.sendMessage({ type: 'CREATE_MCP_SERVER', payload: requestPayload });
-
-    if (!response) {
-      showBanner('error', t('sidepanel.mcpPage.messages.saveFailed'));
-      return;
-    }
-
-    setShowForm(false);
-    setEditing(null);
-    clearBanner();
-    await load();
-  };
-
-  const removeServer = async (server: McpServerConfig) => {
-    const ok = await confirm({
-      title: t('sidepanel.mcpPage.messages.deleteConfirm', { name: server.displayName }),
-      message: t('sidepanel.mcpPage.messages.deleteConfirm', { name: server.displayName }),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-    });
-    if (!ok) return;
-    await chrome.runtime.sendMessage({ type: 'DELETE_MCP_SERVER', payload: { id: server.id } });
-    if (selectedId === server.id) setSelectedId(null);
-    await load();
-  };
-
-  const patchServer = async (server: McpServerConfig, patch: Partial<McpServerConfig>) => {
-    await chrome.runtime.sendMessage({
-      type: 'UPDATE_MCP_SERVER',
-      payload: { id: server.id, patch },
-    });
-    await load();
-  };
-
-  const requestPermission = async (server: McpServerConfig) => {
-    setBusyState(server.id, 'permission');
-    clearBanner();
-    try {
-      const result = await requestMcpOriginPermission(server);
-      if (result?.ok) {
-        showBanner('success', t('sidepanel.mcpPage.messages.permissionGranted', { origin: result.origin ?? t('sidepanel.mcpPage.localHost') }));
-      } else {
-        showBanner('error', result?.error ?? t('sidepanel.mcpPage.messages.permissionDenied'));
-      }
-    } finally {
-      setBusyState(server.id, null);
-    }
-  };
-
-  const refreshServer = async (server: McpServerConfig, action: 'refresh' | 'test') => {
-    setBusyState(server.id, action);
-    clearBanner();
-    try {
-      if (requiresOriginPermission(server)) {
-        const permission = await requestMcpOriginPermission(server);
-        if (!permission?.ok) {
-          showBanner('error', permission?.error ?? t('sidepanel.mcpPage.messages.permissionRequired', {
-            origin: permission?.origin ?? 'MCP Host',
-          }));
-          return;
-        }
-      }
-      const result = await chrome.runtime.sendMessage({
-        type: action === 'test' ? 'TEST_MCP_SERVER_CONNECTION' : 'REFRESH_MCP_SERVER_TOOLS',
-        payload: { serverId: server.id },
-      });
-      const cache: McpToolCacheEntry | null = result?.cache ?? result ?? null;
-      if (cache) {
-        setCaches((prev) => ({ ...prev, [server.id]: cache }));
-        if (cache.health.status === 'ready') {
-          showBanner('success', t('sidepanel.mcpPage.messages.connectionSuccess', {
-            tools: cache.health.toolCount,
-            latency: formatMs(cache.health.latencyMs),
-          }));
-        } else {
-          showBanner('error', cache.health.error ?? t('sidepanel.mcpPage.messages.connectionFailed'));
-        }
-      }
-      await load();
-    } finally {
-      setBusyState(server.id, null);
-    }
-  };
-
-  const toggleTool = async (server: McpServerConfig, tool: ToolDescriptor) => {
-    const enabled = isToolEnabled(server, tool);
-    const allowlist = nextAllowlistForTool(server.allowlist, tool, !enabled);
-    await patchServer(server, { allowlist });
-  };
-
-  const setBusyState = (serverId: string, action: BusyAction | null) => {
-    setBusy((prev) => ({ ...prev, [serverId]: action }));
-  };
+  const {
+    servers,
+    caches,
+    mcpHistory,
+    selected,
+    selectedId,
+    setSelectedId,
+    loading,
+    showForm,
+    editing,
+    busy,
+    banner,
+    platform,
+    enabledCount,
+    toolCount,
+    nativeMessagingSupported,
+    startCreate,
+    startEdit,
+    cancelForm,
+    createShellPreset,
+    createMultimodalPreset,
+    saveServer,
+    removeServer,
+    patchServer,
+    requestPermission,
+    refreshServer,
+    toggleTool,
+  } = useMcpPageController(t, confirm);
 
   return (
     <div className="p-4 space-y-3">
@@ -438,7 +175,7 @@ export default function McpPage() {
             initial={editing}
             platform={platform}
             onSave={saveServer}
-            onCancel={() => { setShowForm(false); setEditing(null); clearBanner(); }}
+            onCancel={cancelForm}
           />
         </div>
       )}
@@ -528,7 +265,7 @@ function McpServerForm({
   const { t } = useI18n();
   const [form, setForm] = useState<FormState>(() => initial ? formFromServer(initial) : DEFAULT_FORM);
   const [error, setError] = useState('');
-  const supportedTransportKinds = getSupportedMcpTransportKinds(
+  const supportedTransportKinds = getAllowedMcpTransportKinds(
     TRANSPORT_OPTIONS.map((item) => item.kind),
     platform,
   );
@@ -881,7 +618,7 @@ function ServerRow({
   t: Translator;
 }) {
   const status = statusMeta(cache?.health.status ?? server.status, t);
-  const activeTools = enabledToolCount(server, cache?.descriptors ?? []);
+  const activeTools = countEnabledMcpTools(server, cache?.descriptors ?? []);
 
   return (
     <div
@@ -967,7 +704,7 @@ function ServerDetail({
           <div className="text-[11px] truncate" style={{ color: 'var(--ds-text-tertiary)' }}>{endpointLabel(server)}</div>
         </div>
         <div className="flex gap-1.5">
-          {requiresOriginPermission(server) && (
+          {mcpServerNeedsOriginPermission(server) && (
             <button onClick={onRequestPermission} className="ds-btn-secondary px-2 py-1 text-[11px] rounded-md" disabled={busy !== null}>
               {t('sidepanel.mcpPage.detail.grant')}
             </button>
@@ -994,18 +731,18 @@ function ServerDetail({
         </div>
       )}
 
-      {isShellServer(server) && (
+      {isShellMcpServer(server) && (
         <ShellSetupHint server={server} cache={cache} t={t} />
       )}
 
-      {isMultimodalServer(server) && (
+      {isMultimodalMcpServer(server) && (
         <MultimodalSetupHint server={server} cache={cache} t={t} />
       )}
 
       <div className="ds-card rounded-lg p-3 space-y-2">
         <ToggleRow
           title={t('sidepanel.mcpPage.detail.executionPolicy')}
-          description={t('sidepanel.mcpPage.detail.injectionSummary', { count: enabledToolCount(server, tools) })}
+          description={t('sidepanel.mcpPage.detail.injectionSummary', { count: countEnabledMcpTools(server, tools) })}
           enabled={server.execution.enabled}
           onToggle={(next) => onPatch({ execution: { ...server.execution, enabled: next } })}
         />
@@ -1129,7 +866,7 @@ function ToolRow({
   onToggle: () => void;
   t: Translator;
 }) {
-  const enabled = isToolEnabled(server, tool);
+  const enabled = isMcpToolEnabled(server, tool);
   return (
     <div className="ds-card rounded-lg px-3 py-2">
       <div className="flex items-start justify-between gap-2">
@@ -1280,7 +1017,7 @@ function transportFromForm(
   platform: PlatformEnvironment | null,
 ): { transport: McpServerTransportConfig } | { error: string } {
   if (form.transportKind === 'native_messaging') {
-    if (!isShellNativeHostSupported(platform)) {
+    if (!isMcpNativeMessagingSupported(platform)) {
       return { error: t('sidepanel.mcpPage.messages.nativeMessagingUnsupported') };
     }
     const nativeHost = form.nativeHost.trim();
@@ -1388,78 +1125,6 @@ function isHeaderName(value: string): boolean {
   return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value);
 }
 
-function requiresOriginPermission(server: McpServerConfig): boolean {
-  return server.transport.kind !== 'native_messaging' && Boolean(server.transport.url);
-}
-
-async function requestMcpOriginPermission(server: McpServerConfig): Promise<{
-  ok: boolean;
-  origin: string | null;
-  error?: string;
-}> {
-  if (!requiresOriginPermission(server)) return { ok: true, origin: null };
-  try {
-    const origin = getOriginPattern(server.transport.url ?? '');
-    if (!chrome.permissions?.contains || !chrome.permissions?.request) return { ok: true, origin };
-    const granted = await chrome.permissions.contains({ origins: [origin] }).catch(() => false);
-    if (granted) return { ok: true, origin };
-    const ok = await chrome.permissions.request({ origins: [origin] }).catch(() => false);
-    return { ok, origin };
-  } catch (err) {
-    return { ok: false, origin: null, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function getOriginPattern(url: string): string {
-  const parsed = new URL(url);
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('Service URL only supports http/https');
-  }
-  return `${parsed.protocol}//${parsed.host}/*`;
-}
-
-function enabledToolCount(server: McpServerConfig, tools: ToolDescriptor[]): number {
-  return tools.filter((tool) => isToolEnabled(server, tool)).length;
-}
-
-function isToolEnabled(server: McpServerConfig, tool: ToolDescriptor): boolean {
-  if (!server.enabled || !server.execution.enabled || server.execution.mode !== 'auto') return false;
-  const selected = server.allowlist.toolNames.includes(tool.name) || server.allowlist.toolNames.includes(tool.invocationName);
-  if (server.allowlist.mode === 'allow') return selected;
-  if (server.allowlist.mode === 'deny') return !selected;
-  return true;
-}
-
-function nextAllowlistForTool(
-  allowlist: McpToolAllowlist,
-  tool: ToolDescriptor,
-  shouldEnable: boolean,
-): McpToolAllowlist {
-  const names = new Set(allowlist.toolNames);
-  const preferredName = tool.name;
-  const removeTool = () => {
-    names.delete(tool.name);
-    names.delete(tool.invocationName);
-  };
-
-  if (allowlist.mode === 'allow') {
-    if (shouldEnable) names.add(preferredName);
-    else removeTool();
-    return { mode: 'allow', toolNames: [...names] };
-  }
-
-  if (allowlist.mode === 'deny') {
-    if (shouldEnable) removeTool();
-    else names.add(preferredName);
-    return { mode: names.size === 0 ? 'all' : 'deny', toolNames: [...names] };
-  }
-
-  if (!shouldEnable) {
-    return { mode: 'deny', toolNames: [preferredName] };
-  }
-  return allowlist;
-}
-
 function schemaSummary(tool: ToolDescriptor, t: Translator): string {
   const props = Object.keys(tool.inputSchema.properties ?? {});
   const required = tool.inputSchema.required ?? [];
@@ -1477,14 +1142,6 @@ function statusMeta(status: McpServerStatus, t: Translator) {
   if (status === 'error') return { label: t('sidepanel.mcpPage.status.error'), color: 'var(--ds-danger)', bg: 'var(--ds-danger-bg)' };
   if (status === 'disabled') return { label: t('sidepanel.mcpPage.status.disabled'), color: 'var(--ds-text-tertiary)', bg: 'var(--ds-surface)' };
   return { label: t('sidepanel.mcpPage.status.unknown'), color: 'var(--ds-text-secondary)', bg: 'var(--ds-surface)' };
-}
-
-function isShellServer(server: McpServerConfig): boolean {
-  return server.displayName === SHELL_MCP_SERVER_NAME || server.transport.nativeHost === SHELL_MCP_NATIVE_HOST;
-}
-
-function isMultimodalServer(server: McpServerConfig): boolean {
-  return server.displayName === MULTIMODAL_MCP_SERVER_NAME || server.transport.nativeHost === MULTIMODAL_MCP_NATIVE_HOST;
 }
 
 function ShellSetupHint({

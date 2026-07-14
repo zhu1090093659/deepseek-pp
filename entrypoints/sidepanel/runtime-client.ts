@@ -34,6 +34,7 @@ export type SidepanelRuntimeTransport = <TType extends TypedRuntimeCommandType>(
 export interface SidepanelRuntimeRequestOptions<TResult> {
   decode?: (value: unknown) => TResult;
   unavailableMessage?: string;
+  acceptFailure?: boolean;
 }
 
 export interface SidepanelRuntimeClient {
@@ -67,14 +68,14 @@ export function createSidepanelRuntimeClient(
         });
       }
 
-      if (response === undefined || response === null) {
+      if (response === undefined) {
         throw new SidepanelRuntimeError({
           kind: 'unavailable',
           command: request.type,
           message: options?.unavailableMessage ?? `${request.type} did not return a response.`,
         });
       }
-      if (isRuntimeFailure(response)) {
+      if (isRuntimeFailure(response) && !options?.acceptFailure) {
         throw new SidepanelRuntimeError({
           kind: 'command',
           command: request.type,

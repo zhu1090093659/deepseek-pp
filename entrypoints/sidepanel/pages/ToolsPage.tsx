@@ -1,16 +1,14 @@
-import { useEffect, useState } from 'react';
-import { SHELL_MCP_NATIVE_HOST, SHELL_MCP_SERVER_NAME, createShellMcpPresetInput } from '../../../core/shell';
-import { isShellNativeHostSupported } from '../../../core/platform';
+import { useState } from 'react';
 import type { LocaleMessageKey } from '../../../core/i18n';
-import type { McpServerConfig, McpToolAllowlist, McpToolCacheEntry, PlatformEnvironment, ToolDescriptor } from '../../../core/types';
+import type { McpServerConfig, McpToolCacheEntry, ToolDescriptor } from '../../../core/types';
 import PageIntro from '../components/PageIntro';
 import { SettingsSection, StatusMessage, ToggleRow } from '../components/settings/primitives';
+import { isMcpToolEnabled, mcpToolsController } from '../controllers/mcp-tools-controller';
+import { useToolsPageController } from '../controllers/useToolsPageController';
 import { useI18n } from '../i18n';
 
-type PermissionState = 'idle' | 'granting' | 'granted' | 'denied' | 'error';
 type DiagState = 'idle' | 'running' | 'done' | 'err';
 type DiagResult = Record<string, { status: number; length: number; error?: string; preview?: string }>;
-type PythonBusyState = 'idle' | 'creating' | 'refreshing' | 'toggling';
 
 function DiagSearch() {
   const { t } = useI18n();
@@ -22,8 +20,7 @@ function DiagSearch() {
     setState('running');
     setResult(null);
     try {
-      const res = await chrome.runtime.sendMessage({ type: 'DIAGNOSE_WEB_SEARCH', payload: { query } });
-      setResult(res as DiagResult);
+      setResult(await mcpToolsController.diagnoseWebSearch(query));
       setState('done');
     } catch {
       setState('err');
@@ -116,7 +113,7 @@ function PythonToolCard({
 }: {
   server: McpServerConfig | null;
   cache: McpToolCacheEntry | null;
-  busy: PythonBusyState;
+  busy: 'idle' | 'creating' | 'refreshing' | 'toggling';
   message: string;
   messageTone: 'success' | 'error' | 'warning' | 'info';
   nativeMessagingSupported: boolean;
@@ -225,188 +222,26 @@ function PythonToolCard({
 
 export default function ToolsPage() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<Record<ToolKey, boolean>>({
-    web_search: true,
-    web_fetch: true,
-  });
-  const [permState, setPermState] = useState<PermissionState>('idle');
-  const [permUrl, setPermUrl] = useState('');
-  const [allSitesState, setAllSitesState] = useState<PermissionState>('idle');
-  const [pythonServer, setPythonServer] = useState<McpServerConfig | null>(null);
-  const [pythonCache, setPythonCache] = useState<McpToolCacheEntry | null>(null);
-  const [pythonBusy, setPythonBusy] = useState<PythonBusyState>('idle');
-  const [pythonMessage, setPythonMessage] = useState('');
-  const [pythonMessageTone, setPythonMessageTone] = useState<'success' | 'error' | 'warning' | 'info'>('info');
-  const [platform, setPlatform] = useState<PlatformEnvironment | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_WEB_TOOL_SETTINGS' }).then((result: Record<string, boolean>) => {
-      if (result) {
-        setSettings((prev) => ({ ...prev, ...result }));
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    void loadPythonTool();
-
-    const handler = (msg: { type?: string }) => {
-      if (msg.type === 'MCP_SERVERS_UPDATED' || msg.type === 'TOOL_DESCRIPTORS_UPDATED') {
-        void loadPythonTool();
-      }
-    };
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
-  }, []);
-
-  const loadPythonTool = async () => {
-    const [servers, environment]: [McpServerConfig[], PlatformEnvironment | null] = await Promise.all([
-      chrome.runtime.sendMessage({ type: 'GET_MCP_SERVERS' }),
-      chrome.runtime.sendMessage({ type: 'GET_PLATFORM_CAPABILITIES' }),
-    ]);
-    setPlatform(environment ?? null);
-    const shell = (servers ?? []).find(isShellServer) ?? null;
-    setPythonServer(shell);
-
-    if (!shell) {
-      setPythonCache(null);
-      return;
-    }
-
-    const cache: McpToolCacheEntry | null = await chrome.runtime.sendMessage({
-      type: 'GET_MCP_TOOL_CACHE',
-      payload: { serverId: shell.id },
-    });
-    setPythonCache(cache ?? null);
-    setLoading(false);
-  };
-
-  const handleCreatePythonShell = async () => {
-    setPythonBusy('creating');
-    setPythonMessage('');
-    try {
-      if (!isShellNativeHostSupported(platform)) {
-        setPythonMessageTone('error');
-        setPythonMessage(t('sidepanel.toolsPage.pythonStatusUnsupported'));
-        return;
-      }
-      const existing = pythonServer;
-      if (existing) {
-        setPythonMessageTone('info');
-        setPythonMessage(t('sidepanel.toolsPage.shellExists'));
-        return;
-      }
-      await chrome.runtime.sendMessage({
-        type: 'CREATE_MCP_SERVER',
-        payload: createShellMcpPresetInput(),
-      });
-      setPythonMessageTone('success');
-      setPythonMessage(t('sidepanel.toolsPage.shellCreated'));
-      await loadPythonTool();
-    } finally {
-      setPythonBusy('idle');
-    }
-  };
-
-  const handleRefreshPythonTools = async () => {
-    if (!pythonServer) return;
-    setPythonBusy('refreshing');
-    setPythonMessage('');
-    try {
-      const result = await chrome.runtime.sendMessage({
-        type: 'REFRESH_MCP_SERVER_TOOLS',
-        payload: { serverId: pythonServer.id },
-      });
-      const cache: McpToolCacheEntry | null = result?.cache ?? result ?? null;
-      setPythonCache(cache);
-      if (cache?.descriptors.some((tool) => tool.name === 'python_exec')) {
-        setPythonMessageTone('success');
-        setPythonMessage(t('sidepanel.toolsPage.pythonFound'));
-      } else {
-        setPythonMessageTone('error');
-        setPythonMessage(t('sidepanel.toolsPage.pythonMissingAfterRefresh'));
-      }
-      await loadPythonTool();
-    } finally {
-      setPythonBusy('idle');
-    }
-  };
-
-  const handleTogglePython = async () => {
-    if (!pythonServer) return;
-    const pythonExec = pythonCache?.descriptors.find((tool) => tool.name === 'python_exec');
-    if (!pythonExec) {
-      setPythonMessageTone('error');
-      setPythonMessage(t('sidepanel.toolsPage.pythonMissingBeforeToggle'));
-      return;
-    }
-
-    setPythonBusy('toggling');
-    setPythonMessage('');
-    try {
-      const shouldEnable = !isMcpToolEnabled(pythonServer, pythonExec);
-      await chrome.runtime.sendMessage({
-        type: 'UPDATE_MCP_SERVER',
-        payload: {
-          id: pythonServer.id,
-          patch: {
-            enabled: shouldEnable ? true : pythonServer.enabled,
-            execution: {
-              ...pythonServer.execution,
-              enabled: shouldEnable ? true : pythonServer.execution.enabled,
-              mode: shouldEnable ? 'auto' : pythonServer.execution.mode,
-            },
-            allowlist: nextAllowlistForTool(pythonServer.allowlist, pythonExec, shouldEnable),
-          },
-        },
-      });
-      setPythonMessageTone('success');
-      setPythonMessage(shouldEnable ? t('sidepanel.toolsPage.pythonEnabled') : t('sidepanel.toolsPage.pythonDisabled'));
-      await loadPythonTool();
-    } finally {
-      setPythonBusy('idle');
-    }
-  };
-
-  const handleToggle = async (key: ToolKey, enabled: boolean) => {
-    setSettings((prev) => ({ ...prev, [key]: enabled }));
-    await chrome.runtime.sendMessage({
-      type: 'SET_WEB_TOOL_SETTING',
-      payload: { name: key, enabled },
-    });
-  };
-
-  const handleGrantPermission = async () => {
-    const trimmed = permUrl.trim();
-    if (!trimmed) return;
-    let origin: string;
-    try {
-      origin = new URL(trimmed).origin + '/*';
-    } catch {
-      setPermState('error');
-      return;
-    }
-    setPermState('granting');
-    const result = await chrome.runtime.sendMessage({
-      type: 'REQUEST_HOST_PERMISSION',
-      payload: { origins: [origin] },
-    });
-    if (result?.ok) {
-      setPermState('granted');
-    } else {
-      setPermState('denied');
-    }
-  };
-
-  const handleGrantAllSites = async () => {
-    setAllSitesState('granting');
-    const result = await chrome.runtime.sendMessage({
-      type: 'REQUEST_HOST_PERMISSION',
-      payload: { origins: ['http://*/*', 'https://*/*'] },
-    });
-    setAllSitesState(result?.ok ? 'granted' : 'denied');
-  };
+  const {
+    settings,
+    settingsError,
+    permState,
+    permUrl,
+    allSitesState,
+    pythonServer,
+    pythonCache,
+    pythonBusy,
+    pythonMessage,
+    pythonMessageTone,
+    nativeMessagingSupported,
+    updatePermissionUrl,
+    createPythonShell,
+    refreshPythonTools,
+    togglePython,
+    toggleWebTool,
+    grantPermission,
+    grantAllSites,
+  } = useToolsPageController(t);
 
   return (
     <div className="p-4 space-y-4">
@@ -437,7 +272,7 @@ export default function ToolsPage() {
                 title={t(tool.nameKey)}
                 description={t(tool.descriptionKey)}
                 enabled={settings[tool.key]}
-                onToggle={(next) => handleToggle(tool.key, next)}
+                onToggle={(next) => toggleWebTool(tool.key, next)}
               />
             </div>
           </div>
@@ -448,12 +283,14 @@ export default function ToolsPage() {
           busy={pythonBusy}
           message={pythonMessage}
           messageTone={pythonMessageTone}
-          nativeMessagingSupported={isShellNativeHostSupported(platform)}
-          onCreate={handleCreatePythonShell}
-          onRefresh={handleRefreshPythonTools}
-          onToggle={handleTogglePython}
+          nativeMessagingSupported={nativeMessagingSupported}
+          onCreate={createPythonShell}
+          onRefresh={refreshPythonTools}
+          onToggle={togglePython}
         />
       </div>
+
+      {settingsError && <StatusMessage tone="error">{settingsError}</StatusMessage>}
 
       <div
         className="text-[11px] px-3 py-2 rounded-lg"
@@ -481,8 +318,8 @@ export default function ToolsPage() {
             type="url"
             placeholder="https://example.com"
             value={permUrl}
-            onChange={(e) => { setPermUrl(e.target.value); setPermState('idle'); }}
-            onKeyDown={(e) => e.key === 'Enter' && handleGrantPermission()}
+            onChange={(e) => updatePermissionUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && grantPermission()}
             className="flex-1 px-3 py-2 text-xs rounded-lg border outline-none transition-colors focus:border-[var(--ds-blue)]"
             style={{
               background: 'var(--ds-bg)',
@@ -491,7 +328,7 @@ export default function ToolsPage() {
             }}
           />
           <button
-            onClick={handleGrantPermission}
+            onClick={grantPermission}
             disabled={!permUrl.trim() || permState === 'granting'}
             className="ds-btn-secondary shrink-0 px-3 py-2 text-[11px] font-medium rounded-lg transition-all duration-150 disabled:opacity-40 flex items-center gap-1.5"
           >
@@ -513,7 +350,7 @@ export default function ToolsPage() {
 
         <div className="pt-1">
           <button
-            onClick={handleGrantAllSites}
+            onClick={grantAllSites}
             disabled={allSitesState === 'granting' || allSitesState === 'granted'}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-[12px] font-medium rounded-xl transition-all duration-150 disabled:opacity-50"
             style={{
@@ -546,45 +383,4 @@ export default function ToolsPage() {
       </SettingsSection>
     </div>
   );
-}
-
-function isShellServer(server: McpServerConfig): boolean {
-  return server.displayName === SHELL_MCP_SERVER_NAME || server.transport.nativeHost === SHELL_MCP_NATIVE_HOST;
-}
-
-function isMcpToolEnabled(server: McpServerConfig, tool: ToolDescriptor): boolean {
-  if (!server.enabled || !server.execution.enabled || server.execution.mode !== 'auto') return false;
-  const selected = server.allowlist.toolNames.includes(tool.name) || server.allowlist.toolNames.includes(tool.invocationName);
-  if (server.allowlist.mode === 'allow') return selected;
-  if (server.allowlist.mode === 'deny') return !selected;
-  return true;
-}
-
-function nextAllowlistForTool(
-  allowlist: McpToolAllowlist,
-  tool: ToolDescriptor,
-  shouldEnable: boolean,
-): McpToolAllowlist {
-  const names = new Set(allowlist.toolNames);
-  const removeTool = () => {
-    names.delete(tool.name);
-    names.delete(tool.invocationName);
-  };
-
-  if (allowlist.mode === 'allow') {
-    if (shouldEnable) names.add(tool.name);
-    else removeTool();
-    return { mode: 'allow', toolNames: [...names] };
-  }
-
-  if (allowlist.mode === 'deny') {
-    if (shouldEnable) removeTool();
-    else names.add(tool.name);
-    return { mode: names.size === 0 ? 'all' : 'deny', toolNames: [...names] };
-  }
-
-  if (!shouldEnable) {
-    return { mode: 'deny', toolNames: [tool.name] };
-  }
-  return allowlist;
 }
