@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import MemoryPage from './MemoryPage';
-import SavedPage from './SavedPage';
-import { SubTabs } from '../components/settings/primitives';
+import { lazy, Suspense, useState } from 'react';
+import { SkeletonList, SubTabs } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+
+const MemoryPage = lazy(() => import('./MemoryPage'));
+const SavedPage = lazy(() => import('./SavedPage'));
 
 type LibrarySubTab = 'memory' | 'saved';
 
@@ -25,8 +26,10 @@ export default function LibraryPage() {
       />
 
       <div className="flex-1 overflow-y-auto">
-        {sub === 'memory' && <MemoryPage />}
-        {sub === 'saved' && <SavedPage />}
+        <Suspense fallback={<div className="p-4"><SkeletonList rows={3} /></div>}>
+          {sub === 'memory' && <MemoryPage />}
+          {sub === 'saved' && <SavedPage />}
+        </Suspense>
       </div>
     </div>
   );

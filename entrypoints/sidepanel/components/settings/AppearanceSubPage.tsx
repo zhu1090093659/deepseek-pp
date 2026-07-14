@@ -1,8 +1,8 @@
 import type { PetPosition } from '../../../../core/types';
 import { SVG_PATHS } from '../../constants';
 import { useI18n } from '../../i18n';
-import { SettingsSection, Slider, ToggleRow } from './primitives';
-import type { SettingsState } from './useSettingsState';
+import { SettingsSection, Slider, StatusMessage, ToggleRow } from './primitives';
+import type { SettingsState } from '../../controllers/useSettingsController';
 
 export default function AppearanceSubPage({ state }: { state: SettingsState }) {
   const { t } = useI18n();
@@ -185,9 +185,23 @@ export default function AppearanceSubPage({ state }: { state: SettingsState }) {
         <ToggleRow
           title={t('sidepanel.settings.floatingChat')}
           description={t('sidepanel.settings.floatingChatDescription')}
-          enabled={state.floatingChatEnabled ?? true}
+          enabled={state.floatingChatEnabled}
+          disabled={state.floatingChatRuntimeState?.kind === 'invalidated'}
           onToggle={state.handleFloatingChatToggle}
         />
+        {state.floatingChatRuntimeState?.kind === 'missing-permission' && (
+          <StatusMessage tone="warning">
+            {t('sidepanel.settings.floatingChatPermissionMissing')}
+          </StatusMessage>
+        )}
+        {state.floatingChatRuntimeState?.kind === 'invalidated' && (
+          <StatusMessage tone="error">
+            {t('sidepanel.settings.floatingChatContextInvalidated')}
+          </StatusMessage>
+        )}
+        {state.floatingChatMessage && (
+          <StatusMessage tone="error">{state.floatingChatMessage}</StatusMessage>
+        )}
       </SettingsSection>
     </div>
   );

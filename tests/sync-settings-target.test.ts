@@ -224,6 +224,7 @@ describe('Settings sync confirmed target', () => {
     await flushPromises();
     expect(configReads).toBe(2);
     expect(container.textContent).toContain('Sync bookkeeping outcome is unknown');
+    expect(container.textContent).toContain('请勿立即重试');
 
     await openUploadConfirmation();
     await confirmDialogAction('上传本地');

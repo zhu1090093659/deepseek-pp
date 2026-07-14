@@ -1,6 +1,6 @@
 import { useI18n } from '../../i18n';
 import { SettingsSection } from './primitives';
-import type { SettingsState } from './useSettingsState';
+import type { SettingsState } from '../../controllers/useSettingsController';
 
 export default function AboutSubPage({ state }: { state: SettingsState }) {
   const { t } = useI18n();

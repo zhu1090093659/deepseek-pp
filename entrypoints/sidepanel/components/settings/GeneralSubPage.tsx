@@ -2,7 +2,7 @@ import type { LocalePreference } from '../../../../core/i18n';
 import type { ModelType } from '../../../../core/types';
 import { useI18n } from '../../i18n';
 import { SettingsSection, ToggleRow } from './primitives';
-import type { SettingsState } from './useSettingsState';
+import type { SettingsState } from '../../controllers/useSettingsController';
 
 export default function GeneralSubPage({ state }: { state: SettingsState }) {
   const { t, locale, preference: localePreference, setPreference: setLocalePreference } = useI18n();

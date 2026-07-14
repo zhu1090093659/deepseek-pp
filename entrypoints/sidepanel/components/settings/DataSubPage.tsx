@@ -1,7 +1,7 @@
 import { SVG_PATHS } from '../../constants';
 import { useI18n } from '../../i18n';
 import { SegmentedControl, SettingsSection, StatusMessage, TextField, useBanner, useConfirm } from './primitives';
-import type { SettingsState } from './useSettingsState';
+import type { SettingsState } from '../../controllers/useSettingsController';
 import type { SyncConfig, SyncCounts, SyncProvider } from '../../../../core/types';
 
 /** A config has enough fields to attempt a sync (per-provider required set). */
@@ -70,6 +70,7 @@ function OAuthConfigFields({ state }: { state: SettingsState }) {
             success: t('sidepanel.settings.authorizeSuccess'),
             failed: t('sidepanel.settings.operationFailed'),
             configChanged: t('sidepanel.settings.syncConfigChanged'),
+            committedWarning: t('sidepanel.settings.syncRemoteCommittedWarning'),
           },
         )}
         disabled={state.syncBusy || !isSyncReady(config) || !state.syncRedirectUri}
@@ -128,6 +129,7 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       configChanged: t('sidepanel.settings.syncConfigChanged'),
       success: t('sidepanel.settings.connectionSuccess'),
       failed: t('sidepanel.settings.connectionFailed'),
+      committedWarning: t('sidepanel.settings.syncRemoteCommittedWarning'),
     });
 
   const onUpload = async () => {
@@ -144,6 +146,7 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       operationFailed: t('sidepanel.settings.operationFailed'),
       configChanged: t('sidepanel.settings.syncConfigChanged'),
       failed: t('sidepanel.settings.uploadFailed'),
+      committedWarning: t('sidepanel.settings.syncRemoteCommittedWarning'),
       success: (counts) => t('sidepanel.settings.uploadSuccess', { counts: formatSyncCounts(counts) }),
     });
   };
@@ -162,6 +165,7 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       operationFailed: t('sidepanel.settings.operationFailed'),
       configChanged: t('sidepanel.settings.syncConfigChanged'),
       failed: t('sidepanel.settings.downloadFailed'),
+      committedWarning: t('sidepanel.settings.syncRemoteCommittedWarning'),
       success: (counts) => t('sidepanel.settings.downloadSuccess', { counts: formatSyncCounts(counts) }),
     });
   };
@@ -293,7 +297,13 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       </div>
 
       {state.syncMessage && (
-        <StatusMessage tone={state.syncStatus === 'error' ? 'error' : 'success'}>
+        <StatusMessage tone={
+          state.syncStatus === 'error'
+            ? 'error'
+            : state.syncStatus === 'warning'
+              ? 'warning'
+              : 'success'
+        }>
           {state.syncMessage}
         </StatusMessage>
       )}

@@ -145,6 +145,81 @@ describe('sidepanel interactions', () => {
     expect(container.textContent).not.toContain('暂无保存项');
   });
 
+  it('retains the last valid saved item when an update payload is corrupt', async () => {
+    const item = {
+      id: 'saved-1',
+      syncId: 'sync-1',
+      kind: 'snippet',
+      title: 'Keep confirmed item',
+      content: 'Last confirmed content.',
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const sendMessage = vi.fn(async (message: { type: string }) => (
+      message.type === 'GET_SAVED_ITEMS' ? [item] : null
+    ));
+    stubChrome(sendMessage);
+
+    await renderElement(React.createElement(SavedPage));
+    await flushPromises();
+    await act(async () => {
+      runtimeListeners.forEach((listener) => listener({
+        type: 'SAVED_ITEMS_UPDATED',
+        savedItems: [{ id: 'corrupt' }],
+      }));
+    });
+
+    expect(container.textContent).toContain('Keep confirmed item');
+    expect(container.textContent).toContain('savedItemsUpdate[0]');
+    expect(container.textContent).not.toContain('暂无保存项');
+  });
+
+  it('does not let an older saved-item read replace a newer update event', async () => {
+    let resolveInitialRead!: (value: unknown) => void;
+    const initialRead = new Promise<unknown>((resolve) => {
+      resolveInitialRead = resolve;
+    });
+    const sendMessage = vi.fn((message: { type: string }) => (
+      message.type === 'GET_SAVED_ITEMS' ? initialRead : Promise.resolve(null)
+    ));
+    stubChrome(sendMessage);
+    await renderElement(React.createElement(SavedPage));
+
+    await act(async () => {
+      runtimeListeners.forEach((listener) => listener({
+        type: 'SAVED_ITEMS_UPDATED',
+        savedItems: [{
+          id: 'saved-new',
+          syncId: 'sync-new',
+          kind: 'snippet',
+          title: 'Newer saved item',
+          content: 'Newer content.',
+          tags: [],
+          createdAt: 2,
+          updatedAt: 2,
+        }],
+      }));
+    });
+    expect(container.textContent).toContain('Newer saved item');
+
+    await act(async () => {
+      resolveInitialRead([{
+        id: 'saved-old',
+        syncId: 'sync-old',
+        kind: 'snippet',
+        title: 'Older saved item',
+        content: 'Older content.',
+        tags: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }]);
+      await initialRead;
+    });
+    expect(container.textContent).toContain('Newer saved item');
+    expect(container.textContent).not.toContain('Older saved item');
+  });
+
   it('keeps a saved item visible when repository deletion fails', async () => {
     const item = {
       id: 'saved-1',

@@ -1,18 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { decodeSavedItemsState } from '../../../core/saved-items/codec';
-import type { SavedItem, SavedItemInput, SavedItemKind } from '../../../core/saved-items/types';
+import { useMemo, useState } from 'react';
+import type { SavedItemInput, SavedItemKind } from '../../../core/saved-items/types';
 import { createSavedItemsJsonArtifact, createSavedItemsMarkdownArtifact, type SecondaryExportArtifact } from '../../../core/export/secondary-artifacts';
 import PageIntro from '../components/PageIntro';
 import { SegmentedControl, SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
 import { SVG_PATHS } from '../constants';
+import { useSavedPageController } from '../controllers/useSavedPageController';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 
 export default function SavedPage() {
   const { t } = useI18n();
-  const [items, setItems] = useState<SavedItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<SavedItemKind>('snippet');
   const [title, setTitle] = useState('');
@@ -20,39 +16,18 @@ export default function SavedPage() {
   const [tags, setTags] = useState('');
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
-
-  const load = async () => {
-    try {
-      const result = unwrapRuntimeResponse<unknown>(
-        await chrome.runtime.sendMessage({ type: 'GET_SAVED_ITEMS' }),
-        t('sidepanel.savedPage.backendUnavailable'),
-      );
-      setItems(decodeSavedItemsState(result, 'savedItemsResponse').items);
-      setLoadFailed(false);
-    } catch (error) {
-      setLoadFailed(true);
-      banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    const handler = (message: { type?: string; savedItems?: SavedItem[] }) => {
-      if (message.type === 'SAVED_ITEMS_UPDATED') {
-        try {
-          setItems(decodeSavedItemsState(message.savedItems, 'savedItemsUpdate').items);
-          setLoadFailed(false);
-        } catch (error) {
-          setLoadFailed(true);
-          banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
-        }
-      }
-    };
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
-  }, []);
+  const {
+    items,
+    loading,
+    loadFailed,
+    save: saveItem,
+    remove,
+    insertPrompt,
+  } = useSavedPageController(t, confirm, {
+    clear: banner.clear,
+    success: (message) => banner.show('success', message),
+    error: (message) => banner.show('error', message),
+  });
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -73,58 +48,10 @@ export default function SavedPage() {
       content,
       tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
     };
-    try {
-      banner.clear();
-      const saved = unwrapRuntimeResponse<SavedItem>(
-        await chrome.runtime.sendMessage({ type: 'SAVE_SAVED_ITEM', payload }),
-        t('sidepanel.savedPage.backendUnavailable'),
-      );
-      if (!saved.id) {
-        throw new Error(t('sidepanel.savedPage.backendUnavailable'));
-      }
+    if (await saveItem(payload)) {
       setTitle('');
       setContent('');
       setTags('');
-      banner.show('success', t('sidepanel.savedPage.saved'));
-      await load();
-    } catch (error) {
-      banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
-    }
-  };
-
-  const remove = async (id: string) => {
-    const ok = await confirm({
-      title: t('sidepanel.savedPage.deleteConfirm'),
-      message: t('sidepanel.savedPage.deleteConfirm'),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-    });
-    if (!ok) return;
-    try {
-      banner.clear();
-      unwrapRuntimeResponse<{ ok: true }>(
-        await chrome.runtime.sendMessage({ type: 'DELETE_SAVED_ITEM', payload: { id } }),
-        t('sidepanel.savedPage.backendUnavailable'),
-      );
-      await load();
-    } catch (error) {
-      banner.show('error', t('sidepanel.savedPage.operationFailed', { error: getRuntimeErrorMessage(error) }));
-    }
-  };
-
-  const insertPrompt = async (text: string) => {
-    try {
-      banner.clear();
-      unwrapRuntimeResponse<{ ok: true }>(
-        await chrome.runtime.sendMessage({
-          type: 'INSERT_SAVED_PROMPT_INTO_CHAT',
-          payload: { text },
-        }),
-        t('sidepanel.savedPage.backendUnavailable'),
-      );
-      banner.show('success', t('sidepanel.savedPage.inserted'));
-    } catch (error) {
-      banner.show('error', t('sidepanel.savedPage.insertFailed', { error: getRuntimeErrorMessage(error) }));
     }
   };
 

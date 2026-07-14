@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const background = readFileSync('entrypoints/background.ts', 'utf8');
 const settingsState = readFileSync(
-  'entrypoints/sidepanel/components/settings/useSettingsState.ts',
+  'entrypoints/sidepanel/controllers/useSettingsController.ts',
   'utf8',
 );
 const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');

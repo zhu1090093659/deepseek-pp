@@ -7,9 +7,11 @@ import {
   type CSSProperties,
 } from 'react';
 import type { UsageModelSummary, UsageRangeDays, UsageSummary } from '../../../../core/types';
-import { isUsageSummary } from '../../../../core/usage/summary-codec';
+import { createRequestGenerationFence } from '../../async-state';
+import { usageController } from '../../controllers/usage-controller';
 import { useI18n } from '../../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../../runtime-response';
+import { getRuntimeErrorMessage } from '../../runtime-response';
+import { SidepanelRuntimeError } from '../../runtime-client';
 import {
   EmptyState,
   SegmentedControl,
@@ -36,7 +38,7 @@ export default function UsageSubPage() {
   const [summaries, setSummaries] = useState<Partial<Record<RangeKey, UsageSummary>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const requestGeneration = useRef(0);
+  const requestGeneration = useRef(createRequestGenerationFence());
   const rangeKeyRef = useRef(rangeKey);
   rangeKeyRef.current = rangeKey;
   const { confirm, node: confirmNode } = useConfirm();
@@ -49,34 +51,29 @@ export default function UsageSubPage() {
   ], [t]);
 
   const load = useCallback(async (requestedRangeKey: RangeKey) => {
-    const generation = ++requestGeneration.current;
+    const generation = requestGeneration.current.begin();
     const requestedRangeDays = Number(requestedRangeKey) as UsageRangeDays;
     setLoading(true);
     setError(null);
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'GET_USAGE_SUMMARY',
-        payload: { rangeDays: requestedRangeDays },
-      });
-      const result = unwrapRuntimeResponse<unknown>(
-        response,
-        t('sidepanel.settings.usage.loadFailed'),
-      );
-      if (!isUsageSummary(result) || result.rangeDays !== requestedRangeDays) {
-        throw new Error(t('sidepanel.settings.usage.loadFailed'));
-      }
-      if (generation !== requestGeneration.current) return;
+      const result = await usageController.getSummary(requestedRangeDays);
+      if (!requestGeneration.current.isCurrent(generation)) return;
       setSummaries((current) => ({ ...current, [requestedRangeKey]: result }));
     } catch (err) {
-      if (generation !== requestGeneration.current) return;
-      setError(getRuntimeErrorMessage(err) || t('sidepanel.settings.usage.loadFailed'));
+      if (!requestGeneration.current.isCurrent(generation)) return;
+      setError(
+        err instanceof SidepanelRuntimeError && err.kind === 'protocol'
+          ? t('sidepanel.settings.usage.loadFailed')
+          : getRuntimeErrorMessage(err) || t('sidepanel.settings.usage.loadFailed'),
+      );
     } finally {
-      if (generation === requestGeneration.current) setLoading(false);
+      if (requestGeneration.current.isCurrent(generation)) setLoading(false);
     }
   }, [t]);
 
   useEffect(() => {
     void load(rangeKey);
+    return () => requestGeneration.current.invalidate();
   }, [load, rangeKey]);
 
   const clearStats = async () => {
@@ -89,9 +86,8 @@ export default function UsageSubPage() {
     if (!ok) return;
 
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'CLEAR_USAGE_STATS' });
-      unwrapRuntimeResponse(response, t('sidepanel.settings.usage.clearFailed'));
-      requestGeneration.current += 1;
+      await usageController.clear();
+      requestGeneration.current.invalidate();
       setSummaries({});
       banner.show('success', t('sidepanel.settings.usage.clearSuccess'));
       await load(rangeKeyRef.current);

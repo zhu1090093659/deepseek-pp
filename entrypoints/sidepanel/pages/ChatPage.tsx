@@ -17,19 +17,20 @@ import { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from '../../../core/deepseek/upload-l
 import type { ChatMessage as ChatMessageType, ModelType } from '../../../core/types';
 import ChatMessage from '../components/ChatMessage';
 import { StatusMessage, useConfirm } from '../components/settings/primitives';
+import { createRequestGenerationFence } from '../async-state';
+import {
+  chatController,
+  getChatProviderCapabilities,
+  normalizeChatAuthStatus,
+  normalizeChatWebModelType,
+  type ChatAuthStatus,
+  type ChatProvider,
+} from '../controllers/chat-controller';
 import { consumePendingText, onPendingText } from '../pending-text';
 import { useI18n } from '../i18n';
+import { getRuntimeErrorMessage } from '../runtime-response';
 
-type ChatProvider = 'official-api' | 'deepseek-web' | null;
-
-interface ChatAuthStatus {
-  available?: boolean;
-  provider?: ChatProvider;
-  hasApiKey?: boolean;
-  hasToken?: boolean;
-}
-
-interface ChatStreamMessage extends ChatAuthStatus {
+interface ChatStreamMessage extends Partial<ChatAuthStatus> {
   type: string;
   text?: string;
   reasoningText?: string;
@@ -50,16 +51,6 @@ interface VisionImageAttachment {
   previewUrl: string;
   status: VisionImageUploadStatus;
   error: string | null;
-}
-
-interface DeepSeekImageUploadResponse {
-  ok?: boolean;
-  error?: string;
-  file?: {
-    id?: string;
-    fileName?: string | null;
-    status?: string | null;
-  };
 }
 
 const MAX_VISION_IMAGE_ATTACHMENTS = 4;
@@ -104,11 +95,14 @@ export default function ChatPage() {
   const imageAttachmentsRef = useRef<VisionImageAttachment[]>([]);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voiceSettingsRef = useRef<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
+  const requestFence = useRef(createRequestGenerationFence());
   const voiceCapabilities = detectVoiceCapabilities(window);
 
-  const apiControlsEnabled = authStatus?.provider === 'official-api';
-  const webControlsEnabled = authStatus?.provider === 'deepseek-web';
-  const visionAttachmentsEnabled = webControlsEnabled && webModelType === 'vision';
+  const {
+    apiControlsEnabled,
+    webControlsEnabled,
+    visionAttachmentsEnabled,
+  } = getChatProviderCapabilities(authStatus, webModelType);
   const hasUploadingImageAttachment = imageAttachments.some((item) => item.status === 'uploading');
   const hasFailedImageAttachment = imageAttachments.some((item) => item.status === 'error');
   const readyImageFileIds = visionAttachmentsEnabled
@@ -175,23 +169,24 @@ export default function ChatPage() {
   }, [voiceSettings]);
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_AUTH_STATUS' })
-      .then((resp: ChatAuthStatus | undefined) => {
-        setAuthStatus(normalizeAuthStatus(resp));
+    const generation = requestFence.current.begin();
+    void chatController.load()
+      .then((snapshot) => {
+        if (!requestFence.current.isCurrent(generation)) return;
+        setAuthStatus(snapshot.authStatus);
+        setChatConfig(snapshot.chatConfig);
+        setWebModelType(snapshot.webModelType);
+        setVoiceSettings(snapshot.voiceSettings);
+        if (snapshot.loadErrors.length > 0) {
+          setError(snapshot.loadErrors.map(getRuntimeErrorMessage).join('; '));
+        }
       })
-      .catch(() => setAuthStatus({ available: false, provider: null, hasApiKey: false, hasToken: false }));
-
-    chrome.runtime.sendMessage({ type: 'GET_OFFICIAL_API_CHAT_CONFIG' })
-      .then((result) => setChatConfig(normalizeOfficialApiChatConfig(result)))
-      .catch(() => setChatConfig(DEFAULT_OFFICIAL_API_CHAT_CONFIG));
-
-    chrome.runtime.sendMessage({ type: 'GET_MODEL_TYPE' })
-      .then((result) => setWebModelType(normalizeWebModelType(result)))
-      .catch(() => setWebModelType(null));
-
-    chrome.runtime.sendMessage({ type: 'GET_VOICE_SETTINGS' })
-      .then((result) => setVoiceSettings(normalizeVoiceSettings(result)))
-      .catch(() => setVoiceSettings(DEFAULT_VOICE_SETTINGS));
+      .catch((loadError) => {
+        if (requestFence.current.isCurrent(generation)) {
+          setError(getRuntimeErrorMessage(loadError));
+        }
+      });
+    return () => requestFence.current.invalidate();
   }, []);
 
   useEffect(() => {
@@ -203,7 +198,7 @@ export default function ChatPage() {
       }
 
       if (msg.type === 'AUTH_STATUS_CHANGED') {
-        const nextAuthStatus = normalizeAuthStatus(msg);
+        const nextAuthStatus = normalizeChatAuthStatus(msg);
         setAuthStatus(nextAuthStatus);
         if (nextAuthStatus.provider !== 'deepseek-web') clearImageAttachments();
         return;
@@ -212,7 +207,7 @@ export default function ChatPage() {
       if (msg.type === 'STATE_UPDATED') {
         const nextModelType = (msg as { modelType?: unknown }).modelType;
         if (nextModelType !== undefined) {
-          const normalizedModelType = normalizeWebModelType(nextModelType);
+          const normalizedModelType = normalizeChatWebModelType(nextModelType);
           setWebModelType(normalizedModelType);
           if (normalizedModelType !== 'vision') clearImageAttachments();
         }
@@ -265,8 +260,7 @@ export default function ChatPage() {
     const next = normalizeOfficialApiChatConfig({ ...chatConfig, ...patch });
     setChatConfig(next);
     try {
-      const saved = await chrome.runtime.sendMessage({ type: 'SAVE_OFFICIAL_API_CHAT_CONFIG', payload: next });
-      setChatConfig(normalizeOfficialApiChatConfig(saved));
+      setChatConfig(await chatController.saveConfig(next));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -287,17 +281,13 @@ export default function ChatPage() {
     setIsStreaming(true);
     setError(null);
 
-    chrome.runtime.sendMessage({
-      type: 'CHAT_SUBMIT_PROMPT',
-      payload: {
-        text,
-        ...(apiControlsEnabled ? { config: chatConfig } : {}),
-        ...(webControlsEnabled && refFileIds.length > 0 ? { refFileIds } : {}),
-      },
-    }).then((result: { ok?: boolean; error?: string } | undefined) => {
-      if (result?.ok === false) throw new Error(result.error || t('sidepanel.chatPage.sendFailed'));
-    }).catch((err: Error) => {
-      setError(err.message);
+    void chatController.submitPrompt({
+      text,
+      authStatus,
+      config: chatConfig,
+      refFileIds,
+    }).catch((submitError) => {
+      setError(getRuntimeErrorMessage(submitError) || t('sidepanel.chatPage.sendFailed'));
       setIsStreaming(false);
     });
   };
@@ -314,13 +304,7 @@ export default function ChatPage() {
       if (!ok) return;
     }
     try {
-      const result = await chrome.runtime.sendMessage({ type: 'CHAT_NEW_SESSION' }) as {
-        ok?: boolean;
-        error?: string;
-      } | undefined;
-      if (result?.ok !== true) {
-        throw new Error(result?.error || t('sidepanel.chatPage.sendFailed'));
-      }
+      await chatController.newSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       return;
@@ -361,11 +345,7 @@ export default function ChatPage() {
     const previous = webModelType;
     setWebModelType(nextModelType);
     try {
-      const result = await chrome.runtime.sendMessage({
-        type: 'SET_MODEL_TYPE',
-        payload: nextModelType,
-      });
-      if (result?.ok === false) throw new Error(result.error || 'Failed to save model mode');
+      await chatController.setWebModelType(nextModelType);
       if (nextModelType !== 'vision') clearImageAttachments();
     } catch (err) {
       setWebModelType(previous);
@@ -436,18 +416,13 @@ export default function ChatPage() {
 
     try {
       const dataUrl = await readFileAsDataUrl(file);
-      const response = await chrome.runtime.sendMessage({
-        type: 'UPLOAD_DEEPSEEK_IMAGE',
-        payload: {
-          dataUrl,
-          name: file.name,
-          mimeType: file.type,
-          sizeBytes: file.size,
-        },
-      }) as DeepSeekImageUploadResponse;
-      if (response?.ok === false) throw new Error(response.error || t('sidepanel.chatPage.imageUploadFailed'));
-      const fileId = response?.file?.id;
-      if (!fileId) throw new Error(t('sidepanel.chatPage.imageUploadMissingId'));
+      const uploaded = await chatController.uploadImage({
+        dataUrl,
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+      });
+      const fileId = uploaded.id;
 
       setImageAttachments((prev) => prev.map((item) => (
         item.id === attachmentId
@@ -807,19 +782,6 @@ export default function ChatPage() {
       </footer>
     </div>
   );
-}
-
-function normalizeAuthStatus(resp: ChatAuthStatus | undefined): ChatAuthStatus {
-  return {
-    available: resp?.available ?? resp?.hasToken ?? false,
-    provider: resp?.provider ?? (resp?.hasToken ? 'deepseek-web' : null),
-    hasApiKey: resp?.hasApiKey ?? false,
-    hasToken: resp?.hasToken ?? false,
-  };
-}
-
-function normalizeWebModelType(value: unknown): ModelType {
-  return value === 'expert' || value === 'vision' ? value : null;
 }
 
 function ProviderBadge({ provider }: { provider: ChatProvider }) {

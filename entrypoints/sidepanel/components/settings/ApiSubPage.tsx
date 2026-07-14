@@ -1,6 +1,6 @@
 import { useI18n } from '../../i18n';
 import { SettingsSection, StatusBadge, StatusMessage, TextField, ToggleRow } from './primitives';
-import type { SettingsState } from './useSettingsState';
+import type { SettingsState } from '../../controllers/useSettingsController';
 
 export default function ApiSubPage({ state }: { state: SettingsState }) {
   const { t } = useI18n();

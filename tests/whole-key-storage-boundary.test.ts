@@ -39,13 +39,23 @@ describe('whole-key persistence boundaries', () => {
       'entrypoints/sidepanel/components/settings/UsageSubPage.tsx',
       'utf8',
     );
+    const usageController = readFileSync(
+      'entrypoints/sidepanel/controllers/usage-controller.ts',
+      'utf8',
+    );
     const mcp = readFileSync('entrypoints/sidepanel/pages/McpPage.tsx', 'utf8');
+    const mcpController = readFileSync(
+      'entrypoints/sidepanel/controllers/mcp-tools-controller.ts',
+      'utf8',
+    );
 
     expect(automation).toContain('decodeAutomationList');
     expect(automation).toContain('unwrapRuntimeResponse<unknown>');
-    expect(usage).toContain('unwrapRuntimeResponse<unknown>');
-    expect(usage).toContain('isUsageSummary(result)');
-    expect(mcp).toContain('unwrapRuntimeResponse<unknown>');
-    expect(mcp).toContain('decodeToolCallHistory(recent');
+    expect(usage).toContain('usageController.getSummary');
+    expect(usageController).toContain('sidepanelRuntimeClient');
+    expect(usageController).toContain('isUsageSummary(value)');
+    expect(mcp).toContain('useMcpPageController');
+    expect(mcpController).toContain('sidepanelRuntimeClient');
+    expect(mcpController).toContain("decodeToolCallHistory(value, 'GET_TOOL_CALL_HISTORY response')");
   });
 });

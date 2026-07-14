@@ -24,6 +24,30 @@ afterEach(() => {
 });
 
 describe('MemoryPage', () => {
+  it('does not let an older initial read replace a newer state update', async () => {
+    let resolveInitialRead!: (value: unknown) => void;
+    const initialRead = new Promise<unknown>((resolve) => {
+      resolveInitialRead = resolve;
+    });
+    const sendMessage = vi.fn(() => initialRead);
+    await renderMemoryPage(sendMessage);
+
+    await act(async () => {
+      runtimeListeners.forEach((listener) => listener({
+        type: 'STATE_UPDATED',
+        memories: [createMemory('newer-update')],
+      }));
+    });
+    expect(container.textContent).toContain('newer-update');
+
+    await act(async () => {
+      resolveInitialRead([createMemory('older-read')]);
+      await initialRead;
+    });
+    expect(container.textContent).toContain('newer-update');
+    expect(container.textContent).not.toContain('older-read');
+  });
+
   it('retains the last valid list and surfaces a corrupt state update', async () => {
     const sendMessage = vi.fn(async () => [createMemory('remember-me')]);
     await renderMemoryPage(sendMessage);

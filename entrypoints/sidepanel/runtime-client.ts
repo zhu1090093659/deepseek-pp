@@ -27,8 +27,15 @@ export class SidepanelRuntimeError extends Error {
   }
 }
 
-export type SidepanelRuntimeTransport = <TType extends TypedRuntimeCommandType>(
-  request: TypedRuntimeCommandRequest<TType>,
+export type AnyTypedRuntimeCommandRequest = {
+  [TType in TypedRuntimeCommandType]: TypedRuntimeCommandRequest<TType>;
+}[TypedRuntimeCommandType];
+
+type RuntimeResponseFor<TRequest extends AnyTypedRuntimeCommandRequest> =
+  TypedRuntimeCommandResponse<TRequest['type']>;
+
+export type SidepanelRuntimeTransport = (
+  request: AnyTypedRuntimeCommandRequest,
 ) => Promise<unknown>;
 
 export interface SidepanelRuntimeRequestOptions<TResult> {
@@ -38,11 +45,11 @@ export interface SidepanelRuntimeRequestOptions<TResult> {
 }
 
 export interface SidepanelRuntimeClient {
-  request<TType extends TypedRuntimeCommandType>(
-    request: TypedRuntimeCommandRequest<TType>,
-  ): Promise<TypedRuntimeCommandResponse<TType>>;
-  request<TType extends TypedRuntimeCommandType, TResult>(
-    request: TypedRuntimeCommandRequest<TType>,
+  request<TRequest extends AnyTypedRuntimeCommandRequest>(
+    request: TRequest,
+  ): Promise<RuntimeResponseFor<TRequest>>;
+  request<TRequest extends AnyTypedRuntimeCommandRequest, TResult>(
+    request: TRequest,
     options: SidepanelRuntimeRequestOptions<TResult> & { decode: (value: unknown) => TResult },
   ): Promise<TResult>;
 }
@@ -51,8 +58,11 @@ export function createSidepanelRuntimeClient(
   transport: SidepanelRuntimeTransport,
 ): SidepanelRuntimeClient {
   return Object.freeze({
-    async request<TType extends TypedRuntimeCommandType, TResult = TypedRuntimeCommandResponse<TType>>(
-      request: TypedRuntimeCommandRequest<TType>,
+    async request<
+      TRequest extends AnyTypedRuntimeCommandRequest,
+      TResult = RuntimeResponseFor<TRequest>,
+    >(
+      request: TRequest,
       options?: SidepanelRuntimeRequestOptions<TResult>,
     ): Promise<TResult> {
       let response: unknown;

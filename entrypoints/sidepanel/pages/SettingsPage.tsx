@@ -11,7 +11,7 @@ import PromptSubPage from '../components/settings/PromptSubPage';
 import UsageSubPage from '../components/settings/UsageSubPage';
 import VoiceSubPage from '../components/settings/VoiceSubPage';
 import { SkeletonList, SubTabs } from '../components/settings/primitives';
-import { useSettingsState } from '../components/settings/useSettingsState';
+import { useSettingsController } from '../controllers/useSettingsController';
 
 type SubTab = 'general' | 'api' | 'prompt' | 'voice' | 'appearance' | 'usage' | 'data' | 'about';
 
@@ -40,7 +40,7 @@ const SUB_DESCRIPTION_KEY: Record<SubTab, LocaleMessageKey> = {
 export default function SettingsPage() {
   const { t } = useI18n();
   const [sub, setSub] = useState<SubTab>('general');
-  const state = useSettingsState();
+  const state = useSettingsController();
 
   return (
     <div className="ds-settings-shell">
