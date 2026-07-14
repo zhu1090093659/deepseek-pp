@@ -50,7 +50,8 @@ describe('whole-key persistence boundaries', () => {
     );
 
     expect(automation).toContain('decodeAutomationList');
-    expect(automation).toContain('unwrapRuntimeResponse<unknown>');
+    expect(automation).toContain('sidepanelRuntimeClient.request');
+    expect(automation).not.toContain('chrome.runtime.sendMessage');
     expect(usage).toContain('usageController.getSummary');
     expect(usageController).toContain('sidepanelRuntimeClient');
     expect(usageController).toContain('isUsageSummary(value)');
