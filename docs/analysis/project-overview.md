@@ -21,15 +21,15 @@
 ## Analysis Snapshot
 
 - 集成分支：`codex/362-background-deepseek-chat-handlers`
-- 基线 HEAD：`8fa92228`（R4.2 / #361 merge）；当前单批次集成分支包含 R4.3–R6.5 与最终审计修复的 29 个内部提交
+- 基线 HEAD：`8fa92228`（R4.2 / #361 merge）；当前单批次集成分支包含 R4.3–R6.5、最终审计修复和门禁迁移检查
 - 日期：2026-07-14
 - 当前实现位于隔离 batch worktree；原仓库中的用户改动未被覆盖或带入本分支。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
   - `core/`：243 个 TypeScript/TSX 文件，约 42,714 行
   - `entrypoints/`：108 个 TypeScript/TSX 文件，约 30,095 行
   - `packages/shell-host/native` + `lib`：约 2,878 行（另含 README/package metadata）
-  - `tests/`：182 个 TypeScript 测试/fixture 源文件，其中 161 个 test files，约 34,291 行
-  - `scripts/`：21 个脚本，约 3,865 行
+  - `tests/`：182 个 TypeScript 测试/fixture 源文件，其中 161 个 test files，约 34,292 行
+  - `scripts/`：21 个脚本，约 3,871 行
 
 ## Current Architecture
 
@@ -113,7 +113,7 @@ flowchart LR
   - `background.js` 约 749 KB；bundled Skill 文档不再进入启动 JS
   - `content.js` 约 578 KB
   - `main-world.js` 约 353 KB
-  - Side Panel initial shell 359,793 raw / 108,606 gzip；first Chat screen 498,113 / 150,246，均受 CI ceiling 约束
+  - Side Panel initial shell 360,027 raw / 108,673 gzip；first Chat screen 498,013 / 150,087，均受 CI ceiling 约束
 - Content 长期能力由一个 mutation hub 和 capability scopes 管理。固定 21-batch trace 从旧 6 observers / 126 deliveries 降到 21 hub deliveries / 1 relevant subscriber callback；两个永久 500ms route watcher 已删除，10 秒 idle 回调从 40 降到 0。
 - `entrypoints/floating-chat.content.ts` 匹配 `<all_urls>`；即使功能关闭，脚本仍需启动后读取状态。
 - Released whole-array storage shape 保留；Usage/Tool History 的 100 次相邻 mutation 从 100 次物理写降为 1 次，read/clear/failure 是 barrier，Sync 不 coalesce。
@@ -146,13 +146,13 @@ flowchart LR
 | `npm run verify:extension-utf8` | 78 files passed |
 | `npm run audit:prod` | 0 production vulnerabilities at configured severity |
 
-相对初始基线的当前状态：
+相对初始基线的当前状态（完整 `ci:quality` 已通过）：
 
 - Vitest 仍以 jsdom/fake browser boundaries 为主；Chrome 150 没有加载命令行指定的 unpacked build，因此 Content 真实浏览器 smoke 未执行，不能宣称通过。
 - 没有全局 coverage gate 或 background cold-start profiler；但已有 exact package/bundle ceiling、Content fixed trace/resource ledger 和 persistence burst-write budgets。
 - Fake IndexedDB 已执行生产 Memory migrations/reopen、Artifact one-way migration、future/corrupt guards、atomic import，以及 sync raw-preimage rollback/restart；Artifact 只有 IndexedDB runtime truth。
 - Sync generation、local journal、config CAS、confirmed target、action FIFO 和 fault/restart evidence 保持不变；R6.5 仅 coalesce Usage/Tool History，相邻 100 mutations 降至 1 次 physical write，Sync 不 coalesce。
-- `ci:quality` 只在 Ubuntu/Node 22 执行，未做浏览器运行时矩阵。
+- 本地 `ci:quality` 已覆盖 Chrome/Edge/Firefox 的 build/zip/package contract；托管 CI 仍只在 Ubuntu/Node 22 执行，未形成真实浏览器运行时矩阵。
 
 ## Project Governance Baseline and Resolution
 

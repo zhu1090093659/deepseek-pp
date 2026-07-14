@@ -112,12 +112,12 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [x] Phase 3: Authoritative Contracts and Real Ports (10/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (2/13 GitHub-closed; 13/13 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
-- [ ] Phase 5: Stability and Compatibility Closure (0/2 GitHub-closed; R5.1 implemented, R5.2 gate active) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
+- [ ] Phase 5: Stability and Compatibility Closure (0/2 GitHub-closed; 2/2 implemented, publication pending) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 GitHub-closed; 5/5 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
 
 ## Current Status
 
-**Active Phase**: Phase 5 — changed-path audit fixes are complete; the final PC compatibility/package closure is active. Phase 4 and Phase 6 implementation are complete in the batch branch but their Issues remain open until the batch PR merges.
+**Active Phase**: Publication closure — Phase 4, Phase 5, and Phase 6 implementation plus the complete PC compatibility/package matrix are finished in the batch branch; their Issues remain open until the one batch PR merges.
 
 **Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries.
 
@@ -125,7 +125,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Blockers**: No code blocker. Work is isolated from the original repository's user-owned changes. Real Chrome Content smoke remains an explicit evidence gap because Chrome 150 did not load the command-line unpacked build in either headless or temporary-profile mode; no runtime pass is claimed.
 
-**Current Evidence**: PC-only main baseline is `8fa92228`; the integration branch contains 29 internal commits across 222 files. Background ownership is `121 typed / 0 legacy / 2 client-only` with `80 decoded / 0 direct-cast / 0 delegated`; Content owns one lifecycle/resource ledger and removes both 500ms route pollers; Side Panel has one request transport and lazy route budgets; Shell roots are composition-only; Pyodide, bundled Skills, and persistence bursts have executable budgets. Post-integration checks pass 20 files / 160 tests, TypeScript, seven prompt goldens, Chrome build, and the unchanged Side Panel budget. The R5.1 repair slice separately passes 6 files / 107 tests plus TypeScript: either bridge world can restart alone, malformed Settings config cannot strand loading, `PET_UPDATED` wins over stale bootstrap data, runtime error projection has one authority, and unexpected auth-refresh delivery failures remain visible. Android project/build/runtime/test support remains retired.
+**Current Evidence**: PC-only main baseline is `8fa92228`; the integration branch changes 225 files. Background ownership is `121 typed / 0 legacy / 2 client-only` with `80 decoded / 0 direct-cast / 0 delegated`; Content owns one lifecycle/resource ledger and removes both 500ms route pollers; Side Panel has one request transport and lazy route budgets; Shell roots are composition-only; Pyodide, bundled Skills, and persistence bursts have executable budgets. The R5.1 repair slice passes 6 files / 107 tests plus TypeScript: either bridge world can restart alone, malformed Settings config cannot strand loading, `PET_UPDATED` wins over stale bootstrap data, runtime error projection has one authority, and unexpected auth-refresh delivery failures remain visible. The complete R5.2 `ci:quality` matrix passes 161 test files / 1,166 tests, seven prompt goldens, compile, workflow/audit/i18n/automation, MCP/Shell/PoW smoke, all PC browser builds/zips, package/manifest/UTF-8/release checks, persistence budgets, and offline Pyodide. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -347,10 +347,11 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - R4.3–R4.4: all remaining DeepSeek/chat/multimodal/export/sync/automation/usage/scenario commands use typed handlers and receiving codecs. The legacy switch/type/registry guard is deleted; Background is the sole Scenario cross-realm mutation authority; sync recovery, broadcast, context-menu, export-tail, and startup failure ownership are explicit. Root `background.ts` is 1,416 LOC.
 - R4.5–R4.7 + R6.1: one epoch kernel owns listeners, observers, timers, animation frames, DOM roots, ports, and cleanup tasks across reinjection, BFCache, navigation, startup failure, and teardown. MAIN root is 89 LOC; tool-block and inline-trace storage each use one strict codec/repository. The fixed mutation trace improves `126 → 21` hub deliveries with one relevant subscriber callback, two 500ms route watchers improve a 10-second idle trace `40 → 0`, and teardown returns the ledger to zero. The lane passed 32 files / 260 tests, compile, prompt freeze, and Chrome build.
 - R4.8: floating chat has `disabled / missing-permission / ready / invalidated` states, idempotent launcher/BFCache lifecycle, and owned drag/listener/DOM cleanup. The original working tree's invalidation changes were integrated without modifying that dirty tree.
-- R4.9–R4.11 + R6.4: Side Panel requests cross only `runtime-client.ts`; touched events decode before state changes and async reloads use generation fencing. MCP/Tools/Chat/Settings/Library policy lives in controllers. Lazy-route budgets pass with initial shell `359,793 / 108,606` raw/gzip and first Chat screen `498,113 / 150,246`, below the unchanged `500,000 / 151,000` ceiling.
+- R4.9–R4.11 + R6.4: Side Panel requests cross only `runtime-client.ts`; touched events decode before state changes and async reloads use generation fencing. MCP/Tools/Chat/Settings/Library policy lives in controllers. Lazy-route budgets pass with initial shell `360,027 / 108,673` raw/gzip and first Chat screen `498,013 / 150,087`, below the unchanged `500,000 / 151,000` ceiling.
 - R4.12–R4.13: Shell Native root shrinks from 2,141 to 54 LOC and installer root to 214 LOC; framing/router/session/process/file/Skill/picker/OS/logger/installer modules preserve the 12-tool order and Native/package contracts. Six targeted files / 48 tests, compile, 17/17 Shell smoke, node checks, and npm pack dry-run pass.
 - R6.2–R6.5: each browser artifact contains exactly five Pyodide runtime files instead of 25 duplicate entries, removing 54,181,580 processed bytes per browser; 28 bundled Skill resources load on demand while all 15 final Skill hashes/order remain unchanged; Usage and Tool History coalesce 100 adjacent writes to one physical write while Sync stays uncoalesced. Build/zip inventories and burst budgets are CI gates.
-- R5.1 audit and repair evidence: one Background runtime listener, zero legacy-router symbols, one Side Panel request transport, no permanent 500ms Content route poller, and zero strongly connected components across a 351-file `core/` + `entrypoints/` relative-import graph. The independent findings-first review found and closed five bounded gaps: asymmetric MAIN/isolated restart, malformed Settings `GET_CONFIG`, duplicated runtime-failure projection, stale initial `GET_PET`, and broad auth-refresh error swallowing. The repair slice passes 6 files / 107 tests and TypeScript; only the complete R5.2 PC matrix remains before publication.
+- R5.1 audit and repair evidence: one Background runtime listener, zero legacy-router symbols, one Side Panel request transport, no permanent 500ms Content route poller, and zero strongly connected components across a 351-file `core/` + `entrypoints/` relative-import graph. The independent findings-first review found and closed five bounded gaps: asymmetric MAIN/isolated restart, malformed Settings `GET_CONFIG`, duplicated runtime-failure projection, stale initial `GET_PET`, and broad auth-refresh error swallowing. The repair slice passes 6 files / 107 tests and TypeScript.
+- R5.2 closure evidence: the full 161-file / 1,166-test suite passes under the 60-second test timeout, and the complete `ci:quality` chain passes workflow lint, zero high production vulnerabilities, prompt freeze, compile, persistence burst budget, i18n and automation contracts, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox build + zip, bundled Skill and Side Panel budgets, UTF-8/manifest policy, release assets, and all-browser offline Pyodide. The only declared gap remains the unexecuted real Chrome Content smoke described above.
 
 ## Governance Status
 
@@ -374,8 +375,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Run the complete PC Chrome/Edge/Firefox quality/package gate once.
-2. Record per-Issue telemetry, then push one batch branch and open one PR covering #362–#379.
+1. Record per-Issue telemetry for #362–#379.
+2. Push the one batch branch and open one PR covering #362–#379.
 
 ## Session Log
 

@@ -63,8 +63,8 @@ S.U.P.E.R 评分：🟢 符合；🟡 部分符合；🔴 明确违反或替换�
 | Sandbox entrypoints | Offscreen relay、sandbox iframe/Worker execution | Request/result validation 在多层重复；Chromium offscreen 依赖 | ~358 LOC | High | S🟢 U🟡 P🟡 E🔴 R🟡 |
 | `packages/shell-host` | Installer、Native Messaging/MCP host、session/process/file/skill/picker/OS providers | Native root 54 LOC、installer root 214 LOC；framing/router/providers/adapters 各有单一 owner，协议和 tool 顺序保持冻结 | 2,878 native/lib LOC | High | S🟢 U🟢 P🟢 E🟡 R🟢 |
 | `wxt.config.ts` | Manifest、ASCII JS、exact-once Pyodide/Skill asset plugins | Manifest 与 build plugins 仍同文件；每个 browser artifact 只包含 5 个 Pyodide runtime files，并生成 strict bundled-Skill manifest | 255 LOC | Medium | S🟡 U🟢 P🟢 E🟡 R🟢 |
-| `scripts/` | CI/release/manifest/i18n/smoke/performance budgets | 文件职责大体单一；package/chunk/burst policies 是可执行门禁 | 21 / 3,865 | Medium | S🟢 U🟢 P🟢 E🟡 R🟢 |
-| `tests/` | Vitest/jsdom 单元与契约测试 | 182 TS files / 161 test files；fault/restart/migration/runtime/resource/performance contracts 已覆盖，但仍没有全量真实浏览器或 coverage gate | 182 / 34,291 | Medium | S🟢 U🟢 P🟡 E🟡 R🟢 |
+| `scripts/` | CI/release/manifest/i18n/smoke/performance budgets | 文件职责大体单一；package/chunk/burst policies 是可执行门禁；i18n/automation smoke 跟随当前 controller/provider owners，而非旧大文件位置 | 21 / 3,871 | Medium | S🟢 U🟢 P🟢 E🟡 R🟢 |
+| `tests/` | Vitest/jsdom 单元与契约测试 | 182 TS files / 161 test files；fault/restart/migration/runtime/resource/performance contracts 已覆盖，但仍没有全量真实浏览器或 coverage gate | 182 / 34,292 | Medium | S🟢 U🟢 P🟡 E🟡 R🟢 |
 
 ## Dependency Graph Findings
 
