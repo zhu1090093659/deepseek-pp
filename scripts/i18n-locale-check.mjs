@@ -79,7 +79,7 @@ assertIncludes(content, 'watchLocalePreference(() =>', 'content script must watc
 assertIncludes(content, 'currentContentLocale = resolved.locale', 'content script must refresh resolved locale state');
 assertIncludes(
   content,
-  '.then(() => loadAndSyncRuntimeState())',
+  'return loadAndSyncRuntimeState(undefined, isCurrent);',
   'content locale changes must reload localized skills and tool descriptors',
 );
 
