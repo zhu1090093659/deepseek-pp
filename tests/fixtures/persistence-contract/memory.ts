@@ -30,15 +30,55 @@ export const MEMORY_V3_PROJECT_RECORD = {
   projectId: 'project-v2',
 } as const;
 
-export const MEMORY_CURRENT_GAPS = [
-  {
-    name: 'future IndexedDB versions fail during Dexie open without a recoverable raw-data path',
-    currentBehavior: 'dexie-open-rejection',
-    target: 'preserve-future-database-without-overwrite-after-T3.3',
-  },
+export const MEMORY_V1_ADDITIVE_RECORD = {
+  ...MEMORY_V1_RECORD,
+  futureRecordField: { source: 'v1', preserve: true },
+} as const;
+
+export const MEMORY_V2_ADDITIVE_RECORD = {
+  ...MEMORY_V2_RECORD,
+  futureRecordField: { source: 'v2', preserve: true },
+} as const;
+
+export const MEMORY_V3_PROJECT_ADDITIVE_RECORD = {
+  ...MEMORY_V3_PROJECT_RECORD,
+  futureRecordField: { source: 'v3', preserve: true },
+} as const;
+
+export const MEMORY_IMPORT_PREVIEW_RECORD = {
+  type: 'reference',
+  name: 'Preview-style memory',
+  content: 'A preview result has no persisted identity or timestamps yet.',
+  description: '',
+  tags: ['preview'],
+  pinned: false,
+} as const;
+
+export const MEMORY_HISTORICAL_EXPORT_RECORD = {
+  ...MEMORY_V3_RECORD,
+  id: 41,
+  syncId: '00000000-0000-4000-8000-000000000041',
+  name: 'Historical exported memory',
+  description: '',
+  createdAt: 410,
+  updatedAt: 420,
+  accessCount: 4,
+  lastAccessedAt: 430,
+} as const;
+
+export const MEMORY_CORRUPT_RAW_RECORD = {
+  ...MEMORY_V3_RECORD,
+  id: 91,
+  syncId: '00000000-0000-4000-8000-000000000091',
+  scope: 'future-scope',
+  recoveryOnlyField: { preserve: true },
+} as const;
+
+export const MEMORY_BOUNDED_GAPS = [
   {
     name: 'sync rollback restores raw rows but IndexedDB does not rewind its hidden auto-increment generator',
     currentBehavior: 'next-memory-id-may-skip-after-rollback',
-    target: 'define-logical-id-allocation-with-schema-migration-after-T3.3',
+    disposition: 'bounded-out-of-scope-no-second-allocator',
+    target: 'preserve-released-auto-increment-and-allow-id-gaps',
   },
 ] as const;

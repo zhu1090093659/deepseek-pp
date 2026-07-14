@@ -2,14 +2,17 @@ import type {
   GitHubSkillSource,
   LocalSkillSource,
   Memory,
-  MemoryType,
   NewMemory,
   Skill,
   SkillImportSource,
   SkillSource,
   SystemPromptPreset,
 } from '../types';
-const MEMORY_TYPES: readonly MemoryType[] = ['user', 'feedback', 'topic', 'reference'];
+import {
+  decodeImportedMemory,
+  decodeStoredMemory,
+  decodeSyncMemory,
+} from '../memory/codec';
 const SKILL_SOURCES: readonly SkillSource[] = ['builtin', 'third-party', 'official', 'custom', 'remote'];
 
 export function parseValidatedArray<T>(
@@ -41,43 +44,15 @@ export function parseValidatedJson<T>(
 }
 
 export function validateStoredMemory(value: unknown, path = 'memory'): Omit<Memory, 'id'> {
-  const object = objectValue(value, path);
-  return {
-    syncId: requiredString(object.syncId, `${path}.syncId`),
-    scope: object.scope === 'project' ? 'project' : 'global',
-    ...(object.scope === 'project' ? { projectId: requiredString(object.projectId, `${path}.projectId`) } : {}),
-    type: enumValue(object.type, MEMORY_TYPES, `${path}.type`),
-    name: requiredString(object.name, `${path}.name`),
-    content: requiredString(object.content, `${path}.content`),
-    description: requiredString(object.description, `${path}.description`),
-    tags: stringArray(object.tags, `${path}.tags`),
-    pinned: requiredBoolean(object.pinned, `${path}.pinned`),
-    createdAt: requiredFiniteNumber(object.createdAt, `${path}.createdAt`),
-    updatedAt: requiredFiniteNumber(object.updatedAt, `${path}.updatedAt`),
-    accessCount: requiredFiniteNumber(object.accessCount, `${path}.accessCount`),
-    lastAccessedAt: requiredFiniteNumber(object.lastAccessedAt, `${path}.lastAccessedAt`),
-  };
+  return decodeStoredMemory(value, path);
 }
 
 export function validateSyncMemory(value: unknown, path = 'memory'): Omit<Memory, 'id'> {
-  if (!value || typeof value !== 'object') throw new Error(`${path} must be an object`);
-  const { id: _id, ...memory } = value as Record<string, unknown>;
-  return validateStoredMemory(memory, path);
+  return decodeSyncMemory(value, path);
 }
 
 export function validateImportedMemory(value: unknown, path = 'memory'): NewMemory {
-  const stored = validateStoredMemory(value, path);
-  return {
-    syncId: stored.syncId,
-    scope: stored.scope,
-    projectId: stored.projectId,
-    type: stored.type,
-    name: stored.name,
-    content: stored.content,
-    description: stored.description,
-    tags: stored.tags,
-    pinned: stored.pinned,
-  };
+  return decodeImportedMemory(value, path);
 }
 
 export function validateSkill(value: unknown, path = 'skill'): Skill {

@@ -1,22 +1,32 @@
+import Dexie from 'dexie';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  createArtifactToolDescriptors,
-  createRestoredArtifactToolResult,
-  executeArtifactToolCall,
-  getArtifact,
-} from '../core/artifact';
+import { ARTIFACT_PERSISTENCE_CONTRACT } from '../core/artifact/schema';
 import type { ToolCall } from '../core/tool/types';
 
 let storage: Record<string, unknown>;
+let artifact: typeof import('../core/artifact');
+let artifactStore: typeof import('../core/artifact/store');
+let indexedDbFactory: IDBFactory;
+const originalIndexedDb = Dexie.dependencies.indexedDB;
+const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   storage = {};
-  vi.stubGlobal('indexedDB', undefined);
-  vi.stubGlobal('IDBKeyRange', undefined);
+  indexedDbFactory = new IDBFactory();
+  Dexie.dependencies.indexedDB = indexedDbFactory;
+  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
+  vi.stubGlobal('indexedDB', indexedDbFactory);
+  vi.stubGlobal('IDBKeyRange', IDBKeyRange);
   vi.stubGlobal('chrome', {
     storage: {
       local: {
-        get: vi.fn(async (key: string) => ({ [key]: storage[key] })),
+        get: vi.fn(async (key: string) => (
+          Object.prototype.hasOwnProperty.call(storage, key)
+            ? { [key]: storage[key] }
+            : {}
+        )),
         set: vi.fn(async (values: Record<string, unknown>) => {
           storage = { ...storage, ...values };
         }),
@@ -26,22 +36,28 @@ beforeEach(() => {
       },
     },
   });
+  artifact = await import('../core/artifact');
+  artifactStore = await import('../core/artifact/store');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  artifactStore.db.close();
+  await Dexie.delete(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
+  Dexie.dependencies.indexedDB = originalIndexedDb;
+  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
   vi.unstubAllGlobals();
 });
 
 describe('artifact tool provider', () => {
   it('exposes single-file and bundle descriptors through stable tool names', () => {
-    expect(createArtifactToolDescriptors().map((tool) => tool.name)).toEqual([
+    expect(artifact.createArtifactToolDescriptors().map((tool) => tool.name)).toEqual([
       'artifact_create',
       'artifact_bundle_create',
     ]);
   });
 
   it('creates a sanitized downloadable single-file artifact', async () => {
-    const result = await executeArtifactToolCall(toolCall('artifact_create', {
+    const result = await artifact.executeArtifactToolCall(toolCall('artifact_create', {
       filename: '../reports/summary.md',
       content: '# Summary',
       mimeType: 'text/markdown',
@@ -54,17 +70,17 @@ describe('artifact tool provider', () => {
     expect(output.artifactKind).toBe('file');
     expect(output.view).toEqual({ previewMode: 'none', language: 'text' });
 
-    const record = await getArtifact(output.artifactId);
+    const record = await artifact.getArtifact(output.artifactId);
     expect(record?.content).toBe('# Summary');
     expect(record?.mimeType).toBe('text/markdown');
   });
 
   it('marks HTML and Python artifacts as previewable or runnable files', async () => {
-    const html = await executeArtifactToolCall(toolCall('artifact_create', {
+    const html = await artifact.executeArtifactToolCall(toolCall('artifact_create', {
       filename: 'demo.html',
       content: '<!doctype html><h1>Hello</h1>',
     }), 'en');
-    const python = await executeArtifactToolCall(toolCall('artifact_create', {
+    const python = await artifact.executeArtifactToolCall(toolCall('artifact_create', {
       filename: 'calc.py',
       content: 'print(21 * 2)',
     }), 'en');
@@ -82,7 +98,7 @@ describe('artifact tool provider', () => {
   });
 
   it('reconstructs historical HTML artifact tool calls as transient previewable outputs', () => {
-    const result = createRestoredArtifactToolResult(toolCall('artifact_create', {
+    const result = artifact.createRestoredArtifactToolResult(toolCall('artifact_create', {
       filename: 'demo.html',
       content: '<!doctype html><h1>Restored</h1>',
     }), 'en');
@@ -101,7 +117,7 @@ describe('artifact tool provider', () => {
   });
 
   it('creates a stored zip bundle for multi-file project output', async () => {
-    const result = await executeArtifactToolCall(toolCall('artifact_bundle_create', {
+    const result = await artifact.executeArtifactToolCall(toolCall('artifact_bundle_create', {
       filename: 'demo',
       files: [
         { path: 'src/index.ts', content: 'export const ok = true;' },
@@ -114,14 +130,14 @@ describe('artifact tool provider', () => {
     expect(output.filename).toBe('demo.zip');
     expect(output.fileCount).toBe(2);
 
-    const record = await getArtifact(output.artifactId);
+    const record = await artifact.getArtifact(output.artifactId);
     expect(record?.kind).toBe('bundle');
     expect(record?.content.slice(0, 4)).toBe('UEsD');
     expect(record?.files?.map((file) => file.path)).toEqual(['src/index.ts', 'README.md']);
   });
 
   it('fails visibly on malformed bundle payloads', async () => {
-    const result = await executeArtifactToolCall(toolCall('artifact_bundle_create', {
+    const result = await artifact.executeArtifactToolCall(toolCall('artifact_bundle_create', {
       filename: 'empty.zip',
       files: [],
     }));

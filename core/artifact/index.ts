@@ -12,6 +12,8 @@ export { ARTIFACT_SCHEMA_VERSION } from './types';
 
 export {
   ARTIFACT_PERSISTENCE_CONTRACT,
+  decodeArtifactRecord,
+  decodeArtifactRecords,
   isArtifactRecord,
 } from './schema';
 

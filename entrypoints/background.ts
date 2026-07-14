@@ -1,6 +1,7 @@
 import {
   getAllMemories,
   getMemoryById,
+  importMemoriesAtomically,
   saveMemory,
   updateMemory,
   deleteMemory,
@@ -57,6 +58,7 @@ import {
 import { mergeLocalSkillImportsIntoSyncSnapshot } from '../core/sync/local-skill-merge';
 import {
   recoverPendingSyncLocalApply,
+  runLocalStateMutationWithRecovery,
   stageAndApplySyncSnapshotLocally,
 } from '../core/sync/local-apply-runtime';
 import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
@@ -71,7 +73,6 @@ import { authorizeOneDrive } from '../core/sync/onedrive-client';
 import {
   parseValidatedArray,
   parseValidatedJson,
-  validateImportedMemory,
   validatePreset,
   validateSkillImportSource,
   validateSkill,
@@ -109,7 +110,7 @@ import {
   bindPendingProjectConversation,
   createProjectContext,
   decodeProjectContextState,
-  deleteProjectContextAndMemories,
+  stageDeleteProjectContextAndMemoriesAlreadyLocked,
   formatProjectPromptContext,
   getProjectContextState,
   getProjectForConversation,
@@ -618,45 +619,41 @@ async function handleLegacyMessage(
 
     case 'GET_MEMORY_BY_ID': {
       const { id: memId } = message.payload as { id: number };
-      return getMemoryById(memId) ?? null;
+      return (await getMemoryById(memId)) ?? null;
     }
 
     case 'SAVE_MEMORY': {
       const id = await saveMemory(message.payload as NewMemory);
-      await broadcastStateUpdate(context.tabId);
+      await notifyCommittedStateUpdate(context.tabId);
       return { id };
     }
 
     case 'IMPORT_MEMORY_DRAFTS': {
       const { memories } = message.payload as { memories?: NewMemory[] };
       if (!Array.isArray(memories)) return { ok: false, error: 'invalid_memories' };
-      let validatedMemories: NewMemory[];
+      let ids: number[];
       try {
-        validatedMemories = memories.map((memory, index) => validateImportedMemory(memory, `memories[${index}]`));
+        ids = await importMemoriesAtomically(memories);
       } catch (error) {
         return {
           ok: false,
           error: error instanceof Error ? error.message : 'invalid_memories',
         };
       }
-      const ids: number[] = [];
-      for (const memory of validatedMemories) {
-        ids.push(await saveMemory(memory));
-      }
-      await broadcastStateUpdate(context.tabId);
+      await notifyCommittedStateUpdate(context.tabId);
       return { ok: true, ids, count: ids.length };
     }
 
     case 'UPDATE_MEMORY': {
       await updateMemory(message.payload as Memory);
-      await broadcastStateUpdate(context.tabId);
+      await notifyCommittedStateUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'DELETE_MEMORY': {
       const { id } = message.payload as { id: number };
       await deleteMemory(id);
-      await broadcastStateUpdate(context.tabId);
+      await notifyCommittedStateUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -1136,43 +1133,46 @@ async function handleLegacyMessage(
 
     case 'CREATE_PROJECT_CONTEXT': {
       const project = await createProjectContext(message.payload as Parameters<typeof createProjectContext>[0]);
-      await broadcastProjectContextUpdate(context.tabId);
+      await notifyCommittedProjectContextUpdate(context.tabId);
       return project;
     }
 
     case 'UPDATE_PROJECT_CONTEXT': {
       const { projectId, patch } = message.payload as { projectId: string; patch: Parameters<typeof updateProjectContext>[1] };
       const project = await updateProjectContext(projectId, patch);
-      await broadcastProjectContextUpdate(context.tabId);
+      await notifyCommittedProjectContextUpdate(context.tabId);
       return project;
     }
 
     case 'DELETE_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string };
-      const deletedMemories = await deleteProjectContextAndMemories(projectId);
-      await broadcastProjectContextUpdate(context.tabId);
-      if (deletedMemories > 0) await broadcastStateUpdate(context.tabId);
+      const operation = runLocalStateMutationWithRecovery(() => (
+        stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)
+      ));
+      const deletedMemories = await syncLocalRecoveryBarrier.trackApply(operation);
+      await notifyCommittedProjectContextUpdate(context.tabId);
+      if (deletedMemories > 0) await notifyCommittedStateUpdate(context.tabId);
       return { ok: true, deletedMemories };
     }
 
     case 'ADD_CONVERSATION_TO_PROJECT': {
       const { projectId, conversation } = message.payload as { projectId: string; conversation: Parameters<typeof addConversationToProject>[1] };
       const added = await addConversationToProject(projectId, conversation);
-      await broadcastProjectContextUpdate(context.tabId);
+      await notifyCommittedProjectContextUpdate(context.tabId);
       return { ok: true, conversation: added };
     }
 
     case 'REMOVE_CONVERSATION_FROM_PROJECT': {
       const { conversationId } = message.payload as { conversationId: string };
       await removeConversationFromProject(conversationId);
-      await broadcastProjectContextUpdate(context.tabId);
+      await notifyCommittedProjectContextUpdate(context.tabId);
       return { ok: true };
     }
 
     case 'SET_PENDING_PROJECT_CONTEXT': {
       const { projectId } = message.payload as { projectId: string | null };
       await setPendingProjectContext(projectId);
-      await broadcastProjectContextUpdate(context.tabId);
+      await notifyCommittedProjectContextUpdate(context.tabId);
       return { ok: true };
     }
 
@@ -1187,7 +1187,7 @@ async function handleLegacyMessage(
       const bound = bindPendingProject === true
         ? await bindPendingProjectConversation(conversation)
         : await refreshProjectConversation(conversation);
-      if (bound) await broadcastProjectContextUpdate(context.tabId);
+      if (bound) await notifyCommittedProjectContextUpdate(context.tabId);
       const project = await getProjectForConversation(conversation.conversationId);
       if (!project) return null;
       const projectContext = await getProjectPromptContextForConversation(conversation.conversationId);
@@ -1555,6 +1555,14 @@ async function broadcastStateUpdate(excludeTabId?: number) {
   await broadcastToTabs({ type: 'STATE_UPDATED', memories, skills, activePreset, modelType, promptSettings }, excludeTabId);
 }
 
+async function notifyCommittedStateUpdate(excludeTabId?: number): Promise<void> {
+  try {
+    await broadcastStateUpdate(excludeTabId);
+  } catch (error) {
+    reportBackgroundStartupError('committed_state_broadcast_failed', error);
+  }
+}
+
 async function broadcastBackgroundUpdate(config: BackgroundConfig | null) {
   await broadcastToTabs({ type: 'BACKGROUND_UPDATED', config });
 }
@@ -1588,6 +1596,14 @@ async function broadcastToolCallHistoryUpdate(excludeTabId?: number) {
 async function broadcastProjectContextUpdate(excludeTabId?: number) {
   const state = await getProjectContextState();
   await broadcastToTabs({ type: 'PROJECT_CONTEXT_UPDATED', state }, excludeTabId);
+}
+
+async function notifyCommittedProjectContextUpdate(excludeTabId?: number): Promise<void> {
+  try {
+    await broadcastProjectContextUpdate(excludeTabId);
+  } catch (error) {
+    reportBackgroundStartupError('committed_project_broadcast_failed', error);
+  }
 }
 
 async function getCurrentDeepSeekConversation(): Promise<

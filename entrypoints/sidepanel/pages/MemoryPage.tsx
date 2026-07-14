@@ -1,33 +1,67 @@
 import { useEffect, useState } from 'react';
+import { decodePersistedMemoryRecord } from '../../../core/memory/codec';
 import type { Memory, MemoryType, NewMemory } from '../../../core/types';
 import MemoryCard from '../components/MemoryCard';
 import MemoryForm from '../components/MemoryForm';
 import PageIntro from '../components/PageIntro';
-import { SegmentedControl, SkeletonList, useConfirm } from '../components/settings/primitives';
+import { SegmentedControl, SkeletonList, useBanner, useConfirm } from '../components/settings/primitives';
 import { MEMORY_TYPE_CONFIG } from '../constants';
 import { useI18n } from '../i18n';
+import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 
 export default function MemoryPage() {
   const { t } = useI18n();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [filter, setFilter] = useState<MemoryType | 'all'>('all');
   const [showForm, setShowForm] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
   const load = async () => {
-    const list: Memory[] = await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' });
-    setMemories((list ?? []).filter((memory) => memory.scope !== 'project'));
-    setLoading(false);
+    try {
+      const response = unwrapRuntimeResponse<unknown>(
+        await chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
+        t('sidepanel.memoryPage.backendUnavailable'),
+      );
+      if (!Array.isArray(response)) throw new Error(t('sidepanel.memoryPage.backendUnavailable'));
+      const list = response.map((memory, index) => (
+        decodePersistedMemoryRecord(memory, `memoryResponse[${index}]`)
+      ));
+      setMemories(list.filter((memory) => memory.scope !== 'project'));
+      setLoadFailed(false);
+    } catch (error) {
+      setLoadFailed(true);
+      banner.show('error', t('sidepanel.memoryPage.operationFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     void load();
 
-    const handleStateUpdate = (message: { type?: string; memories?: Memory[] }) => {
-      if (message.type === 'STATE_UPDATED' && Array.isArray(message.memories)) {
-        setMemories(message.memories.filter((memory) => memory.scope !== 'project'));
+    const handleStateUpdate = (message: { type?: string; memories?: unknown }) => {
+      if (message.type === 'STATE_UPDATED') {
+        try {
+          if (!Array.isArray(message.memories)) {
+            throw new Error(t('sidepanel.memoryPage.backendUnavailable'));
+          }
+          const next = message.memories.map((memory, index) => (
+            decodePersistedMemoryRecord(memory, `memoryUpdate[${index}]`)
+          ));
+          setMemories(next.filter((memory) => memory.scope !== 'project'));
+          setLoadFailed(false);
+        } catch (error) {
+          setLoadFailed(true);
+          banner.show('error', t('sidepanel.memoryPage.operationFailed', {
+            error: getRuntimeErrorMessage(error),
+          }));
+        }
       }
     };
     const refreshWhenVisible = () => {
@@ -62,22 +96,38 @@ export default function MemoryPage() {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    await chrome.runtime.sendMessage({ type: 'DELETE_MEMORY', payload: { id } });
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({ type: 'DELETE_MEMORY', payload: { id } }),
+        t('sidepanel.memoryPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      banner.show('error', t('sidepanel.memoryPage.operationFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
+    }
   };
 
   const handleSave = async (mem: NewMemory) => {
-    if (editingMemory?.id) {
-      await chrome.runtime.sendMessage({
-        type: 'UPDATE_MEMORY',
-        payload: { ...editingMemory, ...mem, updatedAt: Date.now() },
-      });
-    } else {
-      await chrome.runtime.sendMessage({ type: 'SAVE_MEMORY', payload: mem });
+    try {
+      banner.clear();
+      const response = editingMemory?.id
+        ? await chrome.runtime.sendMessage({
+          type: 'UPDATE_MEMORY',
+          payload: { ...editingMemory, ...mem, updatedAt: Date.now() },
+        })
+        : await chrome.runtime.sendMessage({ type: 'SAVE_MEMORY', payload: mem });
+      unwrapRuntimeResponse(response, t('sidepanel.memoryPage.backendUnavailable'));
+      setShowForm(false);
+      setEditingMemory(null);
+      await load();
+    } catch (error) {
+      banner.show('error', t('sidepanel.memoryPage.operationFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
     }
-    setShowForm(false);
-    setEditingMemory(null);
-    load();
   };
 
   const handleEdit = (mem: Memory) => {
@@ -86,11 +136,21 @@ export default function MemoryPage() {
   };
 
   const handleTogglePin = async (mem: Memory) => {
-    await chrome.runtime.sendMessage({
-      type: 'UPDATE_MEMORY',
-      payload: { ...mem, pinned: !mem.pinned },
-    });
-    load();
+    try {
+      banner.clear();
+      unwrapRuntimeResponse(
+        await chrome.runtime.sendMessage({
+          type: 'UPDATE_MEMORY',
+          payload: { ...mem, pinned: !mem.pinned },
+        }),
+        t('sidepanel.memoryPage.backendUnavailable'),
+      );
+      await load();
+    } catch (error) {
+      banner.show('error', t('sidepanel.memoryPage.operationFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
+    }
   };
 
   return (
@@ -121,6 +181,7 @@ export default function MemoryPage() {
       </div>
 
       {confirmNode}
+      {banner.node}
 
       {showForm && (
         <div className="animate-slide-down">
@@ -134,7 +195,7 @@ export default function MemoryPage() {
 
       {loading ? (
         <SkeletonList rows={3} />
-      ) : filtered.length === 0 ? (
+      ) : !loadFailed && filtered.length === 0 ? (
         <div className="ds-empty-state">
           <div className="ds-empty-state-icon">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>

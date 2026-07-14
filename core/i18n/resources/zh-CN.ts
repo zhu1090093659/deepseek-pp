@@ -272,6 +272,8 @@ export const zhCN = {
       emptyHelp: '对话中出现稳定偏好或项目背景时，DeepSeek++ 会自动保存；也可以手动新增一条。',
       count: '共 {count} 条记忆',
       deleteConfirm: '确定删除这条记忆吗？',
+      backendUnavailable: '记忆存储不可用，请重新加载扩展后再试。',
+      operationFailed: '记忆操作失败：{error}',
     },
     presetPage: {
       title: '系统提示词预设',

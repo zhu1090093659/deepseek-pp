@@ -1,4 +1,5 @@
 export const MEMORY_DATABASE_NAME = 'DeepSeekPP';
+export const MEMORY_DATABASE_VERSION = 3 as const;
 export const MEMORY_TABLE_NAME = 'memories';
 
 export const MEMORY_TABLE_SCHEMAS = {

@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const background = readFileSync('entrypoints/background.ts', 'utf8');
+const settingsState = readFileSync(
+  'entrypoints/sidepanel/components/settings/useSettingsState.ts',
+  'utf8',
+);
 
 describe('background sync recovery integration', () => {
   it('establishes the recovery barrier before startup mutation and runtime dispatch', () => {
@@ -37,15 +41,34 @@ describe('background sync recovery integration', () => {
     expect(downloadCase).not.toContain('replaceAllMemories');
   });
 
-  it('keeps project deletion and its Memory cascade in one local-state critical section', () => {
+  it('journals project deletion and its Memory cascade in one recoverable local-state mutation', () => {
     const deleteProjectCase = background.slice(
       background.indexOf("case 'DELETE_PROJECT_CONTEXT':"),
       background.indexOf("case 'ADD_CONVERSATION_TO_PROJECT':"),
     );
 
     expect(deleteProjectCase).toContain(
-      'await deleteProjectContextAndMemories(projectId)',
+      'const operation = runLocalStateMutationWithRecovery(() =>',
     );
+    expect(deleteProjectCase).toContain('stageDeleteProjectContextAndMemoriesAlreadyLocked(projectId)');
+    expect(deleteProjectCase).toContain('await syncLocalRecoveryBarrier.trackApply(operation)');
     expect(deleteProjectCase).not.toContain('deleteMemoriesForProject(');
+  });
+
+  it('imports a Settings Memory JSON batch through one atomic background command', () => {
+    const settingsImport = settingsState.slice(
+      settingsState.indexOf('const handleImport = useCallback'),
+      settingsState.indexOf('const handleClearAllMemories = useCallback'),
+    );
+    const backgroundImport = background.slice(
+      background.indexOf("case 'IMPORT_MEMORY_DRAFTS':"),
+      background.indexOf("case 'UPDATE_MEMORY':"),
+    );
+
+    expect(settingsImport).toContain("type: 'IMPORT_MEMORY_DRAFTS'");
+    expect(settingsImport).not.toContain("type: 'SAVE_MEMORY'");
+    expect(backgroundImport).toContain('ids = await importMemoriesAtomically(memories)');
+    expect(backgroundImport).toContain('await notifyCommittedStateUpdate(context.tabId)');
+    expect(backgroundImport).not.toContain('for (const memory');
   });
 });

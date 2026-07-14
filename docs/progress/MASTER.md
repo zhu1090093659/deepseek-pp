@@ -32,7 +32,7 @@
 |:--:|:--|:--|--:|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 9 | 1 | 5 | 10 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 5 | 5 | 10 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
 | 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
@@ -58,7 +58,7 @@
 | R3.2 | [#352](https://github.com/zhu1090093659/deepseek-pp/issues/352) | Cut over tool contracts and provider registry | closed |
 | R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | closed |
 | R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | closed |
-| R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | open |
+| R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | closed |
 | R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | open |
 | R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | open |
 | R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (3/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (5/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.5 / [Issue #355](https://github.com/zhu1090093659/deepseek-pp/issues/355) — versioned Project, Saved Items, and Scenario repositories.
+**Active Task**: R3.6 / [Issue #356](https://github.com/zhu1090093659/deepseek-pp/issues/356) — converged Memory and Artifact IndexedDB truth.
 
-**Execution Branch**: `codex/355-versioned-browser-repositories` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/355-versioned-browser-repositories`, based on `main@03af09a`.
+**Execution Branch**: `codex/356-memory-artifact-indexeddb` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/356-memory-artifact-indexeddb`, based on `main@3a30229`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `03af09a` after R3.4. The baseline passes 105 test files / 798 tests, full PC quality/package checks, and R3.4 hosted validation through PR #385. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `3a30229` after R3.5. The baseline passes 106 test files / 817 tests, full PC quality/package checks, and R3.5 hosted validation through PR #386. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -262,12 +262,22 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted validation passes 11 files / 151 tests, including every UTF-8 byte split, every CRLF character split, request unknown siblings, unknown/modified raw frames, response metadata, cancellation settlement, reader failure, backpressure, XHR synchronous re-entry/open rollback/load ordering/network or native-send failure, bridge schemas, and token metrics. TypeScript compile and the 60-second full suite pass at 105 files / 798 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings. Malformed JSON remains the explicit R5.1 gap.
 - Hosted quality and contribution-evidence runs `29291764748` / `29291764902` passed. PR #385 squash-merged at `03af09aba62d3bb16625abf34203c05f012f613e`; Issue #354 closed after telemetry and Milestone #45 advanced to 4/10 completed with cumulative drift score 1.
 
-**R3.5 Evidence (local validation complete)**:
+**R3.5 Evidence (closed)**:
 
 - Added one narrow raw storage-slot/versioned repository authority consumed by Project, Saved Items, and Scenario. Missing keys produce domain defaults without eager writes; present null, corrupt, duplicate, broken-reference, and explicit future values reject before clocks, UUIDs, or storage mutation. Sync replacement first decodes current raw state, preventing a valid remote snapshot from overwriting unsupported local data.
 - Added sole domain codecs for lossless Project v1→v2 projection, exact-preserving Saved Items legacy/versionless/v1 input, and the released bare Scenario array. Local stores, remote sync parsing, and Side Panel responses reuse these codecs; obsolete normalizers, duplicate sync validators, and unused direct replacement/delete exports were removed.
 - Project v1 sources/files/active IDs and additive fields survive until intentional deletion cleans legacy file references. Scenario keeps built-in order/Chinese labels and saved template/enabled semantics while preserving additive fields. Same-realm read-modify-writes share the local-state lock; cross-realm Scenario centralization remains R4.4, and Project/Memory cross-store cascade atomicity remains an explicit R3.6 boundary.
 - Project, Saved Items, and Scenario pages now report repository failures rather than rendering fake empty/default success; Background scenario/context-menu failures are logged. Targeted validation passes 11 files / 113 tests, and TypeScript plus the 60-second full suite pass at 106 files / 817 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings. Three independent final contract reviews report no remaining P0-P2 finding after the additive-field, Project v1 optional-source, invalid-broadcast, context-menu ordering, and post-commit notification fixes.
+- Hosted quality and contribution-evidence runs `29295019441` / `29295019497` passed. PR #386 squash-merged at `3a30229aca99a7d47a5cfc3824e052abdb1e2fc6`; Issue #355 closed after telemetry and Milestone #45 advanced to 5/10 completed with cumulative drift score 1.
+
+**R3.6 Evidence (local validation complete)**:
+
+- Added one exact-preserving Memory codec consumed by IndexedDB, sync, Settings import, Content, and Side Panel. Every ordinary read/mutation validates the complete table and current native DB version; a complete import batch validates before one shared lock and Dexie transaction, so Nth-row failure rolls back every new row and concurrent batches cannot interleave.
+- Made Artifact IndexedDB the sole runtime truth. The released Chrome-storage array is strict migration input only: complete legal arrays merge without retention pruning, conflicts/corruption/future DB versions preserve both raw stores, failed cleanup retries, and a lost remove response is verified before convergence succeeds.
+- Reused the existing schema-v1 full-preimage recovery journal for Project/Memory cascade deletion. Validated staging happens before journal preparation; every pre-commit failure restores both stores, an unresolved journal remains behind the Background recovery barrier, and no second journal kind or logical Memory ID allocator was introduced.
+- Memory and Project UIs decode complete snapshots before committing, retain last-known valid data, end failed initial loading explicitly, and expose repository failures instead of projecting empty success. Missing Memory IDs now fail rather than returning a no-op success. Artifact retention always keeps the just-committed row, and released dual writes treat only Chrome-omitted versus IndexedDB-preserved `undefined` object properties as canonical equivalents while real nested/additive differences remain conflicts.
+- Three independent contract reviews reproduced one P1 and five P2 findings across released Artifact dual writes, repository self-poisoning, clock-rollback retention, Project/Memory mixed UI snapshots, stale compatibility targets, and missing-ID updates. All six were fixed with regression coverage; post-fix reviews report no remaining P0-P2 finding.
+- Targeted validation passes 15 files / 139 tests. TypeScript and the 60-second full suite pass at 108 files / 846 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
 
 ## Governance Status
 
@@ -291,9 +301,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Publish R3.5 for hosted quality and contribution-evidence validation.
-2. Record R3.5 telemetry, merge/close Issue #355, and enforce Phase 3 adaptive thresholds.
-3. Begin R3.6 only after the R3.5 hosted closure is complete.
+1. Commit and publish R3.6 for hosted quality and contribution-evidence checks.
+2. Record R3.6 telemetry, merge/close Issue #356, and enforce Phase 3 adaptive thresholds.
+3. Begin R3.7 only after the R3.6 hosted closure is complete.
 
 ## Session Log
 
@@ -351,3 +361,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | R3.4 closure | PR #385 passed hosted quality/contribution gates and squash-merged at `03af09a`; Issue #354 closed after telemetry and Milestone #45 advanced to 4/10 with cumulative drift score 1. |
 | 2026-07-13 | R3.5 execution start | Opened `codex/355-versioned-browser-repositories` from `03af09a`; audited Project v1/v2, Saved Items legacy/v1/future, released Scenario arrays, sync replacement, UI error projection, and same-realm concurrency boundaries. |
 | 2026-07-13 | R3.5 implementation | Added one raw-slot/versioned repository contract and three sole domain codecs, removed duplicate normalizers/validators and silent fallbacks, preserved legal legacy/additive data, guarded future/corrupt state from local/sync overwrite, and added concurrency/UI regression coverage. |
+| 2026-07-13 | R3.5 closure | PR #386 passed hosted quality/contribution gates and squash-merged at `3a30229`; Issue #355 closed after telemetry and Milestone #45 advanced to 5/10 with cumulative drift score 1. |
+| 2026-07-13 | R3.6 execution start | Opened `codex/356-memory-artifact-indexeddb` from `3a30229`; audited Memory v1-v3/import/sync/UI, Artifact legacy/IndexedDB convergence, Project cascade, recovery journal, and future/corrupt preservation boundaries. |
+| 2026-07-13 | R3.6 implementation | Added sole Memory/Artifact codecs and explicit DB-version guards, transactional Memory batches, one-way Artifact migration, journaled Project/Memory cascade, and visible last-known-state UI errors without restoring Android or adding a second persistence truth. |
+| 2026-07-13 | R3.6 local validation | Closed all six independent-review findings; passed 15 files / 139 targeted tests, 108 files / 846 full tests, TypeScript, the complete PC Chrome/Edge/Firefox quality/package matrix, diff checks, and orphan-process checks. |

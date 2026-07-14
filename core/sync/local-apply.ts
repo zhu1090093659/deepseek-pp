@@ -104,6 +104,24 @@ export function createSyncLocalApplyCoordinator(
 
     const before = await localState.captureUndoPreimage();
     const plan = localState.stage(snapshot, before);
+    return runJournaledMutation(before, async (operationId) => {
+      for (const step of plan.applySteps) {
+        await localState.applyStep(step, plan);
+      }
+      return { operationId };
+    });
+  }
+
+  async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
+    await recover();
+    const before = await localState.captureUndoPreimage();
+    return runJournaledMutation(before, async () => operation());
+  }
+
+  async function runJournaledMutation<T>(
+    before: SyncUndoPreimageV1,
+    operation: (operationId: string) => Promise<T>,
+  ): Promise<T> {
     const createdAt = now();
     if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
       throw new Error('Sync local apply createdAt is invalid');
@@ -114,11 +132,9 @@ export function createSyncLocalApplyCoordinator(
     await prepareJournal(journal, record);
 
     try {
-      for (const step of plan.applySteps) {
-        await localState.applyStep(step, plan);
-      }
+      const result = await operation(operationId);
       await clearJournalForCommit(journal, record);
-      return { operationId };
+      return result;
     } catch (applyError) {
       if (applyError instanceof SyncLocalCommitOutcomeUnknownError) throw applyError;
 
@@ -143,7 +159,7 @@ export function createSyncLocalApplyCoordinator(
     }
   }
 
-  return { apply, recover };
+  return { apply, recover, runMutation };
 }
 
 async function createJournalRecord(

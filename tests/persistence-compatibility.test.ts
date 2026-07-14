@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ARTIFACT_PERSISTENCE_CONTRACT,
-  ARTIFACT_SCHEMA_VERSION,
-  getArtifacts,
+  decodeArtifactRecords,
   isArtifactRecord,
-} from '../core/artifact';
+} from '../core/artifact/schema';
+import { ARTIFACT_SCHEMA_VERSION } from '../core/artifact/types';
 import {
   MEMORY_DATABASE_NAME,
   MEMORY_TABLE_NAME,
@@ -51,13 +51,13 @@ import {
   validateSyncMemory,
 } from '../core/sync/schema';
 import {
-  ARTIFACT_CURRENT_GAPS,
-  ARTIFACT_FILTERING_DATA_LOSS_GAP,
+  ADDITIVE_LEGACY_ARTIFACT_RECORD,
   LEGAL_LEGACY_ARTIFACT_STORAGE,
   LEGACY_ARTIFACT_RECORD,
+  REJECTED_LEGACY_ARTIFACT_STATES,
 } from './fixtures/persistence-contract/artifact';
 import {
-  MEMORY_CURRENT_GAPS,
+  MEMORY_BOUNDED_GAPS,
   MEMORY_V1_RECORD,
   MEMORY_V2_RECORD,
   MEMORY_V3_RECORD,
@@ -130,15 +130,15 @@ describe('persistence and sync compatibility contract', () => {
       .toEqual(MEMORY_V2_RECORD);
     expect(migrateMemoryV2RecordToV3({ ...MEMORY_V2_RECORD, projectId: 'stale-project' }))
       .toEqual(MEMORY_V3_RECORD);
-    expect(MEMORY_CURRENT_GAPS[0].target)
-      .toBe('preserve-future-database-without-overwrite-after-T3.3');
-    expect(MEMORY_CURRENT_GAPS[1]).toMatchObject({
+    expect(MEMORY_BOUNDED_GAPS).toEqual([{
+      name: 'sync rollback restores raw rows but IndexedDB does not rewind its hidden auto-increment generator',
       currentBehavior: 'next-memory-id-may-skip-after-rollback',
-      target: 'define-logical-id-allocation-with-schema-migration-after-T3.3',
-    });
+      disposition: 'bounded-out-of-scope-no-second-allocator',
+      target: 'preserve-released-auto-increment-and-allow-id-gaps',
+    }]);
   });
 
-  it('reads legal legacy artifacts and classifies malformed filtering as a migration gap', async () => {
+  it('freezes Artifact identity and losslessly decodes the whole legal legacy array', () => {
     expect(ARTIFACT_SCHEMA_VERSION).toBe(1);
     expect(ARTIFACT_PERSISTENCE_CONTRACT).toEqual({
       databaseName: 'DeepSeekPPArtifacts',
@@ -148,17 +148,14 @@ describe('persistence and sync compatibility contract', () => {
       legacyStorageKey: 'deepseek_pp_artifacts',
       maxRecords: 50,
     });
-    storage[ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey] = LEGAL_LEGACY_ARTIFACT_STORAGE;
-
     expect(isArtifactRecord(LEGACY_ARTIFACT_RECORD)).toBe(true);
-    expect(isArtifactRecord(ARTIFACT_FILTERING_DATA_LOSS_GAP.input[1])).toBe(false);
-    await expect(getArtifacts()).resolves.toEqual([LEGACY_ARTIFACT_RECORD]);
-    expect(ARTIFACT_CURRENT_GAPS.map((gap) => gap.target))
-      .toEqual([
-        'preserve-unread-rows-for-explicit-recovery-after-T3.3',
-        'single-authoritative-store-after-T3.3',
-        'single-authoritative-store-after-T3.3',
-      ]);
+    expect(isArtifactRecord(ADDITIVE_LEGACY_ARTIFACT_RECORD)).toBe(true);
+    expect(decodeArtifactRecords(LEGAL_LEGACY_ARTIFACT_STORAGE))
+      .toEqual(LEGAL_LEGACY_ARTIFACT_STORAGE);
+
+    for (const raw of Object.values(REJECTED_LEGACY_ARTIFACT_STATES)) {
+      expect(() => decodeArtifactRecords(raw)).toThrow();
+    }
   });
 
   it('migrates released Project v1 losslessly without writing during reads', async () => {

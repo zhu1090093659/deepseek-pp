@@ -22,6 +22,7 @@ import { createToolInvocationCatalog } from '../core/tool/invocation';
 import { createLatestSyncGate, type LatestSyncLease } from '../core/tool/latest-sync';
 import { DEFAULT_PROMPT_INJECTION_SETTINGS, normalizePromptInjectionSettings } from '../core/prompt/settings';
 import { normalizeBackgroundConfig } from '../core/background/config';
+import { decodePersistedMemoryRecord } from '../core/memory/codec';
 import {
   LEGACY_TOOL_CALLS_OPEN_TAG,
   stripToolCalls,
@@ -630,14 +631,18 @@ export default defineContentScript({
         return false;
       }
       if (message.type === 'STATE_UPDATED') {
-        syncToMainWorld(
-          message.memories,
-          message.skills,
-          message.activePreset,
-          message.modelType,
-          currentToolDescriptors,
-          normalizePromptInjectionSettings(message.promptSettings),
-        );
+        try {
+          syncToMainWorld(
+            decodeRuntimeMemories(message.memories, 'memoryUpdate'),
+            message.skills,
+            message.activePreset,
+            message.modelType,
+            currentToolDescriptors,
+            normalizePromptInjectionSettings(message.promptSettings),
+          );
+        } catch (error) {
+          console.error('[DeepSeek++] memory state update rejected', error);
+        }
       } else if (message.type === 'TOOL_DESCRIPTORS_UPDATED') {
         const syncLease = toolDescriptorSyncGate.begin();
         try {
@@ -1034,14 +1039,15 @@ async function loadAndSyncRuntimeState(
   })();
 
   const runtimeStateSync = Promise.all([
-    sendRuntimeMessage<Memory[]>({ type: 'GET_MEMORIES' }),
+    sendRuntimeMessageStrict<unknown>({ type: 'GET_MEMORIES' })
+      .then((value) => decodeRuntimeMemories(value, 'memoryResponse')),
     sendRuntimeMessage<Skill[]>({ type: 'GET_SKILLS' }),
     sendRuntimeMessage<SystemPromptPreset | null>({ type: 'GET_ACTIVE_PRESET' }),
     sendRuntimeMessage<ModelType>({ type: 'GET_MODEL_TYPE' }),
     sendRuntimeMessage<PromptInjectionSettings>({ type: 'GET_PROMPT_INJECTION_SETTINGS' }),
   ]).then(
     ([memories, skills, activePreset, modelType, promptSettings]) => syncToMainWorld(
-      memories ?? [],
+      memories,
       skills ?? [],
       activePreset ?? null,
       modelType ?? null,
@@ -4208,6 +4214,13 @@ function syncToMainWorld(
       hint: contentT('content.skillPopup.hint'),
     },
   });
+}
+
+function decodeRuntimeMemories(value: unknown, path: string): Memory[] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
+  return value.map((memory, index) => (
+    decodePersistedMemoryRecord(memory, `${path}[${index}]`)
+  ));
 }
 
 function syncCurrentRuntimeStateToMainWorld(): void {

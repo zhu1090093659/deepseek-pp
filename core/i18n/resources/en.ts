@@ -272,6 +272,8 @@ export const en = {
       emptyHelp: 'DeepSeek++ saves durable preferences and project context from conversation, and you can add entries manually.',
       count: '{count} memories total',
       deleteConfirm: 'Delete this memory?',
+      backendUnavailable: 'Memory storage is unavailable. Reload the extension and try again.',
+      operationFailed: 'Memory operation failed: {error}',
     },
     presetPage: {
       title: 'System prompt presets',

@@ -8,6 +8,7 @@ import type {
   ProjectConversation,
 } from '../../../core/types';
 import { decodeProjectContextState } from '../../../core/project/codec';
+import { decodePersistedMemoryRecord } from '../../../core/memory/codec';
 import { PROJECT_CONTEXT_SCHEMA_VERSION } from '../../../core/project/types';
 import MemoryCard from '../components/MemoryCard';
 import MemoryForm from '../components/MemoryForm';
@@ -28,6 +29,7 @@ export default function ProjectsPage() {
   const [state, setState] = useState<ProjectContextState>(EMPTY_PROJECT_STATE);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -44,17 +46,30 @@ export default function ProjectsPage() {
   useEffect(() => {
     void loadAll().catch(showProjectError);
     void refreshCurrentConversation();
-    const handler = (msg: { type?: string; state?: ProjectContextState; memories?: Memory[] }) => {
+    const handler = (msg: { type?: string; state?: ProjectContextState; memories?: unknown }) => {
       if (msg.type === 'PROJECT_CONTEXT_UPDATED') {
         try {
           applyState(decodeProjectContextState(msg.state, 'projectContextUpdate'));
+          setLoadFailed(false);
         } catch (error) {
+          setLoadFailed(true);
           showProjectError(error);
         }
         return;
       }
-      if (msg.type === 'STATE_UPDATED' && Array.isArray(msg.memories)) {
-        setMemories(msg.memories);
+      if (msg.type === 'STATE_UPDATED') {
+        try {
+          if (!Array.isArray(msg.memories)) {
+            throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
+          }
+          setMemories(msg.memories.map((memory, index) => (
+            decodePersistedMemoryRecord(memory, `memoryUpdate[${index}]`)
+          )));
+          setLoadFailed(false);
+        } catch (error) {
+          setLoadFailed(true);
+          showProjectError(error);
+        }
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -100,20 +115,38 @@ export default function ProjectsPage() {
   }, [selectedProject]);
 
   async function loadAll() {
-    const [projectState, memoryList] = await Promise.all([
-      chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
-      chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
-    ]);
-    const next = decodeProjectContextState(
-      unwrapProjectResponse<ProjectContextState>(
-        projectState,
+    try {
+      const [projectState, memoryList] = await Promise.all([
+        chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
+        chrome.runtime.sendMessage({ type: 'GET_MEMORIES' }),
+      ]);
+      const next = decodeProjectContextState(
+        unwrapProjectResponse<ProjectContextState>(
+          projectState,
+          t('sidepanel.projectsPage.backendUnavailable'),
+        ),
+        'projectContextResponse',
+      );
+      const memoryResponse = unwrapProjectResponse<unknown>(
+        memoryList,
         t('sidepanel.projectsPage.backendUnavailable'),
-      ),
-      'projectContextResponse',
-    );
-    applyState(next);
-    setMemories(Array.isArray(memoryList) ? memoryList : []);
-    setLoading(false);
+      );
+      if (!Array.isArray(memoryResponse)) {
+        throw new Error(t('sidepanel.projectsPage.backendUnavailable'));
+      }
+      const nextMemories = memoryResponse.map((memory, index) => (
+        decodePersistedMemoryRecord(memory, `memoryResponse[${index}]`)
+      ));
+
+      applyState(next);
+      setMemories(nextMemories);
+      setLoadFailed(false);
+    } catch (error) {
+      setLoadFailed(true);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   }
 
   function applyState(next: ProjectContextState) {
@@ -348,7 +381,7 @@ export default function ProjectsPage() {
 
       {loading ? (
         <SkeletonList rows={3} />
-      ) : state.projects.length === 0 ? (
+      ) : loadFailed && state.projects.length === 0 ? null : state.projects.length === 0 ? (
         <div className="ds-empty-state">
           <div className="ds-empty-state-icon">
             <FolderIcon />

@@ -26,7 +26,6 @@ import type {
   SyncProvider,
   WebdavSyncConfig,
 } from '../../../../core/types';
-import { validateImportedMemory } from '../../../../core/sync/schema';
 import { getOptionalRedirectUri } from '../../../../core/sync/oauth-client';
 import { createBootstrapRuntimeClient } from '../../../../core/messaging/bootstrap-client';
 
@@ -724,12 +723,16 @@ export function useSettingsState() {
           if (!Array.isArray(parsed)) {
             throw new Error(labels.arrayError);
           }
-          const memories = parsed.map((mem, index) => validateImportedMemory(mem, `memories[${index}]`));
-          for (const memory of memories) {
-            await chrome.runtime.sendMessage({ type: 'SAVE_MEMORY', payload: memory });
+          const result = await chrome.runtime.sendMessage({
+            type: 'IMPORT_MEMORY_DRAFTS',
+            payload: { memories: parsed },
+          });
+          if (!result?.ok) {
+            throw new Error(result?.error || labels.jsonError);
           }
-          setMemoryCount((c) => c + memories.length);
-          onResult?.({ ok: true, imported: memories.length });
+          const imported = typeof result.count === 'number' ? result.count : parsed.length;
+          setMemoryCount((count) => count + imported);
+          onResult?.({ ok: true, imported });
         } catch (error) {
           onResult?.({ ok: false, error: error instanceof Error ? error.message : labels.jsonError });
         }

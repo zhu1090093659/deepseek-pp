@@ -10,6 +10,8 @@ This document replaces stale active planning documents. It describes the code th
 - `core/interceptor/fetch-hook.ts` is the passive page adapter over the shared DeepSeek route/SSE codecs. It injects memory/Skill/preset/tool context, strips executable tool XML from visible streams/history/IndexedDB cache, tracks token speed, and reports response-complete metadata.
 - `entrypoints/content.ts` is the isolated-world coordinator for runtime state, main-world messages, tool execution blocks, inline-agent traces, token speed UI, theme/background sync, and the pet overlay.
 - `core/persistence/versioned-repository.ts` owns the narrow raw storage-slot and versioned repository contract used by Project, Saved Items, and Scenario. Each domain owns one pure codec reused by local storage, sync, and Side Panel boundaries; legal legacy reads do not write eagerly, while future/corrupt state fails closed before replacement.
+- `core/memory/codec.ts` is the single Memory authority for IndexedDB rows, sync payloads, Settings imports, and UI notifications. Memory batch imports validate before one locked Dexie transaction; ordinary reads and writes reject corrupt or future database state instead of overwriting it.
+- `core/artifact/store.ts` treats the released Chrome-storage array as migration input only and IndexedDB as the sole runtime truth. The existing `DeepSeekPPSyncRecovery` full-preimage journal is also reused for Project/Memory cascade deletion, so no second recovery protocol or cross-store truth source was added.
 
 ## Refactor Direction
 

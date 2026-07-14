@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { withSyncLocalStateLock } from '../core/persistence/local-state-lock';
 import {
   createProjectContext,
-  deleteProjectContextAndMemories,
+  stageDeleteProjectContextAndMemoriesAlreadyLocked,
   getProjectContextState,
   updateProjectContext,
   type ProjectContextState,
@@ -44,10 +44,12 @@ import {
 } from './fixtures/persistence-contract/scenario';
 
 const memoryMocks = vi.hoisted(() => ({
+  assertValid: vi.fn(async () => undefined),
   deleteForProject: vi.fn(async () => 0),
 }));
 
 vi.mock('../core/memory/store', () => ({
+  assertMemoryRecordsValidAlreadyLocked: memoryMocks.assertValid,
   deleteMemoriesForProjectAlreadyLocked: memoryMocks.deleteForProject,
 }));
 
@@ -76,6 +78,7 @@ beforeEach(() => {
   });
   memoryMocks.deleteForProject.mockClear();
   memoryMocks.deleteForProject.mockResolvedValue(0);
+  memoryMocks.assertValid.mockClear();
 });
 
 afterEach(() => {
@@ -169,7 +172,10 @@ describe('versioned browser repositories', () => {
   it('removes intentionally deleted Project v1 legacy fields without leaving orphan files', async () => {
     storage[PROJECT_CONTEXT_STORAGE_KEY] = PROJECT_V1_STATE;
 
-    await expect(deleteProjectContextAndMemories('project-v1')).resolves.toBe(0);
+    await expect(withSyncLocalStateLock(async () => {
+      const operation = await stageDeleteProjectContextAndMemoriesAlreadyLocked('project-v1');
+      return operation();
+    })).resolves.toBe(0);
 
     expect(storage[PROJECT_CONTEXT_STORAGE_KEY]).toEqual({
       ...PROJECT_V1_MIGRATED_STATE,

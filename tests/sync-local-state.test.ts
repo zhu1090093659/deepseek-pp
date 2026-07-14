@@ -7,11 +7,20 @@ import type { SyncDataSnapshot } from '../core/sync/snapshot';
 describe('browser sync local-state staging', () => {
   it('reuses numeric memory ids by syncId and allocates new ids deterministically', () => {
     const before = createPreimage([
-      { ...memory('sync-a'), id: 4, rawFutureField: 'preserve-in-journal' },
+      {
+        ...memory('sync-a'),
+        id: 4,
+        localAdditiveField: { preserve: true },
+        sharedAdditiveField: 'local-value',
+      },
       { ...memory('deleted-sync'), id: 9 },
     ]);
     const snapshot = createSnapshot([
-      memory('sync-a'),
+      {
+        ...memory('sync-a'),
+        remoteAdditiveField: { preserve: true },
+        sharedAdditiveField: 'remote-value',
+      } as Memory,
       memory('sync-new-1'),
       memory('sync-new-2'),
     ]);
@@ -22,6 +31,11 @@ describe('browser sync local-state staging', () => {
       { syncId: 'sync-new-1', id: 10 },
       { syncId: 'sync-new-2', id: 11 },
     ]);
+    expect(first.snapshot.memories[0]).toMatchObject({
+      localAdditiveField: { preserve: true },
+      remoteAdditiveField: { preserve: true },
+      sharedAdditiveField: 'remote-value',
+    });
 
     const committedBefore = createPreimage(first.snapshot.memories as unknown as Record<string, unknown>[]);
     const retry = stageSyncLocalApply(snapshot, committedBefore);

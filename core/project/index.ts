@@ -22,7 +22,7 @@ export {
   addConversationToProject,
   bindPendingProjectConversation,
   createProjectContext,
-  deleteProjectContextAndMemories,
+  stageDeleteProjectContextAndMemoriesAlreadyLocked,
   formatProjectPromptContext,
   getProjectContextState,
   getProjectForConversation,

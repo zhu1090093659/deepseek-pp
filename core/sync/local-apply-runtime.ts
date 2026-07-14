@@ -24,21 +24,18 @@ export function stageAndApplySyncSnapshotLocally(
 ): Promise<SyncDataSnapshot> {
   return withSyncLocalStateLock(async () => {
     const snapshot = await stage();
-    try {
-      await coordinator.apply(snapshot);
-    } catch (applyError) {
-      requireLocalStateRecovery(recoverCoordinatorAlreadyLocked);
-      try {
-        await recoverRequiredLocalStateAlreadyLocked();
-      } catch (recoveryError) {
-        throw new AggregateError(
-          [applyError, recoveryError],
-          'Sync local apply failed and required recovery remains pending',
-        );
-      }
-      throw applyError;
-    }
+    await runCoordinatorOperation(() => coordinator.apply(snapshot));
     return snapshot;
+  });
+}
+
+export function runLocalStateMutationWithRecovery<T>(
+  stage: () => Promise<() => Promise<T>>,
+): Promise<T> {
+  return withSyncLocalStateLock(async () => {
+    await coordinator.recover();
+    const operation = await stage();
+    return runCoordinatorOperation(() => coordinator.runMutation(operation));
   });
 }
 
@@ -53,4 +50,21 @@ export function recoverPendingSyncLocalApply() {
       throw error;
     }
   });
+}
+
+async function runCoordinatorOperation<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (applyError) {
+    requireLocalStateRecovery(recoverCoordinatorAlreadyLocked);
+    try {
+      await recoverRequiredLocalStateAlreadyLocked();
+    } catch (recoveryError) {
+      throw new AggregateError(
+        [applyError, recoveryError],
+        'Local-state mutation failed and required recovery remains pending',
+      );
+    }
+    throw applyError;
+  }
 }

@@ -16,6 +16,14 @@ export const SYNC_MEMORY_RECORD = {
   lastAccessedAt: 620,
 } as const;
 
+export const SYNC_MEMORY_MISSING_SCOPE_ADDITIVE_RECORD = {
+  ...SYNC_MEMORY_RECORD,
+  id: 78,
+  syncId: 'sync-remote-78',
+  description: '',
+  remoteAdditiveField: { preserve: true },
+} as const;
+
 export const SYNC_SKILL = {
   name: 'sync-contract-skill',
   description: 'Remote Skill contract',

@@ -9,29 +9,60 @@ export const LEGACY_ARTIFACT_RECORD = {
   view: { previewMode: 'none', language: 'text' },
 } as const;
 
-export const LEGAL_LEGACY_ARTIFACT_STORAGE = [LEGACY_ARTIFACT_RECORD] as const;
+export const ADDITIVE_LEGACY_ARTIFACT_RECORD = {
+  ...LEGACY_ARTIFACT_RECORD,
+  id: 'artifact-contract-additive',
+  kind: 'bundle',
+  filename: 'contract.zip',
+  mimeType: 'application/zip',
+  content: 'UEsD',
+  sizeBytes: 4,
+  createdAt: 201,
+  files: [
+    {
+      path: 'src/index.ts',
+      content: 'export const compatible = true;',
+      mimeType: 'text/typescript',
+      additiveFileMetadata: { preserve: true },
+    },
+  ],
+  additiveRecordMetadata: {
+    preserve: true,
+    nested: ['raw', 'shape'],
+  },
+} as const;
 
-export const ARTIFACT_FILTERING_DATA_LOSS_GAP = {
-  name: 'invalid legacy rows are filtered before successful migration removes the original raw key',
-  input: [
+export const LEGAL_LEGACY_ARTIFACT_STORAGE = [
+  LEGACY_ARTIFACT_RECORD,
+  ADDITIVE_LEGACY_ARTIFACT_RECORD,
+] as const;
+
+export const REJECTED_LEGACY_ARTIFACT_STATES = {
+  corruptRow: [
     LEGACY_ARTIFACT_RECORD,
     { id: 'invalid-artifact', kind: 'file', filename: 'missing-content.md' },
   ],
-  currentOutput: [LEGACY_ARTIFACT_RECORD],
-  currentBehavior: 'filter-then-delete-original',
-  target: 'preserve-unread-rows-for-explicit-recovery-after-T3.3',
+  nonArray: {
+    schemaVersion: 2,
+    artifacts: [LEGACY_ARTIFACT_RECORD],
+  },
+  duplicateId: [
+    LEGACY_ARTIFACT_RECORD,
+    {
+      ...LEGACY_ARTIFACT_RECORD,
+      filename: 'duplicate-id.md',
+    },
+  ],
 } as const;
 
-export const ARTIFACT_CURRENT_GAPS = [
-  ARTIFACT_FILTERING_DATA_LOSS_GAP,
-  {
-    name: 'failed IndexedDB migration falls back to legacy storage and is not retried in the session',
-    currentBehavior: 'warn-fallback-memoized-failure',
-    target: 'single-authoritative-store-after-T3.3',
-  },
-  {
-    name: 'recovered IndexedDB can hide still-readable legacy data behind dual storage truths',
-    currentBehavior: 'indexeddb-first-legacy-second',
-    target: 'single-authoritative-store-after-T3.3',
-  },
-] as const;
+export const LEGACY_ARTIFACTS_OVER_RETENTION_LIMIT = Array.from(
+  { length: 51 },
+  (_, index) => ({
+    ...LEGACY_ARTIFACT_RECORD,
+    id: `artifact-contract-${String(index).padStart(2, '0')}`,
+    filename: `contract-${String(index).padStart(2, '0')}.md`,
+    content: `# Persistence contract ${index}`,
+    sizeBytes: 24 + String(index).length,
+    createdAt: 1_000 + index,
+  }),
+);

@@ -52,6 +52,39 @@ describe('sync local apply coordinator', () => {
     expect(journal.events).toEqual(['read', 'write', 'clear']);
   });
 
+  it('reuses the same durable preimage and commit point for a project-memory cascade', async () => {
+    const state = new FakeLocalState();
+    const journal = new FakeJournal();
+    const coordinator = createCoordinator(state, journal);
+
+    await expect(coordinator.runMutation(async () => {
+      state.values.projectContext = 'target:projectContext';
+      state.values.memories = 'target:memories';
+      return 3;
+    })).resolves.toBe(3);
+
+    expect(state.values.projectContext).toBe('target:projectContext');
+    expect(state.values.memories).toBe('target:memories');
+    expect(journal.current).toBeNull();
+    expect(journal.events).toEqual(['read', 'write', 'clear']);
+  });
+
+  it('restores every raw local-state preimage when a journaled cascade fails', async () => {
+    const state = new FakeLocalState();
+    const journal = new FakeJournal();
+    const coordinator = createCoordinator(state, journal);
+
+    await expect(coordinator.runMutation(async () => {
+      state.values.projectContext = 'target:projectContext';
+      state.values.memories = 'target:memories';
+      throw new Error('project Memory delete failed');
+    })).rejects.toThrow('project Memory delete failed');
+
+    expect(state.values).toEqual(beforeValues());
+    expect(state.restoreCalls).toEqual([...SYNC_APPLY_STEP_ORDER].reverse());
+    expect(journal.current).toBeNull();
+  });
+
   for (const step of SYNC_APPLY_STEP_ORDER) {
     for (const mode of ['before', 'after'] as const) {
       it(`restores the exact preimage when ${step} fails ${mode} its write`, async () => {

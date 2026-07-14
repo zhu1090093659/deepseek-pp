@@ -13,7 +13,10 @@ import {
   createChromeStorageSlot,
   createVersionedRepository,
 } from '../persistence/versioned-repository';
-import { deleteMemoriesForProjectAlreadyLocked } from '../memory/store';
+import {
+  assertMemoryRecordsValidAlreadyLocked,
+  deleteMemoriesForProjectAlreadyLocked,
+} from '../memory/store';
 import {
   createEmptyProjectContextState,
   projectContextCodec,
@@ -84,11 +87,15 @@ export async function updateProjectContext(
   });
 }
 
-export async function deleteProjectContextAndMemories(projectId: string): Promise<number> {
-  return withProjectMutation(async (state) => {
+export async function stageDeleteProjectContextAndMemoriesAlreadyLocked(
+  projectId: string,
+): Promise<() => Promise<number>> {
+  const state = await projectContextRepository.readAlreadyLocked();
+  await assertMemoryRecordsValidAlreadyLocked();
+  return async () => {
     await deleteProjectContextState(state, projectId);
     return deleteMemoriesForProjectAlreadyLocked(projectId);
-  });
+  };
 }
 
 async function deleteProjectContextState(

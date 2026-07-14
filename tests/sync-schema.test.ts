@@ -4,6 +4,7 @@ import {
   validateImportedMemory,
   validatePreset,
   validateStoredMemory,
+  validateSyncMemory,
 } from '../core/sync/schema';
 import {
   decodeProjectConversation,
@@ -11,6 +12,11 @@ import {
   decodeProjectContextState,
 } from '../core/project';
 import { decodeSavedItemsState } from '../core/saved-items';
+import {
+  MEMORY_HISTORICAL_EXPORT_RECORD,
+  MEMORY_IMPORT_PREVIEW_RECORD,
+} from './fixtures/persistence-contract/memory';
+import { SYNC_MEMORY_MISSING_SCOPE_ADDITIVE_RECORD } from './fixtures/persistence-contract/sync';
 
 const validMemory = {
   syncId: 'sync-1',
@@ -18,7 +24,7 @@ const validMemory = {
   type: 'topic',
   name: 'Memory',
   content: 'Useful fact',
-  description: 'Memory',
+  description: '',
   tags: ['test'],
   pinned: false,
   createdAt: 1,
@@ -37,9 +43,39 @@ describe('sync schema validators', () => {
       type: 'topic',
       name: 'Memory',
       content: 'Useful fact',
-      description: 'Memory',
+      description: '',
       tags: ['test'],
       pinned: false,
+    });
+  });
+
+  it('accepts preview-style and historical exported memories as import drafts', () => {
+    expect(validateImportedMemory(MEMORY_IMPORT_PREVIEW_RECORD)).toEqual({
+      ...MEMORY_IMPORT_PREVIEW_RECORD,
+      syncId: undefined,
+      scope: 'global',
+      projectId: undefined,
+      tags: [...MEMORY_IMPORT_PREVIEW_RECORD.tags],
+    });
+    expect(validateImportedMemory(MEMORY_HISTORICAL_EXPORT_RECORD)).toEqual({
+      syncId: MEMORY_HISTORICAL_EXPORT_RECORD.syncId,
+      scope: 'global',
+      projectId: undefined,
+      type: MEMORY_HISTORICAL_EXPORT_RECORD.type,
+      name: MEMORY_HISTORICAL_EXPORT_RECORD.name,
+      content: MEMORY_HISTORICAL_EXPORT_RECORD.content,
+      description: '',
+      tags: [...MEMORY_HISTORICAL_EXPORT_RECORD.tags],
+      pinned: MEMORY_HISTORICAL_EXPORT_RECORD.pinned,
+    });
+  });
+
+  it('defaults missing sync scope to global and preserves additive fields', () => {
+    const { id: _id, ...withoutId } = SYNC_MEMORY_MISSING_SCOPE_ADDITIVE_RECORD;
+    expect(validateSyncMemory(SYNC_MEMORY_MISSING_SCOPE_ADDITIVE_RECORD)).toEqual({
+      ...withoutId,
+      scope: 'global',
+      tags: [...SYNC_MEMORY_MISSING_SCOPE_ADDITIVE_RECORD.tags],
     });
   });
 
