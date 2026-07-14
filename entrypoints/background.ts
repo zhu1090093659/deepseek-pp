@@ -53,7 +53,6 @@ import {
   type VersionedOAuthSyncConfig,
 } from '../core/sync/config';
 import {
-  createSyncCommandErrorResponse,
   createSyncOperationCoordinator,
   type SyncDownloadResult,
 } from '../core/sync/operation-coordinator';
@@ -234,7 +233,6 @@ import {
   runAutomation,
   scanDueAutomations,
 } from '../core/automation/scheduler';
-import { validateAutomationSchedule } from '../core/automation/schedule';
 import {
   createChatSession,
   createPowHeadersForPath,
@@ -274,6 +272,7 @@ import {
   type ChatPromptBuildRequest,
 } from './background/chat-runtime-service';
 import { createDeepSeekRuntimeHandlers } from './background/deepseek-runtime-handlers';
+import { createBackgroundRuntimeHandlers } from './background/background-runtime-handlers';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -296,10 +295,9 @@ import type {
   ToolDescriptor,
   ToolExecutionTrigger,
   ToolResult,
-  UsageTurnInput,
 } from '../core/types';
 import type { McpServerConfig } from '../core/mcp/types';
-import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
+import type { AutomationRunnerRequest, AutomationRunnerResult } from '../core/automation/types';
 import type { AutomationExecutionContext } from '../core/automation/execution';
 import type { ConversationExportProgress } from '../core/export/types';
 
@@ -602,8 +600,32 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         cancelledMessage: () => backgroundT('background.export.cancelled'),
       },
     }),
+    ...createBackgroundRuntimeHandlers({
+      usage: {
+        recordUsageTurn,
+        getUsageSummary,
+        clearUsageRecords,
+      },
+      sync: {
+        coordinator: syncOperationCoordinator,
+        notifyDownloadedState: notifyDownloadedSyncState,
+      },
+      automation: {
+        getAllAutomations,
+        getAutomationRuns,
+        createAutomation,
+        updateAutomation,
+        setAutomationStatus,
+        deleteAutomation,
+        refreshAutomationNextRunAt,
+        cancelActiveAutomationRun,
+        runAutomationNow,
+        broadcastAutomationUpdate,
+        broadcastAutomationRunsUpdate,
+      },
+      refreshScenarioMenus: createContextMenus,
+    }),
   ],
-  handleLegacy: handleLegacyMessage,
 });
 
 function backgroundT(key: LocaleMessageKey, params?: MessageParams): string {
@@ -879,109 +901,6 @@ async function handleMessage(
   context: RuntimeMessageContext,
 ) {
   return runtimeCommandRegistry.dispatch(message, context);
-}
-
-async function handleLegacyMessage(
-  message: { type: string; payload?: unknown },
-  context: RuntimeMessageContext,
-) {
-  switch (message.type) {
-    case 'RECORD_USAGE_TURN':
-      return recordUsageTurn(message.payload as UsageTurnInput);
-
-    case 'GET_USAGE_SUMMARY': {
-      const { rangeDays } = (message.payload ?? {}) as { rangeDays?: unknown };
-      return getUsageSummary(rangeDays);
-    }
-
-    case 'CLEAR_USAGE_STATS':
-      await clearUsageRecords();
-      return { ok: true };
-
-    case 'GET_SYNC_CONFIG':
-      return syncOperationCoordinator.getConfig();
-
-    case 'SAVE_SYNC_CONFIG': {
-      return handleSyncCommand(() => syncOperationCoordinator.save(message.payload));
-    }
-
-    case 'WEBDAV_TEST': {
-      return handleSyncCommand(() => syncOperationCoordinator.test(message.payload));
-    }
-
-    case 'SYNC_AUTHORIZE': {
-      return handleSyncCommand(() => syncOperationCoordinator.authorize(message.payload));
-    }
-
-    case 'WEBDAV_UPLOAD_LOCAL': {
-      return handleSyncCommand(() => syncOperationCoordinator.upload(message.payload));
-    }
-
-    case 'WEBDAV_DOWNLOAD_REMOTE': {
-      return handleSyncCommand(() => syncOperationCoordinator.download(
-        message.payload,
-        (result) => notifyDownloadedSyncState(result, context),
-      ));
-    }
-
-    case 'GET_AUTOMATIONS':
-      return getAllAutomations();
-
-    case 'GET_AUTOMATION_RUNS': {
-      const { automationId, limit } = message.payload as { automationId: string; limit?: number };
-      return getAutomationRuns({ automationId, limit });
-    }
-
-    case 'CREATE_AUTOMATION': {
-      const input = message.payload as AutomationCreateInput;
-      validateAutomationInput(input);
-      const automation = await createAutomation(input);
-      const refreshed = await refreshAutomationNextRunAt(automation.id);
-      await broadcastAutomationUpdate(context.tabId);
-      return refreshed ?? automation;
-    }
-
-    case 'UPDATE_AUTOMATION': {
-      const { id, patch } = message.payload as { id: string; patch: AutomationUpdateInput };
-      validateAutomationPatch(patch);
-      const automation = await updateAutomation(id, patch);
-      if (!automation) return { ok: false, error: 'automation_not_found' };
-      const refreshed = await refreshAutomationNextRunAt(id);
-      await broadcastAutomationUpdate(context.tabId);
-      return refreshed ?? automation;
-    }
-
-    case 'SET_AUTOMATION_STATUS': {
-      const { id, status } = message.payload as { id: string; status: AutomationStatus };
-      if (!isAutomationStatus(status)) return { ok: false, error: 'invalid_automation_status' };
-      const automation = await setAutomationStatus(id, status);
-      if (!automation) return { ok: false, error: 'automation_not_found' };
-      const refreshed = await refreshAutomationNextRunAt(id);
-      await broadcastAutomationUpdate(context.tabId);
-      return refreshed ?? automation;
-    }
-
-    case 'DELETE_AUTOMATION': {
-      const { id } = message.payload as { id: string };
-      cancelActiveAutomationRun(id);
-      await deleteAutomation(id);
-      await broadcastAutomationUpdate(context.tabId);
-      await broadcastAutomationRunsUpdate(context.tabId);
-      return { ok: true };
-    }
-
-    case 'RUN_AUTOMATION_NOW': {
-      const { id } = message.payload as { id: string };
-      return runAutomationNow(id, context.tabId);
-    }
-
-    case 'SCENARIOS_UPDATED':
-      await createContextMenus();
-      return { ok: true };
-
-    default:
-      throw new Error(`Legacy runtime command owner is missing: ${message.type}`);
-  }
 }
 
 async function executeLocalSkillImporterToolCall(call: ToolCall): Promise<ToolResult> {
@@ -1376,7 +1295,7 @@ async function scanDueAutomationsFromWake() {
 
 async function runAutomationNow(id: string, excludeTabId?: number) {
   const automation = await getAutomationById(id);
-  if (!automation) return { ok: false, error: 'automation_not_found' };
+  if (!automation) return { ok: false as const, error: 'automation_not_found' };
 
   const run = await runAutomation({
     automationId: id,
@@ -1389,7 +1308,7 @@ async function runAutomationNow(id: string, excludeTabId?: number) {
   await broadcastAutomationRunsUpdate(excludeTabId);
   await broadcastToolCallHistoryUpdate(excludeTabId);
 
-  return run ?? { ok: false, error: 'automation_already_running' };
+  return run ?? { ok: false as const, error: 'automation_already_running' };
 }
 
 async function executeAutomationWithContext(
@@ -1448,49 +1367,6 @@ async function executeAutomationWithContext(
     clientHeaders,
     execution,
   });
-}
-
-function validateAutomationInput(input: AutomationCreateInput) {
-  if (!input || typeof input !== 'object') throw new Error('Invalid automation input');
-  validateNonEmptyString(input.name, 'Automation name');
-  validateNonEmptyString(input.prompt, 'Automation prompt');
-  validateAutomationScheduleInput(input.schedule);
-}
-
-function validateAutomationPatch(patch: AutomationUpdateInput) {
-  if (!patch || typeof patch !== 'object') throw new Error('Invalid automation patch');
-  if (patch.name !== undefined) validateNonEmptyString(patch.name, 'Automation name');
-  if (patch.prompt !== undefined) validateNonEmptyString(patch.prompt, 'Automation prompt');
-  if (patch.status !== undefined && !isAutomationStatus(patch.status)) {
-    throw new Error('Invalid automation status');
-  }
-  if (patch.schedule !== undefined) validateAutomationScheduleInput(patch.schedule);
-}
-
-function validateAutomationScheduleInput(schedule: AutomationCreateInput['schedule']) {
-  if (!schedule || typeof schedule !== 'object') throw new Error('Invalid automation schedule');
-  const result = validateAutomationSchedule(schedule);
-  if (!result.ok) throw new Error(result.error.message);
-}
-
-function validateNonEmptyString(value: unknown, label: string) {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${label} is required`);
-  }
-}
-
-function isAutomationStatus(status: unknown): status is AutomationStatus {
-  return status === 'active' || status === 'paused' || status === 'archived';
-}
-
-async function handleSyncCommand<T>(operation: () => Promise<T>): Promise<T | ReturnType<typeof createSyncCommandErrorResponse>> {
-  try {
-    return await operation();
-  } catch (error) {
-    const response = createSyncCommandErrorResponse(error);
-    if (response) return response;
-    throw error;
-  }
 }
 
 async function testSyncTarget(config: SyncConfig): Promise<void> {

@@ -6,9 +6,9 @@ export const RUNTIME_TOPOLOGY = {
   declaredOnly: 2,
   readsPayload: 79,
   ignoresPayload: 42,
-  directPayloadCasts: 7,
-  decodedPayloads: 66,
-  delegatedPayloads: 6,
+  directPayloadCasts: 0,
+  decodedPayloads: 79,
+  delegatedPayloads: 0,
 } as const;
 
 export const RUNTIME_REQUEST_FIXTURES = [
@@ -158,13 +158,7 @@ export const RUNTIME_ERROR_FIXTURES = {
   },
 } as const;
 
-export const RUNTIME_CURRENT_GAPS = [
-  {
-    name: 'direct payload casts do not decode external input',
-    current: { type: 'GET_AUTOMATION_RUNS', payload: {} },
-    target: 'decoded-command-contract-during-R4.3-R4.4',
-  },
-] as const;
+export const RUNTIME_CURRENT_GAPS = [] as const;
 
 export const RUNTIME_RESOLVED_ROUTING_CASES = [
   {

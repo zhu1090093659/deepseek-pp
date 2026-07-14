@@ -454,7 +454,7 @@ export function createChatRuntimeService(
   };
 
   const submitPrompt: ChatRuntimeService['submitPrompt'] = async (request, excludeTabId) => {
-    if (wakeReconcileOperation) await wakeReconcileOperation;
+    await ensureWakeReconciled();
     if (activeTurn || pendingAdmission || resetOperation) {
       return { ok: false, error: 'chat_already_running' };
     }
@@ -502,7 +502,7 @@ export function createChatRuntimeService(
     const enabled = await dependencies.getChatEnabled();
     assertSignalActive(controller.signal);
     if (!enabled) return { ok: false, error: 'chat_disabled' };
-    const materialized = materializeDeepSeekImageUpload(request.payload);
+    const materialized = materializeDeepSeekImageUpload(request);
     assertSignalActive(controller.signal);
     const headers = await dependencies.loadClientHeaders(excludeTabId);
     assertSignalActive(controller.signal);
@@ -521,7 +521,7 @@ export function createChatRuntimeService(
   };
 
   const uploadImage: ChatRuntimeService['uploadImage'] = async (request, excludeTabId) => {
-    if (wakeReconcileOperation) await wakeReconcileOperation;
+    await ensureWakeReconciled();
     if (resetOperation) return { ok: false, error: 'chat_already_running' };
 
     const entry: ActiveChatUpload = {
@@ -566,7 +566,7 @@ export function createChatRuntimeService(
 
   const resetSession = async (): Promise<void> => {
     const generationBeforeRecovery = generation;
-    if (wakeReconcileOperation) await wakeReconcileOperation;
+    await ensureWakeReconciled();
     if (generation !== generationBeforeRecovery) return;
     await beginSessionReset();
   };
@@ -592,6 +592,11 @@ export function createChatRuntimeService(
     });
     return wakeReconcileOperation;
   };
+
+  async function ensureWakeReconciled(): Promise<void> {
+    if (wakeReconciled) return;
+    await reconcileInterruptedOnWake();
+  }
 
   return Object.freeze({
     submitPrompt,

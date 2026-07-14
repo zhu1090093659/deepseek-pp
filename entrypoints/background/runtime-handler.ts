@@ -2,6 +2,11 @@ import type {
   RuntimeMessageContext,
 } from '../../core/messaging/runtime-boundary';
 import {
+  decodeBackgroundRuntimePayload,
+  type BackgroundRuntimeDecodedPayload,
+  type BackgroundRuntimePayloadCommandType,
+} from '../../core/messaging/background-runtime-request-codec';
+import {
   decodeDeepSeekRuntimePayload,
   type DeepSeekRuntimeDecodedPayload,
   type DeepSeekRuntimePayloadCommandType,
@@ -28,6 +33,26 @@ type MaybePromise<T> = T | Promise<T>;
 type PersistenceTypedCommandType = PersistencePayloadCommandType & TypedRuntimeCommandType;
 type ToolTypedCommandType = ToolRuntimePayloadCommandType & TypedRuntimeCommandType;
 type DeepSeekTypedCommandType = DeepSeekRuntimePayloadCommandType & TypedRuntimeCommandType;
+type BackgroundTypedCommandType = BackgroundRuntimePayloadCommandType & TypedRuntimeCommandType;
+
+export function defineBackgroundPayloadRuntimeCommandHandler<
+  TType extends BackgroundTypedCommandType,
+>(
+  type: TType,
+  handle: (
+    payload: BackgroundRuntimeDecodedPayload<TType>,
+    context: RuntimeMessageContext,
+  ) => MaybePromise<TypedRuntimeCommandResponse<TType>>,
+): RuntimeCommandHandler<TType> {
+  return defineRuntimeCommandHandler<TType, BackgroundRuntimeDecodedPayload<TType>>({
+    type,
+    decode(message) {
+      const payload = Object.hasOwn(message, 'payload') ? message.payload : undefined;
+      return decodeBackgroundRuntimePayload(type, payload);
+    },
+    handle,
+  });
+}
 
 export function defineDeepSeekPayloadRuntimeCommandHandler<
   TType extends DeepSeekTypedCommandType,

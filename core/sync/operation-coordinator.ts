@@ -4,7 +4,6 @@ import {
   SyncConfigCommitIndeterminateError,
   SyncConfigConflictError,
   createSyncCommandTarget,
-  decodeSyncCommandTarget,
   type SyncConfigStore,
   type VersionedOAuthSyncConfig,
   type VersionedSyncConfig,
@@ -27,12 +26,12 @@ export interface SyncOperationEffects {
 
 export interface SyncOperationCoordinator {
   getConfig(): Promise<VersionedSyncConfig | null>;
-  save(payload: unknown): Promise<{ ok: true; revision: number }>;
-  test(payload: unknown): Promise<{ ok: true; revision: number }>;
-  authorize(payload: unknown): Promise<{ ok: true; refreshToken: string; revision: number }>;
-  upload(payload: unknown): Promise<{ ok: true; lastSyncAt: number; counts: SyncCounts; revision: number }>;
+  save(target: SyncCommandTarget): Promise<{ ok: true; revision: number }>;
+  test(target: SyncCommandTarget): Promise<{ ok: true; revision: number }>;
+  authorize(target: SyncCommandTarget): Promise<{ ok: true; refreshToken: string; revision: number }>;
+  upload(target: SyncCommandTarget): Promise<{ ok: true; lastSyncAt: number; counts: SyncCounts; revision: number }>;
   download(
-    payload: unknown,
+    target: SyncCommandTarget,
     notifyCommitted?: (result: SyncDownloadResult) => Promise<void>,
   ): Promise<{ ok: true; lastSyncAt: number; counts: SyncCounts; revision: number }>;
 }
@@ -115,44 +114,44 @@ export function createSyncOperationCoordinator(
 
   return Object.freeze({
     getConfig: () => operations.run(async () => (await store.read())?.config ?? null),
-    save(payload: unknown) {
-      const target = decodeSyncCommandTarget(payload);
+    save(target: SyncCommandTarget) {
+      const confirmedTarget = snapshotSyncCommandTarget(target);
       return operations.run(async () => {
-        const stored = await store.replace(target);
+        const stored = await store.replace(confirmedTarget);
         return { ok: true as const, revision: stored.revision };
       });
     },
-    test(payload: unknown) {
-      const target = decodeSyncCommandTarget(payload);
-      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
+    test(target: SyncCommandTarget) {
+      const confirmedTarget = snapshotSyncCommandTarget(target);
+      return operations.run(() => runAfterConfigCommit(confirmedTarget, async (config, revision) => {
         await effects.test(config);
         return { ok: true as const, revision };
       }));
     },
-    authorize(payload: unknown) {
-      const target = decodeSyncCommandTarget(payload);
+    authorize(target: SyncCommandTarget) {
+      const confirmedTarget = snapshotSyncCommandTarget(target);
       return operations.run(async () => {
-        await store.assertExpectedRevision(target.expectedRevision);
-        if (target.config.provider === 'webdav') {
+        await store.assertExpectedRevision(confirmedTarget.expectedRevision);
+        if (confirmedTarget.config.provider === 'webdav') {
           throw new Error(
             effects.authorizationNotRequiredMessage?.()
               ?? 'WebDAV sync does not require OAuth authorization',
           );
         }
         const refreshToken = await effects.authorize(
-          target.config as VersionedOAuthSyncConfig,
+          confirmedTarget.config as VersionedOAuthSyncConfig,
         );
         const authorizedTarget = createSyncCommandTarget(
-          { ...target.config, refreshToken },
-          target.expectedRevision,
+          { ...confirmedTarget.config, refreshToken },
+          confirmedTarget.expectedRevision,
         );
         const stored = await persistAfterEffect(() => store.replace(authorizedTarget));
         return { ok: true as const, refreshToken, revision: stored.revision };
       });
     },
-    upload(payload: unknown) {
-      const target = decodeSyncCommandTarget(payload);
-      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
+    upload(target: SyncCommandTarget) {
+      const confirmedTarget = snapshotSyncCommandTarget(target);
+      return operations.run(() => runAfterConfigCommit(confirmedTarget, async (config, revision) => {
         const counts = await effects.upload(config);
         const lastSyncAt = effects.now?.() ?? Date.now();
         const updated = await updateLastSyncAfterEffect(revision, lastSyncAt);
@@ -160,11 +159,11 @@ export function createSyncOperationCoordinator(
       }));
     },
     download(
-      payload: unknown,
+      target: SyncCommandTarget,
       notifyCommitted?: (result: SyncDownloadResult) => Promise<void>,
     ) {
-      const target = decodeSyncCommandTarget(payload);
-      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
+      const confirmedTarget = snapshotSyncCommandTarget(target);
+      return operations.run(() => runAfterConfigCommit(confirmedTarget, async (config, revision) => {
         const result = await effects.download(config);
         const lastSyncAt = effects.now?.() ?? Date.now();
         const updated = await updateLastSyncAfterEffect(revision, lastSyncAt);
@@ -182,6 +181,13 @@ export function createSyncOperationCoordinator(
       }));
     },
   });
+}
+
+function snapshotSyncCommandTarget(target: SyncCommandTarget): SyncCommandTarget {
+  return {
+    config: { ...target.config },
+    expectedRevision: target.expectedRevision,
+  };
 }
 
 export function createSyncCommandErrorResponse(error: unknown): SyncCommandErrorResponse | null {

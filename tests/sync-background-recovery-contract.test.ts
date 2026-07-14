@@ -7,6 +7,7 @@ const settingsState = readFileSync(
   'utf8',
 );
 const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');
+const syncHandlers = readFileSync('entrypoints/background/sync-runtime-handlers.ts', 'utf8');
 const localSkillMerge = readFileSync('core/sync/local-skill-merge.ts', 'utf8');
 const memoryHandlers = readFileSync('entrypoints/background/memory-handlers.ts', 'utf8');
 const projectHandlers = readFileSync('entrypoints/background/project-handlers.ts', 'utf8');
@@ -41,10 +42,6 @@ describe('background sync recovery integration', () => {
   });
 
   it('fully stages the remote snapshot before the journaled local apply commit point', () => {
-    const downloadCase = background.slice(
-      background.indexOf("case 'WEBDAV_DOWNLOAD_REMOTE':"),
-      background.indexOf("case 'GET_AUTOMATIONS':"),
-    );
     const downloadEffect = background.slice(
       background.indexOf('async function downloadRemoteSyncTarget'),
       background.indexOf('async function notifyDownloadedSyncState'),
@@ -58,8 +55,9 @@ describe('background sync recovery integration', () => {
       syncCoordinator.indexOf('return Object.freeze({'),
     );
 
-    expect(downloadCase).toContain('syncOperationCoordinator.download(');
-    expect(downloadCase).toContain('message.payload');
+    expect(syncHandlers).toContain("'WEBDAV_DOWNLOAD_REMOTE'");
+    expect(syncHandlers).toContain('dependencies.coordinator.download(');
+    expect(syncHandlers).toContain('target,');
     expect(downloadEffect).toContain('const remoteSnapshot = await getRemoteSyncDataSnapshot(backend)');
     expect(downloadEffect).toContain(
       '() => mergeSyncSnapshotWithLocalImports(remoteSnapshot)',
@@ -96,7 +94,7 @@ describe('background sync recovery integration', () => {
   it('routes Skill/Source imports and deletes plus Preset deletion through the same recovery journal', () => {
     const persistenceComposition = background.slice(
       background.indexOf('...createPersistenceRuntimeHandlers({'),
-      background.indexOf('handleLegacy: handleLegacyMessage'),
+      background.indexOf('...createToolRuntimeHandlers({'),
     );
 
     expect(persistenceComposition).toContain('deleteSkill: persistenceMutations.deleteSkill');

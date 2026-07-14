@@ -11,6 +11,7 @@ const requiredFiles = [
   'core/automation/store.ts',
   'core/automation/scheduler.ts',
   'core/automation/runner.ts',
+  'core/automation/runtime-request-codec.ts',
   'core/inline-agent/types.ts',
   'core/inline-agent/loop.ts',
   'core/inline-agent/prompt.ts',
@@ -26,6 +27,7 @@ const requiredFiles = [
   'core/shell/contracts.ts',
   'core/shell/policy.ts',
   'entrypoints/sidepanel/pages/AutomationPage.tsx',
+  'entrypoints/background/automation-runtime-handlers.ts',
   'scripts/shell-mcp-host.mjs',
   'scripts/install-shell-host.mjs',
   'packages/shell-host/package.json',
@@ -62,8 +64,11 @@ assertContains('wxt.config.ts', "'alarms'");
 assertContains('entrypoints/background.ts', 'chrome.alarms.create');
 assertContains('entrypoints/background.ts', 'chrome.alarms.onAlarm.addListener');
 assertContains('entrypoints/background.ts', 'scanDueAutomations');
-assertContains('entrypoints/background.ts', "case 'CREATE_AUTOMATION'");
-assertContains('entrypoints/background.ts', "case 'RUN_AUTOMATION_NOW'");
+assertContains('entrypoints/background.ts', 'createBackgroundRuntimeHandlers');
+assertContains('entrypoints/background/automation-runtime-handlers.ts', "'CREATE_AUTOMATION'");
+assertContains('entrypoints/background/automation-runtime-handlers.ts', "'RUN_AUTOMATION_NOW'");
+assertNotContains('entrypoints/background.ts', "case 'CREATE_AUTOMATION'");
+assertNotContains('entrypoints/background.ts', "case 'RUN_AUTOMATION_NOW'");
 assertContains('entrypoints/content.ts', 'runInlineAgentLoop');
 assertContains('entrypoints/content.ts', 'const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
 assertContains('entrypoints/content.ts', 'restorePersistedInlineAgentTraces');

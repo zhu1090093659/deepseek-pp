@@ -14,7 +14,13 @@ import { isPlainRuntimeRecord } from './runtime-boundary';
 type DeepSeekRuntimeCommandType = keyof DeepSeekRuntimeCommandContracts;
 
 export interface EncodedDeepSeekImageUploadRequest {
-  payload: unknown;
+  isPlainObject: boolean;
+  dataUrl: unknown;
+  name: unknown;
+  mimeType: unknown;
+  alternateMimeType: unknown;
+  sizeBytes: unknown;
+  alternateSizeBytes: unknown;
 }
 
 export interface MaterializedDeepSeekImageUploadRequest {
@@ -102,7 +108,7 @@ export const DEEPSEEK_RUNTIME_PAYLOAD_DECODERS: DeepSeekRuntimePayloadDecoderMap
   UPLOAD_DEEPSEEK_IMAGE(value) {
     // Preserve the released chat-disabled precedence and avoid allocating the
     // decoded image body until the feature gate has passed in the handler.
-    return { payload: value };
+    return stageDeepSeekImageUpload(value);
   },
   SAVE_OFFICIAL_API_CHAT_CONFIG(value) {
     return normalizeOfficialApiChatConfig(value);
@@ -135,22 +141,24 @@ export function decodeDeepSeekRuntimePayload<
 }
 
 export function materializeDeepSeekImageUpload(
-  value: unknown,
+  staged: EncodedDeepSeekImageUploadRequest,
 ): MaterializedDeepSeekImageUploadRequest {
-  const payload = recordValue(value, 'UPLOAD_DEEPSEEK_IMAGE.payload');
-  const dataUrl = typeof payload.dataUrl === 'string' ? payload.dataUrl : '';
-  const name = typeof payload.name === 'string' && payload.name.trim()
-    ? payload.name.trim()
+  if (!staged.isPlainObject) {
+    throw new Error('UPLOAD_DEEPSEEK_IMAGE.payload must be a plain object.');
+  }
+  const dataUrl = typeof staged.dataUrl === 'string' ? staged.dataUrl : '';
+  const name = typeof staged.name === 'string' && staged.name.trim()
+    ? staged.name.trim()
     : 'image';
-  const mimeType = typeof payload.mimeType === 'string' && payload.mimeType.trim()
-    ? payload.mimeType.trim()
-    : typeof payload.type === 'string' && payload.type.trim()
-      ? payload.type.trim()
+  const mimeType = typeof staged.mimeType === 'string' && staged.mimeType.trim()
+    ? staged.mimeType.trim()
+    : typeof staged.alternateMimeType === 'string' && staged.alternateMimeType.trim()
+      ? staged.alternateMimeType.trim()
       : '';
-  const sizeBytes = typeof payload.sizeBytes === 'number' && Number.isFinite(payload.sizeBytes)
-    ? payload.sizeBytes
-    : typeof payload.size === 'number' && Number.isFinite(payload.size)
-      ? payload.size
+  const sizeBytes = typeof staged.sizeBytes === 'number' && Number.isFinite(staged.sizeBytes)
+    ? staged.sizeBytes
+    : typeof staged.alternateSizeBytes === 'number' && Number.isFinite(staged.alternateSizeBytes)
+      ? staged.alternateSizeBytes
       : 0;
 
   if (!dataUrl.startsWith('data:')) {
@@ -207,6 +215,29 @@ export function materializeDeepSeekImageUpload(
     name,
     mimeType,
     sizeBytes,
+  };
+}
+
+export function stageDeepSeekImageUpload(value: unknown): EncodedDeepSeekImageUploadRequest {
+  if (!isPlainRuntimeRecord(value)) {
+    return {
+      isPlainObject: false,
+      dataUrl: undefined,
+      name: undefined,
+      mimeType: undefined,
+      alternateMimeType: undefined,
+      sizeBytes: undefined,
+      alternateSizeBytes: undefined,
+    };
+  }
+  return {
+    isPlainObject: true,
+    dataUrl: value.dataUrl,
+    name: value.name,
+    mimeType: value.mimeType,
+    alternateMimeType: value.type,
+    sizeBytes: value.sizeBytes,
+    alternateSizeBytes: value.size,
   };
 }
 

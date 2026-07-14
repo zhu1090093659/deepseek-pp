@@ -119,7 +119,6 @@ function createProjectDeletionRegistry(
   ));
   return createRuntimeCommandRegistry({
     typedHandlers,
-    handleLegacy: async () => null,
   });
 }
 

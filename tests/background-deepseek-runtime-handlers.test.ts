@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEEPSEEK_RUNTIME_PAYLOAD_DECODERS,
+  stageDeepSeekImageUpload,
 } from '../core/messaging/deepseek-runtime-request-codec';
 import type { RuntimeMessageContext } from '../core/messaging/runtime-boundary';
 import {
@@ -328,6 +329,21 @@ describe('interactive chat coordinator', () => {
     await waitForCall(dependencies.submitWebPrompt);
   });
 
+  it('retries wake reconciliation after a transient read failure', async () => {
+    const dependencies = createChatDependencies();
+    vi.mocked(dependencies.reconcileInterruptedChatLoop)
+      .mockRejectedValueOnce(new Error('session storage unavailable'))
+      .mockResolvedValueOnce(null);
+    const service = createChatRuntimeService(dependencies);
+
+    await expect(service.reconcileInterruptedOnWake())
+      .rejects.toThrow('session storage unavailable');
+    await expect(service.submitPrompt({ text: 'retry', refFileIds: [] }, 17))
+      .resolves.toEqual({ ok: true });
+    expect(dependencies.reconcileInterruptedChatLoop).toHaveBeenCalledTimes(2);
+    await waitForCall(dependencies.submitWebPrompt);
+  });
+
   it('reports a provider AbortError when the turn signal remains active', async () => {
     const dependencies = createChatDependencies();
     vi.mocked(dependencies.submitWebPrompt)
@@ -416,14 +432,12 @@ describe('interactive chat coordinator', () => {
       });
     });
     const service = createChatRuntimeService(dependencies);
-    const upload = service.uploadImage({
-      payload: {
-        dataUrl: 'data:image/png;base64,AQID',
-        name: 'image.png',
-        mimeType: 'image/png',
-        sizeBytes: 3,
-      },
-    }, 17);
+    const upload = service.uploadImage(stageDeepSeekImageUpload({
+      dataUrl: 'data:image/png;base64,AQID',
+      name: 'image.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+    }), 17);
     await waitForCall(dependencies.uploadFile);
 
     await service.resetSession();
@@ -436,14 +450,12 @@ describe('interactive chat coordinator', () => {
     const dependencies = createChatDependencies();
     vi.mocked(dependencies.getChatEnabled).mockReturnValue(gate.promise);
     const service = createChatRuntimeService(dependencies);
-    const upload = service.uploadImage({
-      payload: {
-        dataUrl: 'data:image/png;base64,AQID',
-        name: 'image.png',
-        mimeType: 'image/png',
-        sizeBytes: 3,
-      },
-    }, 17);
+    const upload = service.uploadImage(stageDeepSeekImageUpload({
+      dataUrl: 'data:image/png;base64,AQID',
+      name: 'image.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+    }), 17);
     await waitForCall(dependencies.getChatEnabled);
 
     const reset = service.resetSession();

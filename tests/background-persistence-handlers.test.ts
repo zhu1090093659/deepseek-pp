@@ -166,7 +166,6 @@ describe('R4.1 persistence runtime handler ownership', () => {
         definePayloadlessRuntimeCommandHandler('WHATS_NEW_DISMISSED', () => ({ ok: true as const })),
         ...handlers,
       ]),
-      handleLegacy: async () => null,
     });
     await expect(registry.dispatch({ type: 'GET_MEMORIES' }, context)).resolves.toEqual([memory]);
   });

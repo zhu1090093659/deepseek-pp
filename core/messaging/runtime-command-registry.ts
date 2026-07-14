@@ -11,6 +11,7 @@ import {
 import type { PersistenceRuntimeCommandContracts } from './persistence-runtime-contracts';
 import type { ToolRuntimeCommandContracts } from './tool-runtime-contracts';
 import type { DeepSeekRuntimeCommandContracts } from './deepseek-runtime-contracts';
+import type { BackgroundRuntimeCommandContracts } from './background-runtime-contracts';
 
 export {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
@@ -30,7 +31,8 @@ export const RUNTIME_COMMAND_ERROR_CODES = {
 export interface TypedRuntimeCommandContracts
   extends PersistenceRuntimeCommandContracts,
   ToolRuntimeCommandContracts,
-  DeepSeekRuntimeCommandContracts {
+  DeepSeekRuntimeCommandContracts,
+  BackgroundRuntimeCommandContracts {
   GET_CONFIG: {
     request: { type: 'GET_CONFIG' };
     response: { version: string };
@@ -64,11 +66,6 @@ export interface RuntimeCommandRegistry {
     context: RuntimeMessageContext,
   ): Promise<unknown>;
 }
-
-export type LegacyRuntimeCommandHandler = (
-  message: RuntimeMessageEnvelope,
-  context: RuntimeMessageContext,
-) => Promise<unknown>;
 
 export function defineRuntimeCommandHandler<
   TType extends TypedRuntimeCommandType,
@@ -112,8 +109,10 @@ export function definePayloadlessRuntimeCommandHandler<
 
 export function createRuntimeCommandRegistry(options: {
   typedHandlers: readonly RuntimeCommandHandler[];
-  handleLegacy: LegacyRuntimeCommandHandler;
 }): RuntimeCommandRegistry {
+  if (LEGACY_RUNTIME_COMMAND_TYPES.length > 0) {
+    throw new Error('Legacy runtime command owners remain after registry closure.');
+  }
   const handlersByType = new Map<string, RuntimeCommandHandler>();
   for (const handler of options.typedHandlers) {
     if (handlersByType.has(handler.type)) {
@@ -129,18 +128,12 @@ export function createRuntimeCommandRegistry(options: {
       throw new Error(`Missing typed runtime command handler: ${type}`);
     }
   }
-  const types = Object.freeze([
-    ...TYPED_RUNTIME_COMMAND_TYPES,
-    ...LEGACY_RUNTIME_COMMAND_TYPES,
-  ]);
+  const types = Object.freeze([...TYPED_RUNTIME_COMMAND_TYPES]);
 
   return Object.freeze({
     types,
     async dispatch(message: RuntimeMessageEnvelope, context: RuntimeMessageContext) {
       const owner = getRuntimeCommandOwner(message.type);
-      if (owner === 'legacy-switch') {
-        return options.handleLegacy(message, context);
-      }
       if (owner === 'typed-handler') {
         return handlersByType.get(message.type)!.handle(message, context);
       }
