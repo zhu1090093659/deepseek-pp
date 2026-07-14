@@ -17,6 +17,7 @@ let filtered: SkillPopupItem[] = [];
 let activeIdx = 0;
 let textarea: HTMLTextAreaElement | null = null;
 let copy: SkillPopupCopy = DEFAULT_COPY;
+let textareaObserver: MutationObserver | null = null;
 
 let initialized = false;
 
@@ -32,14 +33,35 @@ export function initSkillPopup(initialSkills: SkillPopupItem[], nextCopy: Partia
   document.addEventListener('mousedown', onClickOutside);
 }
 
+export function stopSkillPopup() {
+  if (!initialized) return;
+  initialized = false;
+  textareaObserver?.disconnect();
+  textareaObserver = null;
+  textarea?.removeEventListener('input', onInput);
+  textarea = null;
+  document.removeEventListener('keydown', onKeydown, true);
+  document.removeEventListener('mousedown', onClickOutside);
+  popupEl?.remove();
+  popupEl = null;
+  document.getElementById('dpp-skill-popup-css')?.remove();
+  skills = [];
+  filtered = [];
+  activeIdx = 0;
+  copy = DEFAULT_COPY;
+}
+
 function watchTextarea() {
   tryAttach();
-  new MutationObserver(() => {
+  textareaObserver?.disconnect();
+  textareaObserver = new MutationObserver(() => {
     if (!textarea || !document.contains(textarea)) {
+      textarea?.removeEventListener('input', onInput);
       textarea = null;
       tryAttach();
     }
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  textareaObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function tryAttach() {

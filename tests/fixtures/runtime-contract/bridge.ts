@@ -229,6 +229,11 @@ export const LEGAL_BRIDGE_CASES = {
     expectedSource: MAIN,
     message: { source: MAIN, type: 'HEADERS_CAPTURED', headers: null },
   }],
+  NAVIGATION_CHANGED: [{
+    name: 'main reports a document navigation',
+    expectedSource: MAIN,
+    message: { source: MAIN, type: 'NAVIGATION_CHANGED' },
+  }],
   DPP_BRIDGE_READY: [{
     name: 'main acknowledges the transferred port',
     expectedSource: MAIN,
@@ -356,6 +361,12 @@ export const MALFORMED_BRIDGE_PAYLOAD_CASES = {
     name: 'captured headers event has a non-record headers field',
     expectedSource: MAIN,
     message: { source: MAIN, type: 'HEADERS_CAPTURED', headers: ['Authorization'] },
+    target: 'reject-at-T2.1-boundary',
+  }],
+  NAVIGATION_CHANGED: [{
+    name: 'navigation event travels in the wrong direction',
+    expectedSource: CONTENT,
+    message: { source: CONTENT, type: 'NAVIGATION_CHANGED' },
     target: 'reject-at-T2.1-boundary',
   }],
   DPP_BRIDGE_READY: [{

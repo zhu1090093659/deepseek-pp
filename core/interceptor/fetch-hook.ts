@@ -37,8 +37,10 @@ const INITIAL_HOOK_STATE_WAIT_MS = 1_500;
 const DEFAULT_APP_VERSION = '2.0.0';
 const DEEPSEEK_CLIENT_PLATFORM = 'web';
 const RESPONSE_TOOL_FALLBACK_PARSE_MAX_CHARS = 120_000;
+const FETCH_HOOK_MARKER = Symbol.for('deepseek-pp.fetch-hook-installed');
+const XHR_HOOK_MARKER = Symbol.for('deepseek-pp.xhr-hook-installed');
+const IDB_HOOK_MARKER = Symbol.for('deepseek-pp.idb-hook-installed');
 
-let originalFetch: typeof window.fetch;
 let initialHookStateWaitComplete = false;
 let initialHookStateReadyResolved = false;
 let resolveInitialHookState: (() => void) | null = null;
@@ -60,19 +62,23 @@ interface HookState {
   onMemoriesUsed: (ids: number[]) => void;
 }
 
-let hookState: HookState = {
-  toolDescriptors: [],
-  onRequestBody: async () => null,
-  onHeadersCaptured: () => {},
-  onToolCallStarted: () => {},
-  onToolCall: () => {},
-  onToolCallChunk: () => {},
-  onToolCallsRestored: () => {},
-  onResponseTokenSpeed: () => {},
-  onResponseComplete: () => {},
-  onRequestTerminal: () => {},
-  onMemoriesUsed: () => {},
-};
+function createEmptyHookState(): HookState {
+  return {
+    toolDescriptors: [],
+    onRequestBody: async () => null,
+    onHeadersCaptured: () => {},
+    onToolCallStarted: () => {},
+    onToolCall: () => {},
+    onToolCallChunk: () => {},
+    onToolCallsRestored: () => {},
+    onResponseTokenSpeed: () => {},
+    onResponseComplete: () => {},
+    onRequestTerminal: () => {},
+    onMemoriesUsed: () => {},
+  };
+}
+
+let hookState: HookState = createEmptyHookState();
 
 export function updateHookState(partial: Partial<HookState>) {
   hookState = { ...hookState, ...partial };
@@ -81,10 +87,22 @@ export function updateHookState(partial: Partial<HookState>) {
   }
 }
 
-export function installFetchHook() {
-  hookFetch();
-  hookXHR();
-  hookIndexedDB();
+export function installFetchHook(): () => void {
+  const cleanups: Array<() => void> = [];
+  try {
+    cleanups.push(hookFetch());
+    cleanups.push(hookXHR());
+    cleanups.push(hookIndexedDB());
+  } catch (error) {
+    for (const cleanup of cleanups.reverse()) cleanup();
+    throw error;
+  }
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    for (const cleanup of cleanups.reverse()) cleanup();
+  };
 }
 
 export interface ResponseCompletePayload {
@@ -134,10 +152,12 @@ export interface RequestBodyModification {
   toolDescriptors?: ToolDescriptor[];
 }
 
-export function hookFetch() {
-  originalFetch = window.fetch;
+export function hookFetch(): () => void {
+  const currentFetch = window.fetch as typeof window.fetch & { [FETCH_HOOK_MARKER]?: true };
+  if (currentFetch[FETCH_HOOK_MARKER]) return () => undefined;
+  const originalFetch = window.fetch;
 
-  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+  const hookedFetch = async function (this: Window, input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string'
       ? input
       : input instanceof URL
@@ -188,9 +208,16 @@ export function hookFetch() {
     const requestInit = modified ? { ...init, body: modified.body } : init;
     return interceptFetchResponse(originalFetch.call(this, input, requestInit), requestContext);
   };
+  Object.defineProperty(hookedFetch, FETCH_HOOK_MARKER, { value: true, configurable: true });
+  window.fetch = hookedFetch;
+  return () => {
+    if (window.fetch === hookedFetch) window.fetch = originalFetch;
+  };
 }
 
-export function hookXHR() {
+export function hookXHR(): () => void {
+  const prototype = XMLHttpRequest.prototype as XMLHttpRequest & { [XHR_HOOK_MARKER]?: true };
+  if (prototype[XHR_HOOK_MARKER]) return () => undefined;
   const xhrRoutes = new WeakMap<XMLHttpRequest, ReturnType<typeof matchDeepSeekWebRoute>>();
   const xhrHeaders = new WeakMap<XMLHttpRequest, Record<string, string>>();
   const origOpen = XMLHttpRequest.prototype.open;
@@ -267,6 +294,18 @@ export function hookXHR() {
       setupXHRHistoryInterceptor(this);
     }
     return origSend.call(this, body);
+  };
+  const hookedOpen = prototype.open;
+  const hookedSetRequestHeader = prototype.setRequestHeader;
+  const hookedSend = prototype.send;
+  Object.defineProperty(prototype, XHR_HOOK_MARKER, { value: true, configurable: true });
+  return () => {
+    if (prototype.open === hookedOpen) prototype.open = origOpen;
+    if (prototype.setRequestHeader === hookedSetRequestHeader) {
+      prototype.setRequestHeader = origSetRequestHeader;
+    }
+    if (prototype.send === hookedSend) prototype.send = origSend;
+    delete prototype[XHR_HOOK_MARKER];
   };
 }
 
@@ -1349,11 +1388,13 @@ function getHistoryCleanupOptions() {
 
 // --- IndexedDB interception: strip tool-call blocks from cached messages ---
 
-function hookIndexedDB() {
-  const origGet = IDBObjectStore.prototype.get;
-  const origGetAll = IDBObjectStore.prototype.getAll;
+function hookIndexedDB(): () => void {
+  const prototype = IDBObjectStore.prototype as IDBObjectStore & { [IDB_HOOK_MARKER]?: true };
+  if (prototype[IDB_HOOK_MARKER]) return () => undefined;
+  const origGet = prototype.get;
+  const origGetAll = prototype.getAll;
 
-  IDBObjectStore.prototype.get = function (...args) {
+  prototype.get = function (...args) {
     const request = origGet.apply(this, args);
     if (this.name === 'history-message') {
       patchIDBRequest(request);
@@ -1361,12 +1402,20 @@ function hookIndexedDB() {
     return request;
   };
 
-  IDBObjectStore.prototype.getAll = function (...args) {
+  prototype.getAll = function (...args) {
     const request = origGetAll.apply(this, args);
     if (this.name === 'history-message') {
       patchIDBRequest(request);
     }
     return request;
+  };
+  const hookedGet = prototype.get;
+  const hookedGetAll = prototype.getAll;
+  Object.defineProperty(prototype, IDB_HOOK_MARKER, { value: true, configurable: true });
+  return () => {
+    if (prototype.get === hookedGet) prototype.get = origGet;
+    if (prototype.getAll === hookedGetAll) prototype.getAll = origGetAll;
+    delete prototype[IDB_HOOK_MARKER];
   };
 }
 

@@ -199,8 +199,6 @@ export function startDeepSeekHistoryOrganizer(
 
   const observer = new MutationObserver(schedule);
   observer.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('popstate', schedule);
-  window.addEventListener('hashchange', schedule);
   window.addEventListener('dpp:navigation', schedule);
   refresh();
 
@@ -209,8 +207,6 @@ export function startDeepSeekHistoryOrganizer(
     stop() {
       stopped = true;
       observer.disconnect();
-      window.removeEventListener('popstate', schedule);
-      window.removeEventListener('hashchange', schedule);
       window.removeEventListener('dpp:navigation', schedule);
       if (timer) clearTimeout(timer);
       findSearchEnhancer()?.remove();
@@ -223,6 +219,7 @@ export function startDeepSeekHistoryOrganizer(
         delete option.dataset.dppOfficialHistoryOption;
         delete option.dataset.dppHistoryTags;
       }
+      document.getElementById(STYLE_ID)?.remove();
     },
   };
 }

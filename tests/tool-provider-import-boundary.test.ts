@@ -66,14 +66,19 @@ describe('tool provider import boundary', () => {
     expect(source).toMatch(/const runtimeStateSync = Promise\.all\([\s\S]*?currentToolDescriptors,[\s\S]*?const descriptorSync = descriptorResultPromise\.then/);
     expect(source).toContain('await Promise.all([runtimeStateSync, descriptorSync]);');
     expect(source).toContain('syncLease.commit(() => syncToMainWorld(');
-    expect(source).toContain('syncCurrentRuntimeStateToMainWorld();');
+    expect(source).toContain('syncRuntimeState: syncCurrentRuntimeStateToMainWorld,');
     expect(source).not.toContain('normalizeToolDescriptors');
 
     const hookSource = readFileSync(resolve(ROOT, 'core/interceptor/fetch-hook.ts'), 'utf8');
     const mainWorldSource = readFileSync(resolve(ROOT, 'entrypoints/main-world.content.ts'), 'utf8');
+    const bridgeSource = readFileSync(resolve(
+      ROOT,
+      'entrypoints/content/controllers/isolated-bridge-controller.ts',
+    ), 'utf8');
     expect(hookSource).toContain('toolDescriptors: [],');
     expect(hookSource).not.toContain('DEFAULT_TOOL_DESCRIPTORS');
     expect(mainWorldSource).toContain('updateHookState({ toolDescriptors: [] });');
+    expect(bridgeSource).toContain('dependencies.syncRuntimeState();');
   });
 });
 

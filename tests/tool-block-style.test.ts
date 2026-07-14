@@ -73,8 +73,12 @@ describe('content tool block styles', () => {
   it('normalizes restored inline-agent traces that predate finalText storage', () => {
     const path = join(process.cwd(), 'entrypoints/content.ts');
     const source = readFileSync(path, 'utf8');
+    const codec = readFileSync(
+      join(process.cwd(), 'core/inline-agent/trace-codec.ts'),
+      'utf8',
+    );
 
-    expect(source).toContain("(trace.finalText === undefined || typeof trace.finalText === 'string')");
+    expect(codec).toContain('requireOptionalString(trace.finalText, `${path}.finalText`)');
     expect(source).toContain("const finalText = typeof trace.finalText === 'string' ? trace.finalText : '';");
     expect(source).toContain("finalText: clampText(finalText, INLINE_AGENT_FINAL_RENDER_MAX_CHARS) ?? '',");
   });
@@ -83,7 +87,7 @@ describe('content tool block styles', () => {
     const path = join(process.cwd(), 'entrypoints/content.ts');
     const source = readFileSync(path, 'utf8');
 
-    expect(source).toContain('startInlineAgentContinuationMessageHider();');
+    expect(source).toContain('startInlineAgentContinuationMessageHider(scope, mutationHub);');
     expect(source).toContain('INLINE_AGENT_CONTINUATION_PLACEHOLDER');
     expect(source).toContain('isInlineAgentContinuationStructure(text)');
     expect(source).toContain('hideInlineAgentContinuationMessages(root);');

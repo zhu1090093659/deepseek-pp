@@ -20,4 +20,14 @@ describe('pending request registry', () => {
 
     expect(registry.drain('request-1')).toEqual([]);
   });
+
+  it('drains every remaining request during lifecycle teardown', () => {
+    const registry = new PendingRequestRegistry<string>();
+    registry.set('request-1', 'call-1', 'first');
+    registry.set('request-2', 'call-2', 'second');
+
+    expect(registry.drainAll()).toEqual(['first', 'second']);
+    expect(registry.drainAll()).toEqual([]);
+    expect(registry.drain('request-1')).toEqual([]);
+  });
 });

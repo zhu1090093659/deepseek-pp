@@ -345,6 +345,49 @@ describe('fetch hook request lifecycle', () => {
     }
   });
 
+  it('installs fetch and XHR wrappers once while consuming the latest shared hook state', async () => {
+    const nativeFetch = window.fetch;
+    const nativeXMLHttpRequest = globalThis.XMLHttpRequest;
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const FakeXMLHttpRequest = createFakeXMLHttpRequest('', 204);
+    window.fetch = fetchImpl;
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest);
+
+    try {
+      const uninstallFetch = hookFetch();
+      const installedFetch = window.fetch;
+      hookFetch();
+      expect(window.fetch).toBe(installedFetch);
+
+      const latestRequestBody = vi.fn(async () => null);
+      updateHookState({ onRequestBody: latestRequestBody });
+      await window.fetch('https://chat.deepseek.com/api/v0/chat/completion', {
+        method: 'POST',
+        body: '{"prompt":"hello"}',
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(latestRequestBody).toHaveBeenCalledOnce();
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+      const uninstallXHR = hookXHR();
+      const installedOpen = XMLHttpRequest.prototype.open;
+      const installedSend = XMLHttpRequest.prototype.send;
+      hookXHR();
+      expect(XMLHttpRequest.prototype.open).toBe(installedOpen);
+      expect(XMLHttpRequest.prototype.send).toBe(installedSend);
+
+      uninstallXHR();
+      uninstallFetch();
+      expect(XMLHttpRequest.prototype.open).toBe(originalOpen);
+      expect(XMLHttpRequest.prototype.send).toBe(originalSend);
+      expect(window.fetch).toBe(fetchImpl);
+    } finally {
+      window.fetch = nativeFetch;
+      vi.stubGlobal('XMLHttpRequest', nativeXMLHttpRequest);
+    }
+  });
+
   it('cancels XHR network failures without publishing a false completion', async () => {
     const nativeXMLHttpRequest = globalThis.XMLHttpRequest;
     const rawWire = 'data: {"p":"response/content","o":"APPEND","v":"partial"}\n\n';

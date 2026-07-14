@@ -234,6 +234,10 @@ export function injectInlineAgentStyles(): void {
   document.head.appendChild(style);
 }
 
+export function removeInlineAgentStyles(): void {
+  document.getElementById(AGENT_STEP_STYLE_ID)?.remove();
+}
+
 export function createAgentContainer(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'dpp-agent-container';

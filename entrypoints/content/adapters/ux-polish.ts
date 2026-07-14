@@ -22,7 +22,6 @@ export function startContentUxPolish(
   getLabels: () => ContentUxPolishLabels,
 ): ContentUxPolishController {
   injectStyles();
-  const unpatchNavigationEvents = patchNavigationEvents();
   const codeButtons = new Map<HTMLElement, HTMLButtonElement>();
   const syncCodeButtons = () => syncCodeButtonPositions(codeButtons);
   const mount = () => mountPolish(document, getLabels(), codeButtons);
@@ -48,10 +47,10 @@ export function startContentUxPolish(
       window.removeEventListener('dpp:navigation', mount);
       window.removeEventListener('scroll', syncCodeButtons, true);
       window.removeEventListener('resize', syncCodeButtons);
-      unpatchNavigationEvents();
       codeButtons.forEach((button) => button.remove());
       codeButtons.clear();
       document.querySelectorAll(`.${MESSAGE_BUTTON_CLASS}`).forEach((button) => button.remove());
+      document.getElementById(STYLE_ID)?.remove();
     },
   };
 }
@@ -248,39 +247,6 @@ function positionCodeButton(pre: HTMLElement, button: HTMLButtonElement): void {
   button.style.display = hidden ? 'none' : '';
   button.style.top = `${Math.min(maxTop, Math.max(CODE_BUTTON_OFFSET_PX, rect.top + CODE_BUTTON_OFFSET_PX))}px`;
   button.style.left = `${Math.min(maxLeft, Math.max(CODE_BUTTON_OFFSET_PX, rect.right - CODE_BUTTON_OFFSET_PX))}px`;
-}
-
-function patchNavigationEvents(): () => void {
-  const historyValue = window.history as History & { __dppNavigationPatched?: boolean };
-  if (historyValue.__dppNavigationPatched) return () => undefined;
-  const originalPushState = historyValue.pushState;
-  const originalReplaceState = historyValue.replaceState;
-  const patchedPushState: History['pushState'] = function patchedPushState(
-    this: History,
-    ...args: Parameters<History['pushState']>
-  ) {
-    const result = originalPushState.apply(this, args);
-    window.dispatchEvent(new Event('dpp:navigation'));
-    return result;
-  };
-  const patchedReplaceState: History['replaceState'] = function patchedReplaceState(
-    this: History,
-    ...args: Parameters<History['replaceState']>
-  ) {
-    const result = originalReplaceState.apply(this, args);
-    window.dispatchEvent(new Event('dpp:navigation'));
-    return result;
-  };
-
-  historyValue.__dppNavigationPatched = true;
-  historyValue.pushState = patchedPushState;
-  historyValue.replaceState = patchedReplaceState;
-
-  return () => {
-    if (historyValue.pushState === patchedPushState) historyValue.pushState = originalPushState;
-    if (historyValue.replaceState === patchedReplaceState) historyValue.replaceState = originalReplaceState;
-    delete historyValue.__dppNavigationPatched;
-  };
 }
 
 function downloadText(filename: string, content: string, mimeType: string): void {

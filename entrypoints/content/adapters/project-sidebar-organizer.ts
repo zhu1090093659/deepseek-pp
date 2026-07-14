@@ -309,8 +309,6 @@ export function startDeepSeekProjectSidebarOrganizer(
   observer.observe(document.body, { childList: true, subtree: true });
   chrome.runtime.onMessage.addListener(messageHandler);
   document.addEventListener('click', clickCaptureHandler, true);
-  window.addEventListener('popstate', navigationHandler);
-  window.addEventListener('hashchange', navigationHandler);
   window.addEventListener('dpp:navigation', navigationHandler);
   schedule();
 
@@ -323,11 +321,10 @@ export function startDeepSeekProjectSidebarOrganizer(
       observer.disconnect();
       chrome.runtime.onMessage.removeListener(messageHandler);
       document.removeEventListener('click', clickCaptureHandler, true);
-      window.removeEventListener('popstate', navigationHandler);
-      window.removeEventListener('hashchange', navigationHandler);
       window.removeEventListener('dpp:navigation', navigationHandler);
       if (timer) clearTimeout(timer);
       document.getElementById(PROJECT_SECTION_ID)?.remove();
+      document.getElementById(PROJECT_STYLE_ID)?.remove();
       removeNativeMenuEnhancements(document);
       restoreProjectHiddenRows(document);
     },

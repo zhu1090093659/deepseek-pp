@@ -20,4 +20,10 @@ export class PendingRequestRegistry<T> {
     this.requests.delete(requestId);
     return [...entries.values()];
   }
+
+  drainAll(): T[] {
+    const values = [...this.requests.values()].flatMap((entries) => [...entries.values()]);
+    this.requests.clear();
+    return values;
+  }
 }

@@ -24,8 +24,8 @@ import { normalizeMcpToolDescriptor, type McpServerConfig } from '../core/mcp';
 const legalCases = Object.values(LEGAL_BRIDGE_CASES).flat();
 const malformedPayloadCases = Object.values(MALFORMED_BRIDGE_PAYLOAD_CASES).flat();
 describe('bridge message compatibility contract', () => {
-  it('keeps one exhaustive authority for all 15 port message types', () => {
-    expect(BRIDGE_MESSAGE_TYPES).toHaveLength(15);
+  it('keeps one exhaustive authority for all 16 port message types', () => {
+    expect(BRIDGE_MESSAGE_TYPES).toHaveLength(16);
     expect(new Set(BRIDGE_MESSAGE_TYPES).size).toBe(BRIDGE_MESSAGE_TYPES.length);
     expect(Object.keys(LEGAL_BRIDGE_CASES).sort()).toEqual([...BRIDGE_MESSAGE_TYPES].sort());
     expect(Object.keys(MALFORMED_BRIDGE_PAYLOAD_CASES).sort()).toEqual([...BRIDGE_MESSAGE_TYPES].sort());
@@ -224,30 +224,36 @@ describe('bridge message compatibility contract', () => {
   });
 
   it('uses shared handshake constants and freezes the retry budget', () => {
-    const contentSource = readFileSync('entrypoints/content.ts', 'utf8');
-    const mainWorldSource = readFileSync('entrypoints/main-world.content.ts', 'utf8');
+    const isolatedBridgeSource = readFileSync(
+      'entrypoints/content/controllers/isolated-bridge-controller.ts',
+      'utf8',
+    );
+    const mainWorldBridgeSource = readFileSync(
+      'entrypoints/content/controllers/main-world-bridge-controller.ts',
+      'utf8',
+    );
+    const lifecycleSource = readFileSync('entrypoints/content/lifecycle.ts', 'utf8');
 
-    for (const source of [contentSource, mainWorldSource]) {
+    for (const source of [isolatedBridgeSource, mainWorldBridgeSource]) {
       expect(source).toContain('const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld');
       expect(source).toContain('const CONTENT_SOURCE = BRIDGE_SOURCES.content');
       expect(source).toContain('const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request');
       expect(source).toContain('const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
       expect(source).toContain('isBridgeHandshakeMessage({');
-      expect(source).toContain('actualWindowSource: event.source');
-      expect(source).toContain('expectedWindowSource: window');
+      expect(source).toContain('actualWindowSource: messageEvent.source');
+      expect(source).toContain('expectedWindowSource: target');
       expect(source).toContain('requireTopLevel: true');
     }
     expect(BRIDGE_HANDSHAKE_TYPES).toEqual({ request: 'DPP_BRIDGE_REQUEST', init: 'DPP_BRIDGE_INIT' });
     expect(BRIDGE_READY_TYPE).toBe(BRIDGE_HANDSHAKE_CONTRACT.ready.type);
-    expect(mainWorldSource).toContain(`const BRIDGE_REQUEST_INTERVAL_MS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.intervalMs}`);
-    expect(mainWorldSource).toContain(`const BRIDGE_REQUEST_MAX_ATTEMPTS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.maxAttempts}`);
-    expect(contentSource).toContain("window.addEventListener('pagehide', () => disconnectMainWorldPort())");
-    expect(mainWorldSource).toContain("window.addEventListener('pagehide', () => disconnectContentPort())");
-    expect(mainWorldSource).toContain('if (event.persisted && !contentPort) startBridgeRequests()');
-    expect(contentSource).toContain('syncCurrentRuntimeStateToMainWorld();');
-    expect(contentSource).toContain("message.type === 'SYNC_HOOK_STATE_REQUEST'");
-    expect(mainWorldSource).toContain("postToContent({ type: 'SYNC_HOOK_STATE_REQUEST' });");
-    expect(mainWorldSource).toContain("pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'))");
+    expect(mainWorldBridgeSource).toContain(`const BRIDGE_REQUEST_INTERVAL_MS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.intervalMs}`);
+    expect(mainWorldBridgeSource).toContain(`const BRIDGE_REQUEST_MAX_ATTEMPTS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.maxAttempts}`);
+    expect(lifecycleSource).toContain("target.addEventListener('pagehide', onPageHide)");
+    expect(lifecycleSource).toContain("target.addEventListener('pageshow', onPageShow)");
+    expect(isolatedBridgeSource).toContain('dependencies.syncRuntimeState();');
+    expect(isolatedBridgeSource).toContain("message.type === 'SYNC_HOOK_STATE_REQUEST'");
+    expect(mainWorldBridgeSource).toContain("post({ type: 'SYNC_HOOK_STATE_REQUEST' });");
+    expect(mainWorldBridgeSource).toContain("pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'))");
   });
 });
 

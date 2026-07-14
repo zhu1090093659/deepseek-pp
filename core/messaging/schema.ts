@@ -21,6 +21,7 @@ export const BRIDGE_MESSAGE_TYPES = [
   'RESPONSE_TOKEN_SPEED',
   'MEMORIES_USED',
   'HEADERS_CAPTURED',
+  'NAVIGATION_CHANGED',
   BRIDGE_READY_TYPE,
 ] as const;
 
@@ -49,6 +50,7 @@ export const BRIDGE_TYPE_SOURCES = {
   RESPONSE_TOKEN_SPEED: BRIDGE_SOURCES.mainWorld,
   MEMORIES_USED: BRIDGE_SOURCES.mainWorld,
   HEADERS_CAPTURED: BRIDGE_SOURCES.mainWorld,
+  NAVIGATION_CHANGED: BRIDGE_SOURCES.mainWorld,
   DPP_BRIDGE_READY: BRIDGE_SOURCES.mainWorld,
 } as const satisfies Record<BridgeMessageType, string>;
 
@@ -236,6 +238,7 @@ const BRIDGE_PAYLOAD_VALIDATORS: Record<
   HEADERS_CAPTURED: (message) => (
     message.headers === null || isStringRecord(message.headers)
   ),
+  NAVIGATION_CHANGED: () => true,
   DPP_BRIDGE_READY: () => true,
 };
 
