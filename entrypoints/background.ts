@@ -782,8 +782,7 @@ async function createContextMenus() {
   }
 }
 
-try {
-  chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
+chrome.contextMenus.onClicked.addListener(async (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => {
     if (!info.selectionText) return;
     const selectedText = info.selectionText.trim();
     if (!selectedText) return;
@@ -791,14 +790,16 @@ try {
     // Open the sidepanel before async boundaries so the user gesture remains valid.
     const tabId = tab?.id;
     if (tabId && chrome.sidePanel?.open) {
-      chrome.sidePanel.open({ tabId }).catch(() => {});
+      chrome.sidePanel.open({ tabId })
+        .catch((error) => reportBackgroundStartupError('context_menu_sidepanel_open_failed', error));
     }
 
     const chatEnabled = await getChatEnabled();
     if (!chatEnabled) return;
 
     if (info.menuItemId === 'send-to-chat') {
-      openSidePanelAndSendText(selectedText, tab).catch(() => {});
+      openSidePanelAndSendText(selectedText, tab)
+        .catch((error) => reportBackgroundStartupError('context_menu_chat_handoff_failed', error));
       return;
     }
 
@@ -814,16 +815,18 @@ try {
         .catch((error) => reportBackgroundStartupError('scenario_context_menu_failed', error));
       return;
     }
-  });
-} catch {}
+});
 
 async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
   // Persist to storage as a fallback because the sidepanel may not be ready for messages yet.
   try {
     await chrome.storage.local.set({ pendingChatText: text });
-  } catch {}
+  } catch (error) {
+    reportBackgroundStartupError('pending_chat_text_persist_failed', error);
+  }
 
-  chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text })
+    .catch((error) => reportBackgroundStartupError('pending_chat_text_notify_failed', error));
 }
 
 async function ensureBuiltInMcpPresets() {
@@ -1196,7 +1199,11 @@ function sendSandboxRunToOffscreen(request: SandboxRunRequest): Promise<SandboxE
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      try { port.disconnect(); } catch {}
+      try {
+        port.disconnect();
+      } catch (error) {
+        reportBackgroundStartupError('offscreen_port_disconnect_cleanup_failed', error);
+      }
       resolve(result);
     };
     const timeout = setTimeout(() => {
