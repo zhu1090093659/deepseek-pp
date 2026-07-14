@@ -70,8 +70,10 @@ export async function runConversationExport(input: RunConversationExportInput): 
     await report(input, 'fetching_history', 'running', index + 1, sessionSummaries.length, `读取会话 ${index + 1}/${sessionSummaries.length}`);
     try {
       const rawHistory = await input.transport.fetchHistory({ session, includeRaw, signal: input.signal });
+      assertNotCancelled(input.signal);
       sessions.push(normalizeDeepSeekHistory(session, rawHistory, { includeRaw }));
     } catch (error) {
+      rethrowCancellation(error, input.signal);
       failures.push(toFailure(error, {
         code: 'session_history_failed',
         sessionId: session.id,
@@ -86,12 +88,15 @@ export async function runConversationExport(input: RunConversationExportInput): 
     await report(input, 'fetching_attachments', 'running', 0, attachmentIds.length, '读取附件元数据');
     try {
       const rawFiles = await input.transport.fetchFiles({ fileIds: attachmentIds, includeRaw, signal: input.signal });
+      assertNotCancelled(input.signal);
       for (const rawFile of rawFiles) {
+        assertNotCancelled(input.signal);
         const attachment = normalizeDeepSeekFileMetadata(rawFile, includeRaw);
         if (attachment) metadataById.set(attachment.id, attachment);
       }
       await report(input, 'fetching_attachments', 'running', attachmentIds.length, attachmentIds.length, '附件元数据读取完成');
     } catch (error) {
+      rethrowCancellation(error, input.signal);
       failures.push(toFailure(error, {
         code: 'attachment_metadata_failed',
         retryable: true,
@@ -135,7 +140,9 @@ export async function runConversationExport(input: RunConversationExportInput): 
   };
 
   const finalExport = request.mode === 'sanitized' ? sanitizeConversationExport(exportData) : exportData;
+  assertNotCancelled(input.signal);
   await report(input, 'completed', 'completed', 1, 1, '导出完成');
+  assertNotCancelled(input.signal);
   return validateConversationExport(finalExport);
 }
 
@@ -212,6 +219,7 @@ async function report(
   total: number,
   message: string,
 ) {
+  assertNotCancelled(input.signal);
   await input.onProgress?.({
     exportId: input.exportId,
     phase,
@@ -220,10 +228,19 @@ async function report(
     total,
     message,
   });
+  assertNotCancelled(input.signal);
 }
 
 function assertNotCancelled(signal?: AbortSignal) {
-  if (signal?.aborted) throw new DOMException('Conversation export was cancelled.', 'AbortError');
+  if (signal?.aborted) {
+    throw new DOMException('Conversation export was cancelled.', 'AbortError');
+  }
+}
+
+function rethrowCancellation(error: unknown, signal?: AbortSignal): void {
+  if (signal?.aborted) assertNotCancelled(signal);
+  if (error instanceof DOMException && error.name === 'AbortError') throw error;
+  if (error instanceof Error && error.name === 'AbortError') throw error;
 }
 
 function toFailure(

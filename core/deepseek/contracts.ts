@@ -24,3 +24,16 @@ export const DEEPSEEK_BODY_BUDGETS = {
   // A per-session export can be much larger than one streaming turn, while still needing a hard memory bound.
   conversationExport: 32 * 1024 * 1024,
 } as const;
+
+export interface DeepSeekUploadedFile {
+  id: string;
+  fileName: string | null;
+  fileSize: number | null;
+  mimeType: string | null;
+  status: string | null;
+  signedPath: string | null;
+  auditResult: string | null;
+  retryable: boolean | null;
+  width: number | null;
+  height: number | null;
+}

@@ -52,6 +52,13 @@ describe('conversation export request schema', () => {
     expect(() => normalizeConversationExportRequest({ sessionIds: [''] }))
       .toThrow(ConversationExportValidationError);
   });
+
+  it('rejects sparse arrays instead of widening export scope', () => {
+    expect(() => normalizeConversationExportRequest({ formats: new Array(1) }))
+      .toThrow(ConversationExportValidationError);
+    expect(() => normalizeConversationExportRequest({ sessionIds: new Array(1) }))
+      .toThrow(ConversationExportValidationError);
+  });
 });
 
 describe('DeepSeek conversation export adapter and service', () => {
@@ -283,7 +290,79 @@ describe('DeepSeek conversation export adapter and service', () => {
     await expect(buildConversationExportArtifactsCancellable(exportData, controller.signal))
       .rejects.toThrow('Conversation export was cancelled.');
   });
+
+  it('rethrows history cancellation instead of converting it to a partial success', async () => {
+    const progress: string[] = [];
+    await expect(runConversationExport({
+      exportId: 'export-history-cancel',
+      extensionVersion: '0.0.0-test',
+      baseUrl: 'https://chat.deepseek.com',
+      request: {
+        mode: 'sanitized',
+        formats: ['html'],
+        includeAttachmentMetadata: false,
+        includeFileBodies: false,
+      },
+      transport: {
+        async listSessions() {
+          return [sessionSummary('session-cancel')];
+        },
+        async fetchHistory() {
+          throw new DOMException('cancelled', 'AbortError');
+        },
+        async fetchFiles() {
+          return [];
+        },
+      },
+      onProgress(update) {
+        progress.push(update.phase);
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(progress).not.toContain('completed');
+  });
+
+  it('rethrows attachment cancellation before completed progress', async () => {
+    const progress: string[] = [];
+    await expect(runConversationExport({
+      exportId: 'export-attachment-cancel',
+      extensionVersion: '0.0.0-test',
+      baseUrl: 'https://chat.deepseek.com',
+      request: {
+        mode: 'sanitized',
+        formats: ['html'],
+        includeAttachmentMetadata: true,
+        includeFileBodies: false,
+      },
+      transport: {
+        async listSessions() {
+          return [sessionSummary('session-alpha')];
+        },
+        async fetchHistory() {
+          return readFixture('history-alpha.json');
+        },
+        async fetchFiles() {
+          throw new DOMException('cancelled', 'AbortError');
+        },
+      },
+      onProgress(update) {
+        progress.push(update.phase);
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(progress).not.toContain('completed');
+  });
 });
+
+function sessionSummary(id: string) {
+  return {
+    id,
+    title: 'Synthetic session',
+    pinned: false,
+    titleType: null,
+    modelType: null,
+    createdAt: null,
+    updatedAt: null,
+  };
+}
 
 function createFixtureFetch() {
   const calls: string[] = [];

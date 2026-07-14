@@ -1,40 +1,18 @@
+import {
+  DEFAULT_MULTIMODAL_SETTINGS,
+  type MultimodalSettings,
+  type MultimodalSettingsPatch,
+  type MultimodalSettingsStatus,
+} from './settings-contracts';
+
+export { DEFAULT_MULTIMODAL_SETTINGS } from './settings-contracts';
+export type {
+  MultimodalSettings,
+  MultimodalSettingsPatch,
+  MultimodalSettingsStatus,
+} from './settings-contracts';
+
 export const MULTIMODAL_SETTINGS_STORAGE_KEY = 'deepseek_pp_multimodal_settings';
-
-export interface MultimodalSettings {
-  openaiApiKey: string | null;
-  geminiApiKey: string | null;
-  openaiImageModel: string;
-  geminiVideoModel: string;
-  openaiBaseUrl: string;
-  geminiBaseUrl: string;
-}
-
-export interface MultimodalSettingsStatus {
-  openaiConfigured: boolean;
-  geminiConfigured: boolean;
-  openaiImageModel: string;
-  geminiVideoModel: string;
-  openaiBaseUrl: string;
-  geminiBaseUrl: string;
-}
-
-export interface MultimodalSettingsPatch {
-  openaiApiKey?: string;
-  geminiApiKey?: string;
-  openaiImageModel?: string;
-  geminiVideoModel?: string;
-  openaiBaseUrl?: string;
-  geminiBaseUrl?: string;
-}
-
-export const DEFAULT_MULTIMODAL_SETTINGS: MultimodalSettings = {
-  openaiApiKey: null,
-  geminiApiKey: null,
-  openaiImageModel: 'gpt-4.1-mini',
-  geminiVideoModel: 'gemini-2.5-flash',
-  openaiBaseUrl: 'https://api.openai.com/v1',
-  geminiBaseUrl: 'https://generativelanguage.googleapis.com',
-};
 
 export async function getMultimodalSettings(): Promise<MultimodalSettings> {
   const data = await chrome.storage.local.get(MULTIMODAL_SETTINGS_STORAGE_KEY) as Record<string, unknown>;

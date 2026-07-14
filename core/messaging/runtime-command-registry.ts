@@ -10,6 +10,7 @@ import {
 } from './runtime-command-contracts';
 import type { PersistenceRuntimeCommandContracts } from './persistence-runtime-contracts';
 import type { ToolRuntimeCommandContracts } from './tool-runtime-contracts';
+import type { DeepSeekRuntimeCommandContracts } from './deepseek-runtime-contracts';
 
 export {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
@@ -27,7 +28,9 @@ export const RUNTIME_COMMAND_ERROR_CODES = {
 } as const;
 
 export interface TypedRuntimeCommandContracts
-  extends PersistenceRuntimeCommandContracts, ToolRuntimeCommandContracts {
+  extends PersistenceRuntimeCommandContracts,
+  ToolRuntimeCommandContracts,
+  DeepSeekRuntimeCommandContracts {
   GET_CONFIG: {
     request: { type: 'GET_CONFIG' };
     response: { version: string };

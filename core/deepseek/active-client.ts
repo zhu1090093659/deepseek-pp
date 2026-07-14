@@ -29,6 +29,7 @@ import {
   DEEPSEEK_FILE_FETCH_PATH,
   DEEPSEEK_FILE_UPLOAD_PATH,
   DEEPSEEK_WEB_ROUTES,
+  type DeepSeekUploadedFile,
 } from './contracts';
 import {
   buildDeepSeekWebSessionUrl,
@@ -98,18 +99,7 @@ export interface DeepSeekFileUploadInput {
   powHeaders: Record<string, string>;
 }
 
-export interface DeepSeekUploadedFile {
-  id: string;
-  fileName: string | null;
-  fileSize: number | null;
-  mimeType: string | null;
-  status: string | null;
-  signedPath: string | null;
-  auditResult: string | null;
-  retryable: boolean | null;
-  width: number | null;
-  height: number | null;
-}
+export type { DeepSeekUploadedFile } from './contracts';
 
 export interface StreamCallbacks {
   onTextChunk?(text: string, fullText: string): void;

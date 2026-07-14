@@ -43,7 +43,7 @@ describe('background sync recovery integration', () => {
   it('fully stages the remote snapshot before the journaled local apply commit point', () => {
     const downloadCase = background.slice(
       background.indexOf("case 'WEBDAV_DOWNLOAD_REMOTE':"),
-      background.indexOf("case 'CHAT_SUBMIT_PROMPT':"),
+      background.indexOf("case 'GET_AUTOMATIONS':"),
     );
     const downloadEffect = background.slice(
       background.indexOf('async function downloadRemoteSyncTarget'),

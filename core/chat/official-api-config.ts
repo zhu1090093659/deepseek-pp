@@ -1,25 +1,25 @@
+import {
+  DEFAULT_OFFICIAL_API_CHAT_CONFIG,
+  type OfficialApiChatConfig,
+  type OfficialDeepSeekModel,
+  type OfficialDeepSeekReasoningEffort,
+  type OfficialDeepSeekThinkingMode,
+} from './official-api-config-contract';
+
+export {
+  DEFAULT_OFFICIAL_API_CHAT_CONFIG,
+  OFFICIAL_DEEPSEEK_MODELS,
+  OFFICIAL_DEEPSEEK_REASONING_EFFORTS,
+  OFFICIAL_DEEPSEEK_THINKING_MODES,
+} from './official-api-config-contract';
+export type {
+  OfficialApiChatConfig,
+  OfficialDeepSeekModel,
+  OfficialDeepSeekReasoningEffort,
+  OfficialDeepSeekThinkingMode,
+} from './official-api-config-contract';
+
 export const OFFICIAL_API_CHAT_CONFIG_STORAGE_KEY = 'deepseek_pp_official_api_chat_config';
-
-export const OFFICIAL_DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro'] as const;
-export type OfficialDeepSeekModel = typeof OFFICIAL_DEEPSEEK_MODELS[number];
-
-export const OFFICIAL_DEEPSEEK_THINKING_MODES = ['disabled', 'enabled'] as const;
-export type OfficialDeepSeekThinkingMode = typeof OFFICIAL_DEEPSEEK_THINKING_MODES[number];
-
-export const OFFICIAL_DEEPSEEK_REASONING_EFFORTS = ['high', 'max'] as const;
-export type OfficialDeepSeekReasoningEffort = typeof OFFICIAL_DEEPSEEK_REASONING_EFFORTS[number];
-
-export interface OfficialApiChatConfig {
-  model: OfficialDeepSeekModel;
-  thinking: OfficialDeepSeekThinkingMode;
-  reasoningEffort: OfficialDeepSeekReasoningEffort;
-}
-
-export const DEFAULT_OFFICIAL_API_CHAT_CONFIG: OfficialApiChatConfig = {
-  model: 'deepseek-v4-flash',
-  thinking: 'disabled',
-  reasoningEffort: 'high',
-};
 
 export async function getOfficialApiChatConfig(): Promise<OfficialApiChatConfig> {
   const data = await chrome.storage.local.get(OFFICIAL_API_CHAT_CONFIG_STORAGE_KEY) as Record<string, unknown>;

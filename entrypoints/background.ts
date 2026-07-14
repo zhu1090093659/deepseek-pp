@@ -188,25 +188,13 @@ import {
   isShellMcpServer,
 } from '../core/shell';
 import {
-  MULTIMODAL_MCP_REQUEST_TIMEOUT_MS,
-  canUseMultimodalMediaInput,
   createMultimodalMcpPresetInput,
-  isMultimodalAnalysisToolAllowed,
   isMultimodalMcpServer,
 } from '../core/multimodal';
-import {
-  assertSupportedMultimodalMedia,
-  MULTIMODAL_MEDIA_MAX_ITEMS_PER_TURN,
-  type MultimodalMediaAnalysisItem,
-  type MultimodalMediaAnalyzeRequest,
-  type MultimodalMediaAnalyzeResponse,
-  type MultimodalMediaInput,
-} from '../core/multimodal/media';
 import {
   clearMultimodalSettings,
   getMultimodalSettingsStatus,
   saveMultimodalSettings,
-  type MultimodalSettingsPatch,
 } from '../core/multimodal/settings';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
 import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
@@ -215,7 +203,6 @@ import {
   markChatLoopFinished,
   markChatLoopStarted,
   reconcileInterruptedChatLoop,
-  type ChatLoopProvider,
 } from '../core/chat/active-loop';
 import {
   clearDeepSeekApiKey,
@@ -226,9 +213,7 @@ import {
 } from '../core/chat/api-key';
 import {
   getOfficialApiChatConfig,
-  normalizeOfficialApiChatConfig,
   saveOfficialApiChatConfig,
-  type OfficialApiChatConfig,
 } from '../core/chat/official-api-config';
 import {
   createAutomation,
@@ -255,24 +240,18 @@ import {
   createPowHeadersForPath,
   createPowHeaders,
   DEEPSEEK_FILE_UPLOAD_PATH,
-  DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES,
   submitPromptStreaming,
   loadClientHeadersFromStorage,
   uploadDeepSeekFile,
 } from '../core/deepseek/adapter';
 import { createDeepSeekAutomationClient } from '../core/deepseek/active-client';
-import {
-  submitOfficialDeepSeekStreaming,
-  type OfficialDeepSeekMessage,
-} from '../core/deepseek/official-api';
+import { submitOfficialDeepSeekStreaming } from '../core/deepseek/official-api';
 import { createDeepSeekConversationExportTransport } from '../core/deepseek/conversation-export';
 import {
   buildConversationExportArtifactsCancellable,
   runConversationExport,
 } from '../core/export/service';
-import { normalizeConversationExportRequest } from '../core/export/schema';
 import { buildPromptAugmentation } from '../core/prompt';
-import { extractToolCalls } from '../core/interceptor/tool-parser';
 import { broadcastRuntimeUpdate } from '../core/messaging/broadcast';
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
 import {
@@ -290,6 +269,11 @@ import { createPersistenceMutationBindings } from './background/persistence-muta
 import { createPersistenceRuntimeHandlers } from './background/persistence-handlers';
 import { createToolRuntimeHandlers } from './background/tool-runtime-handlers';
 import { createTrustedToolExecutionContext } from './background/tool-execution-handlers';
+import {
+  createChatRuntimeService,
+  type ChatPromptBuildRequest,
+} from './background/chat-runtime-service';
+import { createDeepSeekRuntimeHandlers } from './background/deepseek-runtime-handlers';
 import {
   createTranslator,
   DEFAULT_LOCALE,
@@ -310,7 +294,6 @@ import type {
   SyncCounts,
   ToolCall,
   ToolDescriptor,
-  ToolExecutionRecord,
   ToolExecutionTrigger,
   ToolResult,
   UsageTurnInput,
@@ -318,7 +301,7 @@ import type {
 import type { McpServerConfig } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { AutomationExecutionContext } from '../core/automation/execution';
-import type { ConversationExportProgress, ConversationExportResult } from '../core/export/types';
+import type { ConversationExportProgress } from '../core/export/types';
 
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 const DEEPSEEK_TAB_URL_PATTERN = '*://chat.deepseek.com/*';
@@ -326,10 +309,6 @@ const REFRESH_AUTH_MESSAGE = { type: 'REFRESH_DEEPSEEK_AUTH' } as const;
 const AUTOMATION_AUTH_TOKEN_MISSING_MESSAGE =
   'DeepSeek login token is missing. Refresh chat.deepseek.com or sign in again, then retry the automation.';
 const deepSeekAutomationClient = createDeepSeekAutomationClient();
-let chatSessionId: string | null = null;
-let chatParentMessageId: number | null = null;
-let officialApiChatMessages: OfficialDeepSeekMessage[] = [];
-const conversationExportControllers = new Map<string, AbortController>();
 const externalPayloadAuthorizationCache = new ExternalPayloadAuthorizationCache();
 const {
   executeToolCall: executeRuntimeToolCall,
@@ -340,6 +319,42 @@ const {
 let currentBackgroundLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentBackgroundTranslator = createTranslator(DEFAULT_LOCALE);
 let sandboxOffscreenCreation: Promise<void> | null = null;
+const chatRuntimeService = createChatRuntimeService({
+  getChatEnabled,
+  getDeepSeekApiKey,
+  getOfficialApiChatConfig,
+  loadClientHeaders: loadOrRefreshClientHeaders,
+  getModelType,
+  buildPrompt: buildSidepanelPrompt,
+  executeToolCall: (call, options) => executeBackgroundRuntimeToolCall(
+    call,
+    'sidepanel_chat',
+    options,
+  ),
+  createChatSession: (headers, signal) => createChatSession(headers, signal),
+  createPowHeaders: (headers, signal) => createPowHeaders(headers, undefined, signal),
+  createUploadPowHeaders: (headers, signal) => createPowHeadersForPath(
+    headers,
+    DEEPSEEK_FILE_UPLOAD_PATH,
+    undefined,
+    signal,
+  ),
+  submitWebPrompt: submitPromptStreaming,
+  submitOfficialPrompt: submitOfficialDeepSeekStreaming,
+  uploadFile: uploadDeepSeekFile,
+  markChatLoopStarted,
+  markChatLoopFinished,
+  reconcileInterruptedChatLoop,
+  broadcastChunk: broadcastChatChunk,
+  continueWithToolResults: (toolResults) => backgroundT(
+    'background.chat.continueWithToolResults',
+    { toolResults },
+  ),
+  maxToolStepsMessage: () => backgroundT('background.chat.maxToolSteps'),
+  missingAuthMessage: () => backgroundT('background.auth.missingDeepSeek'),
+  interruptedMessage: () => backgroundT('background.chat.interrupted'),
+  reportError: reportBackgroundStartupError,
+});
 const syncLocalRecoveryBarrier = createSyncRecoveryBarrier({
   recover: recoverPendingSyncLocalApply,
   async notifyReady() {
@@ -540,6 +555,53 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         broadcastToolCallHistoryUpdate,
       },
     }),
+    ...createDeepSeekRuntimeHandlers({
+      auth: {
+        hasDeepSeekApiKey,
+        saveDeepSeekApiKey,
+        clearDeepSeekApiKey,
+        resetChatSession: () => chatRuntimeService.resetSession(),
+        refreshContextMenus: createContextMenus,
+        getChatAuthStatus,
+        broadcastChatAuthStatus,
+      },
+      multimodal: {
+        getSettingsStatus: getMultimodalSettingsStatus,
+        saveSettings: saveMultimodalSettings,
+        clearSettings: clearMultimodalSettings,
+        getMcpServers: () => getAllMcpServers({ includeSecrets: false }),
+        executeToolCall: (call, options) => executeBackgroundRuntimeToolCall(
+          call,
+          'manual_chat',
+          options,
+        ),
+        broadcastToolCallHistoryUpdate,
+      },
+      chat: {
+        service: chatRuntimeService,
+        getOfficialApiChatConfig,
+        saveOfficialApiChatConfig,
+      },
+      conversationExport: {
+        baseUrl: new URL(DEEPSEEK_HOME_URL).origin,
+        getExtensionVersion,
+        createExportId: () => crypto.randomUUID(),
+        loadClientHeaders: loadOrRefreshClientHeaders,
+        createTransport: ({ baseUrl, clientHeaders }) => (
+          createDeepSeekConversationExportTransport({
+            baseUrl,
+            clientHeaders,
+            fetchImpl: fetch,
+          })
+        ),
+        runExport: runConversationExport,
+        buildArtifacts: buildConversationExportArtifactsCancellable,
+        broadcastProgress: broadcastConversationExportProgress,
+        missingAuthMessage: () => backgroundT('background.auth.missingDeepSeek'),
+        generatingMessage: () => backgroundT('background.export.generating'),
+        cancelledMessage: () => backgroundT('background.export.cancelled'),
+      },
+    }),
   ],
   handleLegacy: handleLegacyMessage,
 });
@@ -587,7 +649,8 @@ export default defineBackground(() => {
   ensureBuiltInMcpPresets().catch((error) => reportBackgroundStartupError('builtin_mcp_presets_failed', error));
   refreshWhatsNewBadge().catch((error) => reportBackgroundStartupError('whats_new_badge_failed', error));
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
-  reconcileInterruptedChatLoopOnWake().catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
+  chatRuntimeService.reconcileInterruptedOnWake()
+    .catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
   syncLocalRecoveryBarrier.ensureReady()
     .then(() => scanDueAutomationsFromWake()
       .catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error)))
@@ -624,7 +687,8 @@ export default defineBackground(() => {
     if ('deepseek_pp_chat_enabled' in changes || DEEPSEEK_API_KEY_STORAGE_KEY in changes) {
       createContextMenus()
         .catch((error) => reportBackgroundStartupError('context_menu_refresh_failed', error));
-      broadcastChatAuthStatus().catch(() => {});
+      broadcastChatAuthStatus()
+        .catch((error) => reportBackgroundStartupError('chat_auth_broadcast_failed', error));
     }
   });
 });
@@ -822,47 +886,6 @@ async function handleLegacyMessage(
   context: RuntimeMessageContext,
 ) {
   switch (message.type) {
-    case 'GET_DEEPSEEK_API_KEY_STATUS':
-      return { ok: true, configured: await hasDeepSeekApiKey() };
-
-    case 'SAVE_DEEPSEEK_API_KEY': {
-      const { apiKey } = message.payload as { apiKey?: string };
-      await saveDeepSeekApiKey(apiKey ?? '');
-      officialApiChatMessages = [];
-      await createContextMenus();
-      await broadcastChatAuthStatus(context.tabId);
-      return { ok: true, configured: true };
-    }
-
-    case 'CLEAR_DEEPSEEK_API_KEY':
-      await clearDeepSeekApiKey();
-      officialApiChatMessages = [];
-      await createContextMenus();
-      await broadcastChatAuthStatus(context.tabId);
-      return { ok: true, configured: false };
-
-    case 'GET_MULTIMODAL_SETTINGS_STATUS':
-      return { ok: true, ...(await getMultimodalSettingsStatus()) };
-
-    case 'SAVE_MULTIMODAL_SETTINGS':
-      return { ok: true, ...(await saveMultimodalSettings(message.payload as MultimodalSettingsPatch)) };
-
-    case 'CLEAR_MULTIMODAL_SETTINGS':
-      return { ok: true, ...(await clearMultimodalSettings()) };
-
-    case 'ANALYZE_MULTIMODAL_MEDIA': {
-      const response = await analyzeMultimodalMedia(message.payload as MultimodalMediaAnalyzeRequest);
-      await broadcastToolCallHistoryUpdate(context.tabId);
-      if (!response.ok) {
-        return {
-          ok: false,
-          error: response.error ?? 'multimodal_analysis_failed',
-          analyses: response.analyses,
-        };
-      }
-      return response;
-    }
-
     case 'RECORD_USAGE_TURN':
       return recordUsageTurn(message.payload as UsageTurnInput);
 
@@ -899,66 +922,6 @@ async function handleLegacyMessage(
         message.payload,
         (result) => notifyDownloadedSyncState(result, context),
       ));
-    }
-
-    case 'CHAT_SUBMIT_PROMPT': {
-      const { text, config, refFileIds } = message.payload as {
-        text: string;
-        config?: Partial<OfficialApiChatConfig>;
-        refFileIds?: unknown;
-      };
-      if (!(await getChatEnabled())) {
-        return { ok: false, error: 'chat_disabled' };
-      }
-      if (!text?.trim()) return { ok: false, error: 'empty_prompt' };
-      // Fire and forget — the streaming response is broadcast
-      handleChatSubmitPrompt(text, config, coerceRefFileIds(refFileIds), context.tabId).catch(() => {});
-      return { ok: true };
-    }
-
-    case 'UPLOAD_DEEPSEEK_IMAGE':
-      return handleDeepSeekImageUpload(message.payload, context.tabId);
-
-    case 'CHAT_NEW_SESSION':
-      chatSessionId = null;
-      chatParentMessageId = null;
-      officialApiChatMessages = [];
-      return { ok: true };
-
-    case 'GET_AUTH_STATUS': {
-      return getChatAuthStatus(context.tabId);
-    }
-
-    case 'GET_OFFICIAL_API_CHAT_CONFIG':
-      return getOfficialApiChatConfig();
-
-    case 'SAVE_OFFICIAL_API_CHAT_CONFIG':
-      return saveOfficialApiChatConfig(message.payload);
-
-    case 'EXPORT_DEEPSEEK_CONVERSATIONS':
-      return handleConversationExport(message.payload, context.tabId);
-
-    case 'CANCEL_DEEPSEEK_EXPORT': {
-      const { exportId } = message.payload as { exportId?: string };
-      if (!exportId) return { ok: false, error: 'missing_export_id' };
-      const controller = conversationExportControllers.get(exportId);
-      if (!controller) return { ok: false, error: 'export_not_running' };
-      controller.abort();
-      conversationExportControllers.delete(exportId);
-      await broadcastConversationExportProgress({
-        exportId,
-        phase: 'cancelled',
-        status: 'cancelled',
-        current: 0,
-        total: 0,
-        message: backgroundT('background.export.cancelled'),
-      }, context.tabId);
-      return { ok: true };
-    }
-
-    case 'AUTH_STATUS_CHANGED': {
-      await broadcastChatAuthStatus(context.tabId);
-      return { ok: true };
     }
 
     case 'GET_AUTOMATIONS':
@@ -1226,9 +1189,9 @@ async function getChatAuthStatus(preferredTabId?: number) {
   const hasApiKey = await hasDeepSeekApiKey();
   if (hasApiKey) {
     return {
-      ok: true,
+      ok: true as const,
       available: true,
-      provider: 'official-api',
+      provider: 'official-api' as const,
       hasApiKey: true,
       hasToken: false,
     };
@@ -1236,9 +1199,9 @@ async function getChatAuthStatus(preferredTabId?: number) {
 
   const headers = await loadOrRefreshClientHeaders(preferredTabId);
   return {
-    ok: true,
+    ok: true as const,
     available: !!headers,
-    provider: headers ? 'deepseek-web' : null,
+    provider: headers ? 'deepseek-web' as const : null,
     hasApiKey: false,
     hasToken: !!headers,
   };
@@ -1246,7 +1209,8 @@ async function getChatAuthStatus(preferredTabId?: number) {
 
 async function broadcastChatAuthStatus(preferredTabId?: number) {
   const status = await getChatAuthStatus(preferredTabId);
-  chrome.runtime.sendMessage({ type: 'AUTH_STATUS_CHANGED', ...status }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'AUTH_STATUS_CHANGED', ...status })
+    .catch((error) => reportBackgroundStartupError('chat_auth_notification_failed', error));
 }
 
 async function broadcastConversationExportProgress(
@@ -1267,198 +1231,6 @@ async function executeBackgroundRuntimeToolCall(
     currentBackgroundLocale,
     options,
   );
-}
-
-async function analyzeMultimodalMedia(
-  request: MultimodalMediaAnalyzeRequest,
-): Promise<MultimodalMediaAnalyzeResponse> {
-  try {
-    const prompt = typeof request.prompt === 'string' && request.prompt.trim()
-      ? request.prompt.trim()
-      : 'Analyze the attached media.';
-    const media = normalizeMultimodalMediaInputs(request.media);
-    const server = await getMultimodalMcpServerForAnalysis();
-    const analyses: MultimodalMediaAnalysisItem[] = [];
-
-    const images = media.filter((item) => item.kind === 'image');
-    if (images.length > 0) {
-      const result = await executeBackgroundRuntimeToolCall(
-        createMultimodalMcpToolCall(server, 'analyze_images', {
-          prompt,
-          images: images.map((item, index) => {
-            if (!item.dataUrl) throw new Error(`${item.name} is missing image data.`);
-            return {
-              type: 'input_image',
-              image_url: item.dataUrl,
-              detail: 'auto',
-              label: item.name || `image-${index + 1}`,
-            };
-          }),
-          output_schema: 'general',
-        }, request),
-        'manual_chat',
-        { timeoutMs: MULTIMODAL_MCP_REQUEST_TIMEOUT_MS },
-      );
-      const analysis = createMultimodalAnalysisItem(
-        `images:${images.map((item) => item.id).join(',')}`,
-        'image',
-        images,
-        result,
-      );
-      if (!result.ok) {
-        return {
-          ok: false,
-          analyses: [analysis],
-          error: result.detail || result.summary,
-        };
-      }
-      analyses.push(analysis);
-    }
-
-    for (const video of media.filter((item) => item.kind === 'video')) {
-      if (!video.base64Data) throw new Error(`${video.name} is missing video data.`);
-      const result = await executeBackgroundRuntimeToolCall(
-        createMultimodalMcpToolCall(server, 'analyze_video', {
-          prompt,
-          video: {
-            inlineData: {
-              data: video.base64Data,
-              mimeType: video.mimeType,
-            },
-            mimeType: video.mimeType,
-          },
-          output_schema: 'summary',
-        }, request),
-        'manual_chat',
-        { timeoutMs: MULTIMODAL_MCP_REQUEST_TIMEOUT_MS },
-      );
-      const analysis = createMultimodalAnalysisItem(video.id, 'video', [video], result);
-      if (!result.ok) {
-        return {
-          ok: false,
-          analyses: [...analyses, analysis],
-          error: result.detail || result.summary,
-        };
-      }
-      analyses.push(analysis);
-    }
-
-    return { ok: true, analyses };
-  } catch (error) {
-    return {
-      ok: false,
-      analyses: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-function normalizeMultimodalMediaInputs(value: unknown): MultimodalMediaInput[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error('No multimodal media was provided.');
-  }
-  if (value.length > MULTIMODAL_MEDIA_MAX_ITEMS_PER_TURN) {
-    throw new Error(`Attach at most ${MULTIMODAL_MEDIA_MAX_ITEMS_PER_TURN} media files per turn.`);
-  }
-
-  return value.map((item, index) => {
-    if (!item || typeof item !== 'object') throw new Error(`media[${index}] must be an object.`);
-    const media = item as Partial<MultimodalMediaInput>;
-    const normalized: MultimodalMediaInput = {
-      id: nonEmptyString(media.id, `media[${index}].id`),
-      kind: media.kind === 'image' || media.kind === 'video' ? media.kind : invalidMediaKind(index),
-      name: nonEmptyString(media.name, `media[${index}].name`),
-      mimeType: nonEmptyString(media.mimeType, `media[${index}].mimeType`),
-      sizeBytes: finiteNonNegativeNumber(media.sizeBytes, `media[${index}].sizeBytes`),
-      dataUrl: typeof media.dataUrl === 'string' && media.dataUrl ? media.dataUrl : undefined,
-      base64Data: typeof media.base64Data === 'string' && media.base64Data ? media.base64Data : undefined,
-    };
-    assertSupportedMultimodalMedia(normalized);
-    return normalized;
-  });
-}
-
-async function getMultimodalMcpServerForAnalysis() {
-  const servers = await getAllMcpServers({ includeSecrets: false });
-  const server = servers.find(isMultimodalMcpServer);
-  if (!server) {
-    throw new Error('Multimodal MCP preset is missing. Create it on the MCP page first.');
-  }
-  if (!server.enabled) {
-    throw new Error('Multimodal MCP server is disabled. Enable it on the MCP page first.');
-  }
-  if (!server.execution.enabled || server.execution.mode === 'disabled') {
-    throw new Error('Multimodal MCP execution is disabled. Enable execution on the MCP page first.');
-  }
-  if (!isMultimodalAnalysisToolAllowed(server.allowlist)) {
-    throw new Error('Multimodal MCP analysis tools are disabled. Enable analyze_images or analyze_video on the MCP page first.');
-  }
-  if (!canUseMultimodalMediaInput(server)) {
-    throw new Error('Multimodal MCP is not available for media analysis.');
-  }
-  return server;
-}
-
-function createMultimodalMcpToolCall(
-  server: Awaited<ReturnType<typeof getMultimodalMcpServerForAnalysis>>,
-  name: 'analyze_images' | 'analyze_video',
-  payload: Record<string, unknown>,
-  request: MultimodalMediaAnalyzeRequest,
-): ToolCall {
-  return {
-    name,
-    payload,
-    raw: '',
-    provider: {
-      kind: 'mcp',
-      id: server.id,
-      displayName: server.displayName,
-      transport: server.transport.kind,
-    },
-    source: {
-      trigger: 'manual_chat',
-      chatSessionId: request.chatSessionId ?? null,
-      parentMessageId: request.parentMessageId ?? null,
-    },
-  };
-}
-
-function createMultimodalAnalysisItem(
-  id: string,
-  kind: 'image' | 'video',
-  media: readonly MultimodalMediaInput[],
-  result: ToolResult,
-): MultimodalMediaAnalysisItem {
-  return {
-    id,
-    kind,
-    media: media.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      name: item.name,
-      mimeType: item.mimeType,
-      sizeBytes: item.sizeBytes,
-    })),
-    result,
-  };
-}
-
-function nonEmptyString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`${label} must be a non-empty string.`);
-  }
-  return value.trim();
-}
-
-function finiteNonNegativeNumber(value: unknown, label: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative number.`);
-  }
-  return value;
-}
-
-function invalidMediaKind(index: number): never {
-  throw new Error(`media[${index}].kind must be image or video.`);
 }
 
 async function runBrowserSandboxToolResult(request: SandboxRunRequest): Promise<ToolResult> {
@@ -1588,85 +1360,6 @@ function sandboxExecutionResultToJson(result: SandboxExecutionResult): Record<st
     truncated: result.truncated,
     error: result.error ?? '',
   };
-}
-
-async function handleConversationExport(
-  payload: unknown,
-  excludeTabId?: number,
-): Promise<ConversationExportResult | { ok: false; exportId?: string; error: string }> {
-  const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-  const exportId = typeof value.exportId === 'string' && value.exportId.trim()
-    ? value.exportId.trim()
-    : crypto.randomUUID();
-  const request = normalizeConversationExportRequest(value.request);
-  const headers = await loadOrRefreshClientHeaders(excludeTabId);
-  if (!headers) {
-    return {
-      ok: false,
-      exportId,
-      error: backgroundT('background.auth.missingDeepSeek'),
-    };
-  }
-
-  const controller = new AbortController();
-  conversationExportControllers.set(exportId, controller);
-
-  try {
-    const baseUrl = new URL(DEEPSEEK_HOME_URL).origin;
-    const exportData = await runConversationExport({
-      exportId,
-      request,
-      baseUrl,
-      extensionVersion: getExtensionVersion(),
-      signal: controller.signal,
-      transport: createDeepSeekConversationExportTransport({
-        baseUrl,
-        clientHeaders: headers,
-        fetchImpl: fetch,
-      }),
-      onProgress: (progress) => broadcastConversationExportProgress(progress, excludeTabId),
-    });
-
-    await broadcastConversationExportProgress({
-      exportId,
-      phase: 'formatting',
-      status: 'running',
-      current: 0,
-      total: request.formats.length,
-      message: backgroundT('background.export.generating'),
-    }, excludeTabId);
-
-    assertConversationExportNotCancelled(controller.signal);
-    const artifacts = await buildConversationExportArtifactsCancellable(exportData, controller.signal);
-    assertConversationExportNotCancelled(controller.signal);
-    return {
-      ok: true,
-      exportId,
-      summary: exportData.stats,
-      artifacts,
-    };
-  } catch (error) {
-    const aborted = error instanceof DOMException && error.name === 'AbortError';
-    await broadcastConversationExportProgress({
-      exportId,
-      phase: aborted ? 'cancelled' : 'failed',
-      status: aborted ? 'cancelled' : 'failed',
-      current: 0,
-      total: 0,
-      message: aborted ? backgroundT('background.export.cancelled') : error instanceof Error ? error.message : String(error),
-    }, excludeTabId);
-    return {
-      ok: false,
-      exportId,
-      error: aborted ? backgroundT('background.export.cancelled') : error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    conversationExportControllers.delete(exportId);
-  }
-}
-
-function assertConversationExportNotCancelled(signal: AbortSignal) {
-  if (signal.aborted) throw new DOMException('Conversation export was cancelled.', 'AbortError');
 }
 
 async function scanDueAutomationsFromWake() {
@@ -1982,196 +1675,7 @@ function getSyncCounts(snapshot: SyncDataSnapshot): SyncCounts {
   };
 }
 
-interface DeepSeekImageUploadRequest {
-  dataUrl: string;
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
-}
-
-async function handleDeepSeekImageUpload(payload: unknown, excludeTabId?: number) {
-  if (!(await getChatEnabled())) {
-    return { ok: false, error: 'chat_disabled' };
-  }
-
-  const request = normalizeDeepSeekImageUploadRequest(payload);
-  const headers = await loadOrRefreshClientHeaders(excludeTabId);
-  if (!headers) {
-    return { ok: false, error: backgroundT('background.auth.missingDeepSeek') };
-  }
-
-  const file = dataUrlToBlob(request.dataUrl, request.mimeType);
-  if (file.size !== request.sizeBytes) {
-    throw new Error('Image upload payload size changed during transfer.');
-  }
-
-  const uploaded = await uploadDeepSeekFile({
-    file,
-    filename: request.name,
-    modelType: 'vision',
-    clientHeaders: headers,
-    powHeaders: await createPowHeadersForPath(headers, DEEPSEEK_FILE_UPLOAD_PATH),
-  });
-
-  return { ok: true, file: uploaded };
-}
-
-function normalizeDeepSeekImageUploadRequest(payload: unknown): DeepSeekImageUploadRequest {
-  const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : '';
-  const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim() : 'image';
-  const mimeType = typeof value.mimeType === 'string' && value.mimeType.trim()
-    ? value.mimeType.trim()
-    : typeof value.type === 'string' && value.type.trim()
-      ? value.type.trim()
-      : '';
-  const sizeBytes = typeof value.sizeBytes === 'number' && Number.isFinite(value.sizeBytes)
-    ? value.sizeBytes
-    : typeof value.size === 'number' && Number.isFinite(value.size)
-      ? value.size
-      : 0;
-
-  if (!dataUrl.startsWith('data:')) {
-    throw new Error('Image upload payload must include a data URL.');
-  }
-  if (!mimeType.startsWith('image/')) {
-    throw new Error(`${name} is not an image file.`);
-  }
-  if (sizeBytes <= 0) {
-    throw new Error(`${name} is empty.`);
-  }
-  if (sizeBytes > DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES) {
-    throw new Error(`${name} exceeds the ${formatUploadBytes(DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES)} image upload limit.`);
-  }
-
-  return { dataUrl, name, mimeType, sizeBytes };
-}
-
-function dataUrlToBlob(dataUrl: string, expectedMimeType: string): Blob {
-  const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
-  if (!match) {
-    throw new Error('Image upload payload must be base64 encoded.');
-  }
-
-  const mimeType = match[1] || expectedMimeType;
-  if (mimeType !== expectedMimeType) {
-    throw new Error(`Image MIME type changed from ${expectedMimeType} to ${mimeType}.`);
-  }
-
-  const binary = atob(match[2]);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
-
-function coerceRefFileIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function formatUploadBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)}MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
-  return `${bytes}B`;
-}
-
-async function handleChatSubmitPrompt(
-  prompt: string,
-  configInput?: Partial<OfficialApiChatConfig>,
-  refFileIds: string[] = [],
-  excludeTabId?: number,
-) {
-  const apiKey = await getDeepSeekApiKey();
-  const provider: ChatLoopProvider = apiKey ? 'official-api' : 'web';
-  await markChatLoopStarted(provider);
-  try {
-    if (apiKey) {
-      const config = configInput
-        ? normalizeOfficialApiChatConfig(configInput)
-        : await getOfficialApiChatConfig();
-      await handleOfficialApiChatSubmitPrompt(prompt, apiKey, config, excludeTabId);
-      return;
-    }
-
-    await handleWebChatSubmitPrompt(prompt, refFileIds, excludeTabId);
-  } finally {
-    await markChatLoopFinished();
-  }
-}
-
-async function handleWebChatSubmitPrompt(prompt: string, refFileIds: string[] = [], excludeTabId?: number) {
-  const headers = await loadOrRefreshClientHeaders(excludeTabId);
-  if (!headers) {
-    broadcastChatChunk({ text: '', done: true, error: backgroundT('background.auth.missingDeepSeek') }, excludeTabId);
-    return;
-  }
-
-  try {
-    if (!chatSessionId) {
-      chatSessionId = await createChatSession(headers);
-      chatParentMessageId = null;
-    }
-
-    const { augmented, enabledDescriptors } = await buildSidepanelPrompt(prompt);
-    const storedModelType = await getModelType();
-    const modelType = refFileIds.length > 0 ? 'vision' : storedModelType;
-
-    const initialInput = {
-      chatSessionId,
-      parentMessageId: chatParentMessageId,
-      modelType,
-      prompt: augmented,
-      refFileIds,
-      thinkingEnabled: false,
-      searchEnabled: false,
-      clientHeaders: headers,
-    };
-
-    await runSidepanelToolLoop(initialInput, enabledDescriptors, excludeTabId);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
-    if (msg.includes('auth') || msg.includes('token') || msg.includes('401')) {
-      chatSessionId = null;
-    }
-  }
-}
-
-async function handleOfficialApiChatSubmitPrompt(
-  prompt: string,
-  apiKey: string,
-  config: OfficialApiChatConfig,
-  excludeTabId?: number,
-) {
-  try {
-    const promptContext = await buildSidepanelPrompt(prompt);
-
-    const initialMessages: OfficialDeepSeekMessage[] = [
-      ...officialApiChatMessages,
-      { role: 'user', content: promptContext.augmented },
-    ];
-
-    officialApiChatMessages = await runOfficialApiToolLoop(
-      {
-        apiKey,
-        config,
-        messages: initialMessages,
-      },
-      promptContext.enabledDescriptors,
-      excludeTabId,
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    broadcastChatChunk({ text: '', done: true, error: msg }, excludeTabId);
-  }
-}
-
-async function buildSidepanelPrompt(prompt: string): Promise<{
+async function buildSidepanelPrompt(request: ChatPromptBuildRequest): Promise<{
   augmented: string;
   enabledDescriptors: ToolDescriptor[];
 }> {
@@ -2183,13 +1687,13 @@ async function buildSidepanelPrompt(prompt: string): Promise<{
   const promptSettings = await getPromptInjectionSettings();
   const shouldInjectPreset = shouldInjectPresetForTurn({
     hasActivePreset: Boolean(activePreset),
-    isFirstMessage: chatSessionId === null && officialApiChatMessages.length === 0,
-    messageCount: officialApiChatMessages.length + 1,
+    isFirstMessage: request.isFirstMessage,
+    messageCount: request.messageCount,
     cadence: promptSettings.presetCadence,
   });
 
   const enabledDescriptors = filterSidepanelChatToolDescriptors(toolDescriptors);
-  const { augmented } = buildPromptAugmentation(prompt, {
+  const { augmented } = buildPromptAugmentation(request.prompt, {
     memories: memories.filter((memory) => memory.scope !== 'project'),
     presetContent: shouldInjectPreset ? activePreset?.content ?? null : null,
     toolDescriptors: enabledDescriptors,
@@ -2203,171 +1707,6 @@ async function buildSidepanelPrompt(prompt: string): Promise<{
   return { augmented, enabledDescriptors };
 }
 
-async function runOfficialApiToolLoop(
-  input: {
-    apiKey: string;
-    config: OfficialApiChatConfig;
-    messages: OfficialDeepSeekMessage[];
-  },
-  toolDescriptors: ToolDescriptor[],
-  excludeTabId?: number,
-): Promise<OfficialDeepSeekMessage[]> {
-  const MAX_STEPS = 20;
-  let currentMessages = [...input.messages];
-
-  for (let step = 0; step < MAX_STEPS; step++) {
-    let accumulated = '';
-    let reasoningAccumulated = '';
-    const turn = await submitOfficialDeepSeekStreaming({
-      apiKey: input.apiKey,
-      config: input.config,
-      messages: currentMessages,
-    }, {
-      onTextChunk(newText: string, fullText: string) {
-        accumulated = fullText;
-        broadcastChatChunk({ text: newText, done: false, phase: 'answer' }, excludeTabId);
-      },
-      onReasoningChunk(newText: string, fullText: string) {
-        reasoningAccumulated = fullText;
-        broadcastChatChunk({ text: '', reasoningText: newText, done: false, phase: 'reasoning' }, excludeTabId);
-      },
-    });
-
-    const fullText = accumulated || turn.assistantText;
-
-    if (!fullText) {
-      broadcastChatChunk({ text: '', done: true }, excludeTabId);
-      return currentMessages;
-    }
-
-    currentMessages = [
-      ...currentMessages,
-      {
-        role: 'assistant',
-        content: fullText,
-        reasoningContent: reasoningAccumulated || turn.reasoningText || undefined,
-      },
-    ];
-    const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
-
-    if (toolCalls.length === 0) {
-      broadcastChatChunk({ text: '', done: true }, excludeTabId);
-      return currentMessages;
-    }
-
-    const execs: ToolExecutionRecord[] = [];
-    for (const call of toolCalls) {
-      const result = await executeBackgroundRuntimeToolCall(call, 'sidepanel_chat');
-      execs.push({
-        name: call.name,
-        result: {
-          ok: result.ok,
-          summary: result.summary,
-          detail: result.detail,
-          output: result.output,
-          truncated: result.truncated,
-          error: result.error,
-        },
-      });
-    }
-
-    const toolResultsText = execs.map((e) =>
-      `<${e.name}_result>\n${JSON.stringify(e.result)}\n</${e.name}_result>`
-    ).join('\n');
-
-    currentMessages = [
-      ...currentMessages,
-      {
-        role: 'user',
-        content: backgroundT('background.chat.continueWithToolResults', { toolResults: toolResultsText }),
-      },
-    ];
-  }
-
-  broadcastChatChunk({ text: backgroundT('background.chat.maxToolSteps'), done: true }, excludeTabId);
-  return currentMessages;
-}
-
-async function runSidepanelToolLoop(
-  input: {
-    chatSessionId: string;
-    parentMessageId: number | null;
-    modelType: string | null;
-    prompt: string;
-    refFileIds: string[];
-    thinkingEnabled: boolean;
-    searchEnabled: boolean;
-    clientHeaders: Record<string, string>;
-  },
-  toolDescriptors: ToolDescriptor[],
-  excludeTabId?: number,
-) {
-  const MAX_STEPS = 20;
-  const allExecutions: ToolExecutionRecord[] = [];
-  let currentInput = input;
-
-  for (let step = 0; step < MAX_STEPS; step++) {
-    let accumulated = '';
-    const turn = await submitPromptStreaming({
-      ...currentInput,
-      powHeaders: await createPowHeaders(currentInput.clientHeaders),
-    }, {
-      onTextChunk(newText: string, fullText: string) {
-        accumulated = fullText;
-        broadcastChatChunk({ text: newText, done: false }, excludeTabId);
-      },
-    });
-
-    chatParentMessageId = turn.responseMessageId;
-    const fullText = accumulated || turn.assistantText;
-
-    if (!fullText) {
-      broadcastChatChunk({ text: '', done: true }, excludeTabId);
-      return;
-    }
-
-    const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
-
-    if (toolCalls.length === 0) {
-      broadcastChatChunk({ text: fullText, done: true }, excludeTabId);
-      return;
-    }
-
-    const execs: ToolExecutionRecord[] = [];
-    for (const call of toolCalls) {
-      const result = await executeBackgroundRuntimeToolCall(call, 'sidepanel_chat');
-      execs.push({
-        name: call.name,
-        result: {
-          ok: result.ok,
-          summary: result.summary,
-          detail: result.detail,
-          output: result.output,
-          truncated: result.truncated,
-          error: result.error,
-        },
-      });
-    }
-    allExecutions.push(...execs);
-
-    const toolResultsText = execs.map((e) =>
-      `<${e.name}_result>\n${JSON.stringify(e.result)}\n</${e.name}_result>`
-    ).join('\n');
-
-    const continuationPrompt = backgroundT('background.chat.continueWithToolResults', {
-      toolResults: toolResultsText,
-    });
-
-    currentInput = {
-      ...currentInput,
-      prompt: continuationPrompt,
-      parentMessageId: chatParentMessageId,
-    };
-  }
-
-  broadcastChatChunk({ text: backgroundT('background.chat.maxToolSteps'), done: true }, excludeTabId);
-}
-
 function broadcastChatChunk(
   chunk: {
     text: string;
@@ -2378,18 +1717,6 @@ function broadcastChatChunk(
   },
   excludeTabId?: number,
 ) {
-  chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }).catch(() => {});
-}
-
-// Called on every service-worker wake. If a chat tool loop was running when
-// the previous SW instance was terminated, the sidepanel never received its
-// final `done:true` chunk. Emit one so the UI unblocks, then reset in-memory
-// chat state so the next turn starts clean.
-async function reconcileInterruptedChatLoopOnWake() {
-  const interrupted = await reconcileInterruptedChatLoop();
-  if (!interrupted) return;
-  chatSessionId = null;
-  chatParentMessageId = null;
-  officialApiChatMessages = [];
-  broadcastChatChunk({ text: '', done: true, error: backgroundT('background.chat.interrupted') });
+  chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk })
+    .catch((error) => reportBackgroundStartupError('chat_stream_notification_failed', error));
 }

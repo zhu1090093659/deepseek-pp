@@ -31,7 +31,7 @@ describe('runtime command registry', () => {
       ...CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
     ];
 
-    expect(TYPED_RUNTIME_COMMAND_TYPES).toHaveLength(88);
+    expect(TYPED_RUNTIME_COMMAND_TYPES).toHaveLength(104);
     expect(TYPED_RUNTIME_COMMAND_TYPES).toEqual(expect.arrayContaining([
       'GET_MEMORIES',
       'GET_ARTIFACT',
@@ -41,8 +41,10 @@ describe('runtime command registry', () => {
       'GET_MCP_SERVERS',
       'EXECUTE_TOOL_CALL',
       'GET_PLATFORM_CAPABILITIES',
+      'GET_DEEPSEEK_API_KEY_STATUS',
+      'EXPORT_DEEPSEEK_CONVERSATIONS',
     ]));
-    expect(LEGACY_RUNTIME_COMMAND_TYPES).toHaveLength(33);
+    expect(LEGACY_RUNTIME_COMMAND_TYPES).toHaveLength(17);
     expect(CLIENT_ONLY_RUNTIME_COMMAND_TYPES).toEqual(['TOOL_CALL_EXECUTED', 'MEMORIES_UPDATED']);
     expect(new Set(allTypes).size).toBe(123);
     for (const type of TYPED_RUNTIME_COMMAND_TYPES) {
@@ -75,7 +77,7 @@ describe('runtime command registry', () => {
     expect(handle).toHaveBeenCalledTimes(1);
     expect(handleLegacy).not.toHaveBeenCalled();
 
-    await expect(registry.dispatch({ type: 'GET_DEEPSEEK_API_KEY_STATUS' }, context))
+    await expect(registry.dispatch({ type: 'RECORD_USAGE_TURN' }, context))
       .resolves.toEqual({ legacy: true });
     expect(handleLegacy).toHaveBeenCalledOnce();
   });
@@ -99,12 +101,12 @@ describe('runtime command registry', () => {
         config,
         dismissed,
         {
-          type: 'GET_DEEPSEEK_API_KEY_STATUS',
-          handle: async () => ({ ok: true, configured: false }),
+          type: 'RECORD_USAGE_TURN',
+          handle: async () => null,
         } as unknown as RuntimeCommandHandler,
       ]),
       handleLegacy,
-    })).toThrow('Runtime command is not owned by the typed registry: GET_DEEPSEEK_API_KEY_STATUS');
+    })).toThrow('Runtime command is not owned by the typed registry: RECORD_USAGE_TURN');
   });
 
   it('rejects unknown and client-only commands without entering legacy dispatch', async () => {

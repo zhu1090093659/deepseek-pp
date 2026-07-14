@@ -81,7 +81,7 @@ function normalizeFormats(value: unknown): ConversationExportFormat[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new ConversationExportValidationError('formats must include at least one supported format.');
   }
-  return value.map((format) => {
+  return mapDenseArray(value, 'formats', (format) => {
     if (typeof format === 'string' && SUPPORTED_FORMATS.has(format as ConversationExportFormat)) {
       return format as ConversationExportFormat;
     }
@@ -112,13 +112,28 @@ function normalizeSessionIds(value: unknown): string[] | undefined {
     throw new ConversationExportValidationError(`sessionIds must include 1-${MAX_SESSION_ID_COUNT} non-empty strings.`);
   }
 
-  const ids = value.map((item) => {
+  const ids = mapDenseArray(value, 'sessionIds', (item) => {
     if (typeof item !== 'string' || !item.trim()) {
       throw new ConversationExportValidationError('sessionIds must include only non-empty strings.');
     }
     return item.trim();
   });
   return ids.filter((id, index) => ids.indexOf(id) === index);
+}
+
+function mapDenseArray<T>(
+  value: unknown[],
+  field: string,
+  mapItem: (item: unknown, index: number) => T,
+): T[] {
+  const result: T[] = [];
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.prototype.hasOwnProperty.call(value, index)) {
+      throw new ConversationExportValidationError(`${field} must not contain empty items.`);
+    }
+    result.push(mapItem(value[index], index));
+  }
+  return result;
 }
 
 function assertNonEmptyString(value: unknown, field: string): asserts value is string {

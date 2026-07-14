@@ -25,7 +25,7 @@ S.U.P.E.R 评分：🟢 符合；🟡 部分符合；🔴 明确违反或替换�
 | `interceptor` | Fetch/XHR/IDB hooks、SSE/tool parsing、history cleanup、token speed | prompt、memory、skill、inline-agent、tool；修改浏览器原型 | 9 / 3,203 | Critical | S🔴 U🔴 P🟡 E🔴 R🔴 |
 | `mcp` | MCP client/discovery/store 和 HTTP/SSE/bridge/native transports | JSON-RPC port 清晰；permission/header/store 与 Chrome 实现耦合 | 13 / 2,414 | High | S🟢 U🟡 P🟢 E🟡 R🟢 |
 | `memory` | sole codec、Dexie migrations/repository、atomic import、scope、selector、injector/tool | Dexie、root types、prompt/i18n、shared persistence lock；local/sync/import/UI 复用同一 codec | 8 / 829 | Medium | S🟢 U🟢 P🟢 E🟡 R🟢 |
-| `messaging/` | MAIN/content bridge envelope validation、单一 runtime command ownership/typed contracts、persistence/tool payload codecs、runtime broadcast helper | R4.1–R4.2 已把 86 个 receiver commands 纳入 typed registry；剩余 33 个 transitional commands 由 R4.3–R4.4 迁移，发送侧 best-effort 语义仍按原契约保留 | 13 / 2,766 | High | S🟢 U🟢 P🟢 E🟡 R🟢 |
+| `messaging/` | MAIN/content bridge envelope validation、单一 runtime command ownership/typed contracts、persistence/tool/DeepSeek payload codecs、runtime broadcast helper | R4.1–R4.3 已把 102 个 receiver commands 纳入 typed registry；剩余 17 个 transitional commands 由 R4.4 迁移，发送侧 best-effort 语义仍按原契约保留 | 15 / 3,135 | High | S🟢 U🟢 P🟢 E🟡 R🟢 |
 | `model` | Model type preference store | Chrome storage | 1 / 20 | Low | S🟢 U🟢 P🟡 E🔴 R🔴 |
 | `multimodal` | Media policy、settings、MCP preset/contracts | MCP、tool、Chrome storage、外部 host package | 5 / 477 | Medium | S🟢 U🟡 P🟢 E🔴 R🟡 |
 | `network` | Caller cancellation/deadline 组合、注入式 fetch、UTF-8 request/response budget、late-response cleanup；`createAbortScope`, `fetchWithNetworkPolicy` | 标准 Fetch/Streams/Abort API，不依赖领域模块或 `AbortSignal.any` | 2 / 314 | Medium | S🟢 U🟢 P🟢 E🟢 R🟢 |
@@ -55,7 +55,7 @@ S.U.P.E.R 评分：🟢 符合；🟡 部分符合；🔴 明确违反或替换�
 
 | Module | Responsibility / Public Surface | Main Issue | Size | Complexity | S.U.P.E.R |
 |:--|:--|:--|--:|:--|:--|
-| `entrypoints/background.ts` + background handlers | MV3 bootstrap、单一 121-command registry、automation/sync/chat/export/tool/sandbox orchestration | R4.1–R4.2 已把 86 个 persistence/library/project/local-preference/MCP/browser/tool commands 拆为 typed handlers；R4.2 由 MCP、browser/web、tool-execution 三组 handler 与一个穷尽 payload codec 共同固定接收边界，根文件仍保留 33 个 transitional cases 和跨域 Chrome IO | 2,395 root LOC + extracted handler/codec/composition modules | Critical | S🔴 U🔴 P🟡 E🔴 R🔴 |
+| `entrypoints/background.ts` + background handlers | MV3 bootstrap、单一 121-command registry、automation/sync/tool/sandbox composition 与 lifecycle | R4.1–R4.3 已把 102 个 commands 拆为 typed handlers；R4.3 由 auth、multimodal、chat、export 四组 handler、单一 chat/export coordinator 与穷尽 payload codec 固定接收边界，根文件仅保留 R4.4 的 17 个 transitional cases | 1,719 root LOC + 21 extracted handler/service/composition modules | Critical | S🟡 U🟡 P🟡 E🟡 R🟢 |
 | `entrypoints/content.ts` + content adapters | Bridge、DeepSeek DOM、tool/agent UI、export、多模态、theme、pet、history/project | 6,713 行根文件、全局状态、observer/timer、host selectors 与业务混合 | ~9,344 LOC | Critical | S🔴 U🔴 P🟡 E🔴 R🔴 |
 | `entrypoints/main-world.content.ts` | MAIN world hook/bridge composition | 入口集中，但运行于不可信 page realm，payload contract 浅 | 238 LOC | High | S🟢 U🟡 P🟡 E🔴 R🟡 |
 | `entrypoints/floating-chat.content.ts` | 全站 launcher 启动 | `<all_urls>` 生命周期、权限和默认值未形成状态机 | 22 LOC | Medium | S🟢 U🟢 P🟡 E🔴 R🟡 |
@@ -82,8 +82,8 @@ S.U.P.E.R 评分：🟢 符合；🟡 部分符合；🔴 明确违反或替换�
 ## Duplicate Contracts and Multiple Truth Sources
 
 1. **Runtime messages**
-   - 单一 production registry 现拥有 `88 typed / 33 legacy / 2 client-only`；`background.ts` 仅余 33 个 transitional `case`。
-   - `core/types.ts` 的 `MessageAction` 仍有 91 个 variant；R4.2 的 12 个 live-only receiver commands 通过窄 typed contract 接管而未扩张旧 union，剩余 20 个 live-only names 由 R4.3–R4.4 收敛。
+   - 单一 production registry 现拥有 `104 typed / 17 legacy / 2 client-only`；`background.ts` 仅余 17 个 transitional `case`。
+   - `core/types.ts` 的 `MessageAction` 仍有 91 个 variant；R4.2–R4.3 的 live-only receiver commands 通过窄 typed contract 接管而未扩张旧 union，剩余 live-only names 由 R4.4 收敛。
    - R4.1–R4.2 的 58 个 payload-bearing commands 分别由两个穷尽 command-codec map 在 handler 接收边界解码；Memory、Skill、Preset 复用各自领域 codec，MCP、permission、sandbox 和 tool authorization 在特权 IO 前完成校验。剩余 transitional surface 有 12 个直接 `as` 强转和九个 delegated payload readers。
 
 2. **Platform access**
@@ -114,9 +114,9 @@ S.U.P.E.R 评分：🟢 符合；🟡 部分符合；🔴 明确违反或替换�
 ### `entrypoints/background.ts`
 
 - **Responsibility**：Extension composition root、runtime command registry、剩余跨域 application service 和 Chrome lifecycle。
-- **Public API**：121 个 live runtime commands 的单一入口；88 个 typed handlers，33 个 transitional legacy cases。
+- **Public API**：121 个 live runtime commands 的单一入口；104 个 typed handlers，17 个 transitional legacy cases。
 - **Internal dependencies**：Memory、Skill、MCP、tool、sync、automation、DeepSeek、export、sandbox、browser control 等几乎全部领域。
-- **Transformation note**：沿现有 registry 按 R4.3–R4.4 的既定 ownership 继续迁移；每组迁移后立即删除对应旧 case，禁止增加第二套路由或 validator。
+- **Transformation note**：沿现有 registry 按 R4.4 的既定 ownership 完成最后 17 个迁移；每组迁移后立即删除对应旧 case，禁止增加第二套路由或 validator。
 - **S.U.P.E.R issue**：五项仍红；R4.1–R4.2 已移出 persistence/library/project/local-preference/MCP/browser/tool 业务流程，但根文件仍承载 33 个命令和多域 lifecycle/IO。
 
 ### `entrypoints/content.ts`

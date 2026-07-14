@@ -79,7 +79,7 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、chat/sync/automation/tool/export/sandbox orchestration | 根文件 2,395 行；R4.1–R4.2 已将 86 个 persistence/library/project/local-preference/MCP/browser/tool commands 拆为 typed handlers，R4.2 以三组 handler 和一个穷尽 payload codec 固定 29 个接收边界；单一 registry 现为 `88 typed / 33 legacy`，仍有 33 个 transitional cases 和多域职责 |
+| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、sync/automation/tool composition 与 lifecycle | 根文件 1,719 行；R4.1–R4.3 已将 102 个 persistence/library/project/local-preference/MCP/browser/tool/DeepSeek/chat/multimodal/export commands 拆为 typed handlers；R4.3 以单一 chat turn owner、owner-bound export coordinator 和一个穷尽 payload codec 固定 16 个接收边界；单一 registry 现为 `104 typed / 17 legacy`，剩余多域职责由 R4.4 收口 |
 | `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
 | `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
 | `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |

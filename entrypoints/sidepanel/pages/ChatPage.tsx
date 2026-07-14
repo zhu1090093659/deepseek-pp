@@ -313,7 +313,18 @@ export default function ChatPage() {
       });
       if (!ok) return;
     }
-    chrome.runtime.sendMessage({ type: 'CHAT_NEW_SESSION' }).catch(() => {});
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'CHAT_NEW_SESSION' }) as {
+        ok?: boolean;
+        error?: string;
+      } | undefined;
+      if (result?.ok !== true) {
+        throw new Error(result?.error || t('sidepanel.chatPage.sendFailed'));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     messagesRef.current = [];
     setMessages([]);
     setError(null);

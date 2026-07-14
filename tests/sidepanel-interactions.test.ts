@@ -569,6 +569,42 @@ describe('sidepanel interactions', () => {
       },
     });
   });
+
+  it('waits for new-session acknowledgement before clearing pending chat UI', async () => {
+    let resolveReset!: (value: { ok: true }) => void;
+    const resetAck = new Promise<{ ok: true }>((resolve) => {
+      resolveReset = resolve;
+    });
+    const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
+      if (message.type === 'GET_MODEL_TYPE') return 'vision';
+      if (message.type === 'GET_VOICE_SETTINGS') return {};
+      if (message.type === 'UPLOAD_DEEPSEEK_IMAGE') {
+        return { ok: true, file: { id: 'file-image-1', fileName: 'shot.png', status: 'SUCCESS' } };
+      }
+      if (message.type === 'CHAT_NEW_SESSION') return resetAck;
+      return null;
+    });
+    stubChrome(sendMessage);
+    stubObjectUrl();
+    stubFileReader('data:image/png;base64,YWJj');
+    await renderElement(React.createElement(ChatPage));
+    await flushPromises();
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const image = new File(['abc'], 'shot.png', { type: 'image/png' });
+    Object.defineProperty(fileInput, 'files', { value: [image], configurable: true });
+    await act(async () => fileInput.dispatchEvent(new Event('change', { bubbles: true })));
+    await flushPromises();
+    expect(container.textContent).toContain('已添加');
+
+    await clickButtonByLabel('新建会话');
+    expect(container.textContent).toContain('已添加');
+    resolveReset({ ok: true });
+    await flushPromises();
+    expect(container.textContent).not.toContain('已添加');
+  });
 });
 
 async function renderElement(element: React.ReactElement) {

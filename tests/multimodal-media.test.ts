@@ -8,6 +8,7 @@ import {
   buildMultimodalAnalysisPrompt,
   hasDeepSeekChatSessionRoute,
   selectMultimodalMediaRouteKeyForRequest,
+  normalizeMultimodalMediaAnalyzeRequest,
   shouldPreserveInitialMultimodalMediaRoute,
   type MultimodalMediaAnalysisItem,
 } from '../core/multimodal/media';
@@ -27,6 +28,13 @@ describe('multimodal media request helpers', () => {
       mimeType: 'video/mp4',
       sizeBytes: MULTIMODAL_MEDIA_VIDEO_INLINE_MAX_BYTES + 1,
     })).toThrow(/inline video limit/);
+  });
+
+  it('rejects sparse media arrays at the receiving boundary', () => {
+    expect(() => normalizeMultimodalMediaAnalyzeRequest({
+      prompt: 'inspect',
+      media: new Array(1),
+    })).toThrow('media[0] must be provided');
   });
 
   it('injects MCP media analysis results before the user prompt', () => {
