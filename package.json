@@ -33,6 +33,7 @@
     "verify:release-assets": "node scripts/release-assets-check.mjs",
     "verify:bundled-skills": "node scripts/bundled-skill-package-check.mjs",
     "smoke:pyodide": "node scripts/pyodide-offline-smoke.mjs",
+    "verify:persistence-burst": "vitest run tests/persistence-burst-budget.test.ts --reporter=verbose",
     "verify:i18n": "node scripts/i18n-locale-check.mjs && node scripts/i18n-coverage-audit.mjs",
     "ci:quality": "npm run verify:workflows && npm run audit:prod && npm run prompt:freeze && npm run compile && npm test && npm run verify:i18n && npm run verify:automation && npm run smoke:mcp && npm run verify:mcp:mock && npm run smoke:shell && npm run smoke:pow && npm run build:all && npm run verify:bundled-skills && npm run verify:extension-utf8 && npm run verify:manifest-policy && npm run zip:all && npm run verify:release-assets && npm run smoke:pyodide",
     "shell:install": "node scripts/install-shell-host.mjs",

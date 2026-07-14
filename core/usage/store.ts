@@ -10,7 +10,7 @@ import type {
   UsageTurnRecord,
 } from './types';
 import { decodeUsageRecords, encodeUsageRecords } from './codec';
-import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
+import { createCoalescingMutationQueue } from '../persistence/coalescing-mutation-queue';
 import { normalizeUsageTurnInput } from './input-codec';
 import type { TokenMetricSource } from '../deepseek/stream-metrics';
 
@@ -18,24 +18,34 @@ export const USAGE_STORAGE_KEY = 'deepseek_pp_usage_turns_v1';
 const MAX_RECORDS = 5_000;
 const RETENTION_DAYS = 180;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const usageOperations = createSerialOperationQueue();
+const usageOperations = createCoalescingMutationQueue<UsageTurnRecord, UsageTurnRecord>(
+  persistUsageBurst,
+);
 
 export async function recordUsageTurn(input: UsageTurnInput): Promise<UsageTurnRecord> {
   const incoming = normalizeUsageTurnInput(input);
-  return usageOperations.run(async () => {
-    const records = await readUsageRecordsAlreadyOwned();
+  return usageOperations.mutate(incoming);
+}
+
+async function persistUsageBurst(
+  incomingRecords: readonly UsageTurnRecord[],
+): Promise<UsageTurnRecord[]> {
+  let records = await readUsageRecordsAlreadyOwned();
+  const results: UsageTurnRecord[] = [];
+  for (const incoming of incomingRecords) {
     const existingIndex = records.findIndex((record) => record.id === incoming.id);
     const nextRecord = existingIndex >= 0
       ? mergeUsageRecord(records[existingIndex], incoming)
       : incoming;
 
-    const nextRecords = existingIndex >= 0
+    records = pruneUsageRecords(existingIndex >= 0
       ? [...records.slice(0, existingIndex), nextRecord, ...records.slice(existingIndex + 1)]
-      : [...records, nextRecord];
+      : [...records, nextRecord]);
+    results.push(nextRecord);
+  }
 
-    await saveUsageRecordsAlreadyOwned(pruneUsageRecords(nextRecords));
-    return nextRecord;
-  });
+  await saveUsageRecordsAlreadyOwned(records);
+  return results;
 }
 
 export async function getUsageSummary(rangeDaysInput: unknown): Promise<UsageSummary> {
@@ -45,14 +55,14 @@ export async function getUsageSummary(rangeDaysInput: unknown): Promise<UsageSum
 }
 
 export async function clearUsageRecords(): Promise<void> {
-  await usageOperations.run(async () => {
+  await usageOperations.barrier(async () => {
     await readUsageRecordsAlreadyOwned();
     await chrome.storage.local.remove(USAGE_STORAGE_KEY);
   });
 }
 
 export async function getUsageRecords(): Promise<UsageTurnRecord[]> {
-  return usageOperations.run(async () => {
+  return usageOperations.barrier(async () => {
     const records = await readUsageRecordsAlreadyOwned();
     return [...records].sort((a, b) => a.recordedAt - b.recordedAt);
   });

@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 describe('whole-key persistence boundaries', () => {
   it('owns one independent queue per store instead of joining the sync-global lock', () => {
-    for (const path of [
-      'core/automation/store.ts',
-      'core/usage/store.ts',
-      'core/tool/history.ts',
-    ]) {
+    for (const [path, queueFactory] of [
+      ['core/automation/store.ts', 'createSerialOperationQueue'],
+      ['core/usage/store.ts', 'createCoalescingMutationQueue'],
+      ['core/tool/history.ts', 'createCoalescingMutationQueue'],
+    ] as const) {
       const source = readFileSync(path, 'utf8');
-      expect(source).toContain('createSerialOperationQueue');
+      expect(source).toContain(queueFactory);
       expect(source).not.toContain('withSyncLocalStateLock');
     }
   });
