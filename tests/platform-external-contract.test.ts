@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EMPTY_PLATFORM_CAPABILITIES,
   createCapabilityMap,
-  getCurrentBrowserExtensionEnvironment,
   getCurrentPlatformEnvironment,
 } from '../core/platform/capabilities';
 import { isShellNativeHostSupported } from '../core/platform/gating';
@@ -30,7 +29,7 @@ describe('external platform capability contract', () => {
   it('preserves the Chromium API profile', () => {
     vi.stubGlobal('chrome', chromiumApiProfile());
 
-    const environment = getCurrentBrowserExtensionEnvironment();
+    const environment = getCurrentPlatformEnvironment();
     expect(environment.kind).toBe('browser_extension');
     for (const capability of PLATFORM_PROFILE_FIXTURES.chromium.supported) {
       expect(environment.capabilities[capability], capability).toBe(true);
@@ -41,7 +40,7 @@ describe('external platform capability contract', () => {
     vi.stubGlobal('chrome', firefoxApiProfile());
     vi.stubGlobal('document', undefined);
 
-    const environment = getCurrentBrowserExtensionEnvironment();
+    const environment = getCurrentPlatformEnvironment();
     for (const capability of PLATFORM_PROFILE_FIXTURES.firefox.supported) {
       expect(environment.capabilities[capability], capability).toBe(true);
     }
@@ -64,7 +63,7 @@ describe('external platform capability contract', () => {
     });
     vi.stubGlobal('chrome', chromeStub);
 
-    const environment = getCurrentBrowserExtensionEnvironment();
+    const environment = getCurrentPlatformEnvironment();
     expect(environment.capabilities.tabs).toBe(false);
     expect(environment.capabilities.debugger).toBe(false);
     expect(environment.capabilities.browserControl).toBe(false);
@@ -92,7 +91,7 @@ describe('external platform capability contract', () => {
     expect(isShellNativeHostSupported(null)).toBe(true);
 
     vi.stubGlobal('chrome', chromiumApiProfile());
-    expect(getCurrentBrowserExtensionEnvironment().capabilities.downloads).toBe(true);
+    expect(getCurrentPlatformEnvironment().capabilities.downloads).toBe(true);
 
     vi.unstubAllGlobals();
     const unknown = getCurrentPlatformEnvironment();
@@ -101,9 +100,9 @@ describe('external platform capability contract', () => {
     expect(isShellNativeHostSupported(unknown)).toBe(false);
 
     expect(PLATFORM_CURRENT_GAPS.map((gap) => gap.target)).toEqual([
-      'manifest-aligned-capability-port-after-T3.2',
-      'manifest-aligned-capability-port-after-T3.2',
-      'loaded-explicit-capability-state-after-T3.2',
+      'consumer-owned-download-contract-in-R4.7',
+      'consumer-owned-sync-capability-contract-in-R4.11',
+      'loaded-explicit-capability-state-in-R4.9',
     ]);
   });
 });

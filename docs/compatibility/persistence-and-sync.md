@@ -1,6 +1,6 @@
 # Persistence and Sync Compatibility Contracts
 
-Baseline: v1.10.0, commit `165ec46`. The production code owns 35 fixed `chrome.storage.local` keys, two fixed `chrome.storage.session` keys, and three IndexedDB databases. `core/platform/browser.ts` exposes an arbitrary-key adapter but has no production consumer; it is not approval for new unregistered keys.
+Baseline: v1.10.0, commit `165ec46`. The production code owns 35 fixed `chrome.storage.local` keys, two fixed `chrome.storage.session` keys, and three IndexedDB databases. R3.9 removed the unused arbitrary-key platform adapter; new keys still require an explicit registered contract and a production consumer.
 
 For unversioned single-key records, the minimum future rule is: keep the key, preserve readable historical values, reject corrupt or explicitly future-versioned data before writing, and never overwrite original data with defaults merely because decoding failed. A table row calling out current defaulting/filtering describes present behavior, not permission to repeat silent loss.
 

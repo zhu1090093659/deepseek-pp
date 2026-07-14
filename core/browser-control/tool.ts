@@ -1,6 +1,6 @@
 import { translate, type LocaleMessageKey, type SupportedLocale } from '../i18n';
 import type { ToolCall, ToolDescriptor, ToolProviderIdentity, ToolResult } from '../tool/types';
-import { getCurrentBrowserExtensionEnvironment, isCapabilitySupported } from '../platform';
+import { getCurrentPlatformEnvironment, isCapabilitySupported } from '../platform';
 import { getBrowserControlSettings } from './settings';
 import { browserControlService } from './service';
 import {
@@ -136,7 +136,7 @@ export function createBrowserControlToolDescriptors(
 }
 
 export async function shouldExposeBrowserControlTools(): Promise<boolean> {
-  const environment = getCurrentBrowserExtensionEnvironment();
+  const environment = getCurrentPlatformEnvironment();
   if (!isCapabilitySupported(environment, 'browserControl')) return false;
   const settings = await getBrowserControlSettings();
   return settings.enabled;

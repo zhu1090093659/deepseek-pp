@@ -169,14 +169,8 @@ export type {
 export type {
   PlatformCapability,
   PlatformCapabilityMap,
-  PlatformDownload,
   PlatformEnvironment,
-  PlatformFilePicker,
   PlatformKind,
-  PlatformPickedFile,
-  PlatformRuntime,
-  PlatformServices,
-  PlatformStorage,
 } from './platform';
 
 export type MemoryType = 'user' | 'feedback' | 'topic' | 'reference';

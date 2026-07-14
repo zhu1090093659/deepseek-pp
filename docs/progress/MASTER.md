@@ -32,7 +32,7 @@
 |:--:|:--|:--|--:|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 3 | 7 | 5 | 10 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 2 | 8 | 5 | 10 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
 | 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
@@ -61,7 +61,7 @@
 | R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | closed |
 | R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | closed |
 | R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | closed |
-| R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | open |
+| R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | closed |
 | R3.9 | [#359](https://github.com/zhu1090093659/deepseek-pp/issues/359) | Remove dead platform facade and preserve PC capability truth | open |
 | R3.10 | [#380](https://github.com/zhu1090093659/deepseek-pp/issues/380) | Version remaining Skill/Preset/History local state and cross-key mutations | open |
 | R4.1 | [#360](https://github.com/zhu1090093659/deepseek-pp/issues/360) | Extract Background persistence and library handlers | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (7/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (8/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.8 / [Issue #358](https://github.com/zhu1090093659/deepseek-pp/issues/358) — version Automation state and own Usage/Tool History mutations.
+**Active Task**: R3.9 / [Issue #359](https://github.com/zhu1090093659/deepseek-pp/issues/359) — remove the dead platform facade and preserve PC capability truth.
 
-**Execution Branch**: `codex/358-automation-usage-history` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/358-automation-usage-history`, based on `main@08546c2`.
+**Execution Branch**: `codex/359-platform-capability-truth` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/359-platform-capability-truth`, based on `main@e56bb04`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `08546c2` after R3.7. R3.7 passed 111 files / 881 tests plus the full PC quality/package matrix; hosted quality and corrected contribution-evidence runs `29301564567` / `29301618575` passed before PR #388 squash-merged at `08546c2ba45f99472d5a7672c5c112c3a66a5d59`. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `e56bb04` after R3.8. R3.8 passed 118 files / 929 tests plus the full PC quality/package matrix; hosted quality and contribution-evidence runs `29305277568` / `29305277549` passed before PR #389 squash-merged at `e56bb04d9b5c3058cca85104455f63757f3cb864`. Milestone #45 is 8/10 with drift score 2, so #359 carries the Level 1 adaptive warning. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -290,7 +290,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted sync/persistence validation passes 20 files / 201 tests. TypeScript, i18n, seven prompt goldens, and the 60-second full suite pass at 111 files / 881 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes workflow checks, zero production vulnerabilities, automation/MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
 - Hosted quality and corrected contribution-evidence runs `29301564567` / `29301618575` passed. PR #388 squash-merged at `08546c2ba45f99472d5a7672c5c112c3a66a5d59`; Issue #357 closed after telemetry and Milestone #45 advanced to 7/10 completed with cumulative drift score 1.
 
-**R3.8 Evidence (local validation complete)**:
+**R3.8 Evidence (closed)**:
 
 - Added the sole exact-preserving Automation v1 codec on the released `deepseek_pp_automations` key. Missing DeepSeek session state, decimal-string/empty message IDs, requests without `deadlineAt`, additive fields, and historical orphan runs remain compatible; future/corrupt/duplicate/nested-invalid state rejects before clocks, UUIDs, mutation, or clear. Obsolete free-form run creation/append paths and their unused input type were removed.
 - Automation, Usage, and Tool History now each own one independent non-reentrant whole-key FIFO shared by reads, mutations, and clear. Mutation rereads inside its authority; rejected work does not poison later work. The same small queue primitive replaces the duplicate FIFO implementations in sync action coordination and local-state recovery without joining these three stores to the sync-global lock.
@@ -299,6 +299,15 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Automation, Usage, and MCP receiving surfaces decode complete responses before commit, retain the last confirmed state on failure, and treat notifications as invalidations rather than unvalidated payloads. Automation reload generations prevent older focus/notification responses from replacing a newer snapshot or writing after unmount.
 - Three independent reviews reproduced and closed the historical-orphan compatibility trap, Usage range/clear response races, invalid day acceptance, unsorted Tool-History eviction, post-provider retry ambiguity, duplicate FIFO implementation, and notification data bypass. Final reviews report no remaining P0-P2 finding.
 - Raw compatibility fixtures now cover all three released shapes, aliases, additive fields, historical orphan state, and future/corrupt rejection. TypeScript, i18n, prompt freeze, the 60-second full suite at 118 files / 929 tests, and the complete PC-only `ci:quality` matrix pass: workflow/audit, automation/MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. Builds emit only the existing Pyodide `node:*` externalization warnings; Android remains absent and unsupported.
+- Hosted quality and contribution-evidence runs `29305277568` / `29305277549` passed. PR #389 squash-merged at `e56bb04d9b5c3058cca85104455f63757f3cb864`; Issue #358 closed after telemetry, Milestone #45 advanced to 8/10 with cumulative drift score 2, and the Level 1 adaptive warning was applied to #359.
+
+**R3.9 Evidence (local validation complete)**:
+
+- Deleted `core/platform/browser.ts`, `PlatformServices`, all five unused storage/runtime/download/file-picker service types, their factory, and every barrel/root re-export. Background capability RPC and Browser Control tool exposure now consume the sole general environment detector; no replacement facade or unconsumed port was introduced.
+- The released 15-key capability record, Chromium/Firefox API profiles, `GET_PLATFORM_CAPABILITIES` wire name, and loading-time Native Host gating remain unchanged. A missing or known-invalidated runtime produces explicit `unknown` with all capabilities false; unexpected API access failures now propagate instead of being hidden by the former broad catches.
+- Reassigned the three stale T3.2 capability gaps to production-consumer tasks #366, #368, and #370, updated the compatibility registry, persistence registry, module inventory, and risk register, and left Android/mobile code, builds, tests, and platform kinds absent.
+- Three independent read-only reviews found no remaining P0-P2 issue after correcting the module-inventory measurements. They confirmed the single detector, explicit known-error degradation, released capability profiles, Native loading sentinel, dead-facade absence, and PC-only repository contract.
+- Targeted validation passes 5 files / 28 tests. TypeScript, seven prompt goldens, the 60-second full suite at 118 files / 932 tests, Chrome/Edge/Firefox builds, manifest policy, the 84-file UTF-8/ASCII check, and the complete PC-only `ci:quality` matrix pass with no orphan test/build process. One initial WXT Chrome zip omitted runtime entries and was rejected by `verify:release-assets`; an isolated rebuild and a complete rerun passed, and the observation is recorded on #374 without adding a silent retry. Builds otherwise emit only the existing Pyodide `node:*` externalization warnings.
 
 ## Governance Status
 
@@ -322,9 +331,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete the final diff review, commit, push, and open the R3.8 PR for Issue #358.
-2. Require hosted quality and contribution-evidence checks, then record Issue telemetry and squash-merge only after both pass.
-3. Sync the R3.8 closure on fresh `main`, update Milestone #45 adaptive state, and start R3.9 / Issue #359 in a new isolated worktree.
+1. Close any remaining independent-review finding, then complete the final diff/secret/orphan-process scan.
+2. Commit and push R3.9, open its PR for #359, and require hosted quality plus contribution-evidence checks.
+3. Record execution telemetry, update Milestone #45 adaptive state, and squash-merge only after all hosted checks pass.
 
 ## Session Log
 
@@ -393,4 +402,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R3.7 closure | Hosted quality/contribution runs passed; PR #388 squash-merged at `08546c2`, Issue #357 closed after telemetry, and Milestone #45 advanced to 7/10 with cumulative drift score 1. |
 | 2026-07-14 | R3.8 execution start | Opened `codex/358-automation-usage-history` from `08546c2`; began the version, mutation-authority, concurrency, restart, and sync-lock audit for Automation, Usage, and Tool History. |
 | 2026-07-14 | R3.8 implementation | Added strict released-shape codecs, independent whole-key authorities, the shared FIFO primitive, stale-writer and UI generation fencing, explicit post-provider history failure semantics, and raw compatibility fixtures without restoring Android or changing released keys. |
-| 2026-07-14 | R3.8 local validation | Closed all independent-review P0-P2 findings; passed 118 files / 926 full tests, TypeScript, prompt/i18n checks, the complete PC Chrome/Edge/Firefox quality/package matrix, smoke tests, diff checks, and orphan-process checks. |
+| 2026-07-14 | R3.8 local validation | Closed all independent-review P0-P2 findings; passed 118 files / 929 full tests, TypeScript, prompt/i18n checks, the complete PC Chrome/Edge/Firefox quality/package matrix, smoke tests, diff checks, and orphan-process checks. |
+| 2026-07-14 | R3.8 closure | Hosted quality/contribution runs passed; PR #389 squash-merged at `e56bb04`, Issue #358 closed after telemetry, and Milestone #45 advanced to 8/10 with cumulative drift score 2. |
+| 2026-07-14 | R3.9 execution start | Applied the Level 1 adaptive warning, opened `codex/359-platform-capability-truth` from `e56bb04`, and audited the dead facade, capability consumers, unknown degradation, generated manifests, and current gap ownership before deletion. |
+| 2026-07-14 | R3.9 implementation | Removed the zero-consumer broad platform facade and catches, retained one consumed capability detector plus explicit known-error degradation, reassigned stale gap owners, and preserved the released 15-key PC-browser contract without restoring Android. |
+| 2026-07-14 | R3.9 local validation | Passed 5 files / 28 targeted tests, 118 files / 932 full tests, TypeScript, prompt freeze, the complete PC Chrome/Edge/Firefox quality/package matrix, manifest/UTF-8/release checks, diff checks, and orphan-process checks; one rejected incomplete Chrome zip was recorded for R5.2 stress coverage. |

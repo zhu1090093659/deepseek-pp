@@ -27,45 +27,6 @@ export interface PlatformEnvironment {
   capabilities: PlatformCapabilityMap;
 }
 
-export interface PlatformStorage {
-  get<T = unknown>(key: string): Promise<T | null>;
-  set<T = unknown>(key: string, value: T): Promise<void>;
-  remove(key: string): Promise<void>;
-}
-
-export interface PlatformRuntime {
-  sendMessage<T = unknown>(message: unknown): Promise<T>;
-}
-
-export interface PlatformDownload {
-  download(input: {
-    filename: string;
-    mimeType: string;
-    content: string;
-  }): Promise<void>;
-}
-
-export interface PlatformFilePicker {
-  pickFiles(options?: { multiple?: boolean; accept?: string[] }): Promise<PlatformPickedFile[]>;
-  pickFolder?(): Promise<PlatformPickedFile[]>;
-}
-
-export interface PlatformPickedFile {
-  name: string;
-  path: string;
-  content: string;
-  sizeBytes: number;
-}
-
-export interface PlatformServices {
-  environment: PlatformEnvironment;
-  storage: PlatformStorage;
-  runtime: PlatformRuntime;
-  download?: PlatformDownload;
-  filePicker?: PlatformFilePicker;
-  getAssetUrl(path: string): string;
-}
-
 export const EMPTY_PLATFORM_CAPABILITIES: PlatformCapabilityMap = {
   storage: false,
   runtimeMessaging: false,
@@ -97,9 +58,17 @@ export function isCapabilitySupported(
   return environment.capabilities[capability] === true;
 }
 
-export function getCurrentBrowserExtensionEnvironment(): PlatformEnvironment {
-  const runtime = safeChromeRuntime();
-  const chromeApi = safeChrome();
+export function getCurrentPlatformEnvironment(): PlatformEnvironment {
+  const chromeApi = readChromeApi();
+  const runtime = readOptionalChromeApi(() => chromeApi?.runtime) ?? null;
+  if (!runtime) {
+    return {
+      kind: 'unknown',
+      name: 'Unknown',
+      capabilities: createCapabilityMap({}),
+    };
+  }
+
   const debuggerSupported = Boolean(
     readOptionalChromeApi(() => chromeApi?.debugger?.attach) &&
     readOptionalChromeApi(() => chromeApi?.debugger?.sendCommand),
@@ -135,27 +104,8 @@ export function getCurrentBrowserExtensionEnvironment(): PlatformEnvironment {
   };
 }
 
-export function getCurrentPlatformEnvironment(): PlatformEnvironment {
-  if (safeChromeRuntime()) return getCurrentBrowserExtensionEnvironment();
-  return {
-    kind: 'unknown',
-    name: 'Unknown',
-    capabilities: createCapabilityMap({}),
-  };
-}
-
-function safeChrome(): typeof chrome | null {
-  try {
-    return typeof chrome !== 'undefined' ? chrome : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeChromeRuntime(): typeof chrome.runtime | null {
-  try {
-    return typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime : null;
-  } catch {
-    return null;
-  }
+function readChromeApi(): typeof chrome | null {
+  return readOptionalChromeApi(
+    () => typeof chrome !== 'undefined' ? chrome : null,
+  ) ?? null;
 }

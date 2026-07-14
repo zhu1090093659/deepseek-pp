@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCapabilityMap,
-  getCurrentBrowserExtensionEnvironment,
   getCurrentPlatformEnvironment,
   isCapabilitySupported,
 } from '../core/platform';
@@ -40,7 +39,7 @@ describe('platform capability contracts', () => {
       debugger: { attach: vi.fn(), sendCommand: vi.fn() },
     });
 
-    const environment = getCurrentBrowserExtensionEnvironment();
+    const environment = getCurrentPlatformEnvironment();
 
     expect(environment.kind).toBe('browser_extension');
     expect(isCapabilitySupported(environment, 'nativeMessaging')).toBe(true);
@@ -72,7 +71,7 @@ describe('platform capability contracts', () => {
     });
     vi.stubGlobal('chrome', chromeStub);
 
-    const environment = getCurrentBrowserExtensionEnvironment();
+    const environment = getCurrentPlatformEnvironment();
 
     expect(isCapabilitySupported(environment, 'tabGroups')).toBe(false);
     expect(isCapabilitySupported(environment, 'browserControl')).toBe(true);
@@ -83,6 +82,34 @@ describe('platform capability contracts', () => {
 
     expect(environment.kind).toBe('unknown');
     expect(Object.values(environment.capabilities).every((supported) => !supported)).toBe(true);
+  });
+
+  it('reports unknown when the extension runtime is no longer readable', () => {
+    const chromeStub = {};
+    Object.defineProperty(chromeStub, 'runtime', {
+      get() {
+        throw new Error('Extension context invalidated');
+      },
+    });
+    vi.stubGlobal('chrome', chromeStub);
+
+    const environment = getCurrentPlatformEnvironment();
+
+    expect(environment.kind).toBe('unknown');
+    expect(Object.values(environment.capabilities).every((supported) => !supported)).toBe(true);
+  });
+
+  it('surfaces unexpected runtime access failures', () => {
+    const chromeStub = {};
+    Object.defineProperty(chromeStub, 'runtime', {
+      get() {
+        throw new Error('unexpected runtime getter failure');
+      },
+    });
+    vi.stubGlobal('chrome', chromeStub);
+
+    expect(() => getCurrentPlatformEnvironment())
+      .toThrow('unexpected runtime getter failure');
   });
 
   it('filters native MCP controls when native messaging is unsupported', () => {
