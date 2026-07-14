@@ -1,8 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { LocaleMessageKey } from '../../core/i18n';
 import { getChatEnabled } from '../../core/chat/store';
+import RouteFallback from './components/RouteFallback';
 import WhatsNewPanel from './components/WhatsNewPanel';
-import { SkeletonList } from './components/settings/primitives';
+import {
+  startPendingTextConsumer,
+  type PendingTextConsumerOperation,
+} from './controllers/pending-text-controller';
 import { useI18n } from './i18n';
 import { setPendingText } from './pending-text';
 
@@ -48,28 +52,15 @@ export default function App() {
     }
   }, [chatEnabled, tab]);
 
-  // Read pending text on mount in case the sidepanel opened after the message was sent.
   useEffect(() => {
-    chrome.storage.local.get('pendingChatText').then((data) => {
-      const text = data.pendingChatText as string | undefined;
-      if (text) {
-        chrome.storage.local.remove('pendingChatText').catch(() => {});
+    const consumer = startPendingTextConsumer({
+      onText(text) {
         setPendingText(text);
         setTab('chat');
-      }
+      },
+      onError: reportPendingTextError,
     });
-  }, []);
-
-  useEffect(() => {
-    const handler = (msg: { type: string; text?: string }) => {
-      if (msg.type === 'OPEN_CHAT_WITH_TEXT' && typeof msg.text === 'string') {
-        chrome.storage.local.remove('pendingChatText').catch(() => {});
-        setPendingText(msg.text);
-        setTab('chat');
-      }
-    };
-    chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
+    return () => consumer.stop();
   }, []);
 
   return (
@@ -109,7 +100,7 @@ export default function App() {
 
       <main className="ds-app-main">
         {!isFloatingChat && <WhatsNewPanel />}
-        <Suspense fallback={<div className="p-4"><SkeletonList rows={3} /></div>}>
+        <Suspense fallback={<RouteFallback />}>
           {(isFloatingChat || tab === 'chat') && <ChatPage />}
           {!isFloatingChat && tab === 'library' && <LibraryPage />}
           {!isFloatingChat && tab === 'projects' && <ProjectsPage />}
@@ -119,4 +110,8 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function reportPendingTextError(operation: PendingTextConsumerOperation, error: unknown): void {
+  console.error(`[DeepSeek++] Pending chat text ${operation} failed.`, error);
 }

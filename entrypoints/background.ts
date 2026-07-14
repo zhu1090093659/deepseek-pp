@@ -164,6 +164,7 @@ import {
   saveScenario,
 } from '../core/scenario/store';
 import { getChatEnabled } from '../core/chat/store';
+import { pendingChatTextStore } from '../core/chat/pending-text';
 import {
   markChatLoopFinished,
   markChatLoopStarted,
@@ -803,8 +804,8 @@ function registerContextMenuClickListener(): void {
     if (!chatEnabled) return;
 
     if (info.menuItemId === 'send-to-chat') {
-      openSidePanelAndSendText(selectedText, tab)
-        .catch((error) => reportBackgroundStartupError('context_menu_chat_handoff_failed', error));
+      openSidePanelAndSendText(selectedText)
+        .catch((error) => reportBackgroundStartupError('pending_chat_text_write_failed', error));
       return;
     }
 
@@ -815,7 +816,7 @@ function registerContextMenuClickListener(): void {
           const scenario = scenarios.find((s) => s.id === scenarioId);
           if (!scenario) return;
           const processed = applyScenarioTemplate(scenario.template, selectedText);
-          return openSidePanelAndSendText(processed, tab);
+          return openSidePanelAndSendText(processed);
         })
         .catch((error) => reportBackgroundStartupError('scenario_context_menu_failed', error));
       return;
@@ -823,16 +824,8 @@ function registerContextMenuClickListener(): void {
   });
 }
 
-async function openSidePanelAndSendText(text: string, tab?: chrome.tabs.Tab) {
-  // Persist to storage as a fallback because the sidepanel may not be ready for messages yet.
-  try {
-    await chrome.storage.local.set({ pendingChatText: text });
-  } catch (error) {
-    reportBackgroundStartupError('pending_chat_text_persist_failed', error);
-  }
-
-  chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text })
-    .catch((error) => reportBackgroundStartupError('pending_chat_text_notify_failed', error));
+async function openSidePanelAndSendText(text: string) {
+  await pendingChatTextStore.write(text);
 }
 
 async function ensureBuiltInMcpPresets() {

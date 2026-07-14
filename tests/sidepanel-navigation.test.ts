@@ -71,10 +71,14 @@ describe('sidepanel navigation', () => {
     unmountRoot();
     await renderElement(React.createElement(LibraryPage));
     expect(navButtonLabels('资料子导航')).toEqual(['记忆', '保存']);
+    await clickNavButton('资料子导航', '保存');
+    await vi.waitFor(() => expect(container.textContent).toContain('保存常用 Prompt'));
 
     unmountRoot();
     await renderElement(React.createElement(CapabilitiesPage));
     expect(navButtonLabels('能力子导航')).toEqual(['Skill', 'MCP', '工具', '浏览器', '预设', '自动化']);
+    await clickNavButton('能力子导航', 'MCP');
+    await vi.waitFor(() => expect(container.textContent).toContain('连接本机或远程 MCP 服务'));
   });
 
   it('keeps the voice settings surface reachable from Settings', async () => {
@@ -105,9 +109,11 @@ describe('sidepanel navigation', () => {
       voiceTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('语音');
-    expect(container.textContent).toContain('语音输入');
-    expect(container.textContent).toContain('朗读回复');
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('语音');
+      expect(container.textContent).toContain('语音输入');
+      expect(container.textContent).toContain('朗读回复');
+    });
   });
 
   it('renders Settings when chrome.identity is unavailable', async () => {
@@ -133,9 +139,11 @@ describe('sidepanel navigation', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('Tokens 用量');
-    expect(container.textContent).toContain('DeepSeek Vision');
-    expect(container.textContent).toContain('按天 Token 趋势');
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Tokens 用量');
+      expect(container.textContent).toContain('DeepSeek Vision');
+      expect(container.textContent).toContain('按天 Token 趋势');
+    });
   });
 
   it('keeps the top navigation from shrinking behind long settings content', () => {
@@ -164,6 +172,16 @@ function navButtonLabels(label: string): string[] {
   const nav = container.querySelector(`nav[aria-label="${label}"]`);
   expect(nav).toBeTruthy();
   return Array.from(nav!.querySelectorAll('button')).map((button) => button.textContent ?? '');
+}
+
+async function clickNavButton(navLabel: string, buttonLabel: string) {
+  const nav = container.querySelector(`nav[aria-label="${navLabel}"]`);
+  const button = Array.from(nav?.querySelectorAll('button') ?? [])
+    .find((candidate) => candidate.textContent === buttonLabel);
+  expect(button).toBeTruthy();
+  await act(async () => {
+    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
 }
 
 function unmountRoot() {

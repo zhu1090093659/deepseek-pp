@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
-import { SkeletonList, SubTabs } from '../components/settings/primitives';
+import RouteFallback from '../components/RouteFallback';
+import { SubTabs } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
 
 const MemoryPage = lazy(() => import('./MemoryPage'));
@@ -26,7 +27,7 @@ export default function LibraryPage() {
       />
 
       <div className="flex-1 overflow-y-auto">
-        <Suspense fallback={<div className="p-4"><SkeletonList rows={3} /></div>}>
+        <Suspense fallback={<RouteFallback />}>
           {sub === 'memory' && <MemoryPage />}
           {sub === 'saved' && <SavedPage />}
         </Suspense>

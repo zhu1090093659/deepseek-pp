@@ -1,12 +1,14 @@
-import { useState } from 'react';
-import AutomationPage from './AutomationPage';
-import BrowserControlPage from './BrowserControlPage';
-import McpPage from './McpPage';
-import PresetPage from './PresetPage';
-import SkillPage from './SkillPage';
-import ToolsPage from './ToolsPage';
+import { lazy, Suspense, useState } from 'react';
+import RouteFallback from '../components/RouteFallback';
 import { SubTabs } from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+
+const SkillPage = lazy(() => import('./SkillPage'));
+const McpPage = lazy(() => import('./McpPage'));
+const ToolsPage = lazy(() => import('./ToolsPage'));
+const BrowserControlPage = lazy(() => import('./BrowserControlPage'));
+const PresetPage = lazy(() => import('./PresetPage'));
+const AutomationPage = lazy(() => import('./AutomationPage'));
 
 type CapabilitiesSubTab = 'skill' | 'mcp' | 'tools' | 'browser' | 'preset' | 'automation';
 
@@ -33,12 +35,14 @@ export default function CapabilitiesPage() {
       />
 
       <div className="flex-1 overflow-y-auto">
-        {sub === 'skill' && <SkillPage />}
-        {sub === 'mcp' && <McpPage />}
-        {sub === 'tools' && <ToolsPage />}
-        {sub === 'browser' && <BrowserControlPage />}
-        {sub === 'preset' && <PresetPage />}
-        {sub === 'automation' && <AutomationPage />}
+        <Suspense fallback={<RouteFallback />}>
+          {sub === 'skill' && <SkillPage />}
+          {sub === 'mcp' && <McpPage />}
+          {sub === 'tools' && <ToolsPage />}
+          {sub === 'browser' && <BrowserControlPage />}
+          {sub === 'preset' && <PresetPage />}
+          {sub === 'automation' && <AutomationPage />}
+        </Suspense>
       </div>
     </div>
   );

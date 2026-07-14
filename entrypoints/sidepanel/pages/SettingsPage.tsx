@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { LocaleMessageKey } from '../../../core/i18n';
-import { useI18n } from '../i18n';
 import PageIntro from '../components/PageIntro';
-import AboutSubPage from '../components/settings/AboutSubPage';
-import ApiSubPage from '../components/settings/ApiSubPage';
-import AppearanceSubPage from '../components/settings/AppearanceSubPage';
-import DataSubPage from '../components/settings/DataSubPage';
-import GeneralSubPage from '../components/settings/GeneralSubPage';
-import PromptSubPage from '../components/settings/PromptSubPage';
-import UsageSubPage from '../components/settings/UsageSubPage';
-import VoiceSubPage from '../components/settings/VoiceSubPage';
+import RouteFallback from '../components/RouteFallback';
 import { SkeletonList, SubTabs } from '../components/settings/primitives';
 import { useSettingsController } from '../controllers/useSettingsController';
+import { useI18n } from '../i18n';
+
+const GeneralSubPage = lazy(() => import('../components/settings/GeneralSubPage'));
+const ApiSubPage = lazy(() => import('../components/settings/ApiSubPage'));
+const PromptSubPage = lazy(() => import('../components/settings/PromptSubPage'));
+const VoiceSubPage = lazy(() => import('../components/settings/VoiceSubPage'));
+const AppearanceSubPage = lazy(() => import('../components/settings/AppearanceSubPage'));
+const UsageSubPage = lazy(() => import('../components/settings/UsageSubPage'));
+const DataSubPage = lazy(() => import('../components/settings/DataSubPage'));
+const AboutSubPage = lazy(() => import('../components/settings/AboutSubPage'));
 
 type SubTab = 'general' | 'api' | 'prompt' | 'voice' | 'appearance' | 'usage' | 'data' | 'about';
 
@@ -63,7 +65,7 @@ export default function SettingsPage() {
         {state.loading ? (
           <SkeletonList rows={3} />
         ) : (
-          <>
+          <Suspense fallback={<RouteFallback />}>
             {sub === 'general' && <GeneralSubPage state={state} />}
             {sub === 'api' && <ApiSubPage state={state} />}
             {sub === 'prompt' && <PromptSubPage />}
@@ -72,7 +74,7 @@ export default function SettingsPage() {
             {sub === 'usage' && <UsageSubPage />}
             {sub === 'data' && <DataSubPage state={state} />}
             {sub === 'about' && <AboutSubPage state={state} />}
-          </>
+          </Suspense>
         )}
       </div>
     </div>

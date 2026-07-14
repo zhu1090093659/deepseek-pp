@@ -16,7 +16,7 @@ import {
 import { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from '../../../core/deepseek/upload-limits';
 import type { ChatMessage as ChatMessageType, ModelType } from '../../../core/types';
 import ChatMessage from '../components/ChatMessage';
-import { StatusMessage, useConfirm } from '../components/settings/primitives';
+import { StatusMessage, useConfirm } from '../components/settings/feedback-primitives';
 import { createRequestGenerationFence } from '../async-state';
 import {
   chatController,

@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { StatusMessage } from './feedback-primitives';
+
+export { StatusMessage, useConfirm } from './feedback-primitives';
 
 /**
  * Shared building blocks for the settings sub-pages.
@@ -189,42 +192,6 @@ export function TextField({
   );
 }
 
-export function StatusMessage({
-  tone,
-  children,
-  onDismiss,
-}: {
-  tone: 'success' | 'error' | 'warning' | 'info';
-  children: ReactNode;
-  onDismiss?: () => void;
-}) {
-  const palette = {
-    success: { color: 'var(--ds-success)', bg: 'var(--ds-success-bg)' },
-    error: { color: 'var(--ds-danger)', bg: 'var(--ds-danger-bg)' },
-    warning: { color: 'var(--ds-warning, var(--ds-text-secondary))', bg: 'var(--ds-warning-bg, var(--ds-surface))' },
-    info: { color: 'var(--ds-text-secondary)', bg: 'var(--ds-surface)' },
-  }[tone];
-  return (
-    <div
-      className="text-[11px] px-3 py-2 flex items-start gap-2"
-      style={{ color: palette.color, background: palette.bg, border: '1px solid var(--ds-border)', borderRadius: 'var(--radius-ctrl)' }}
-    >
-      <div className="flex-1 min-w-0">{children}</div>
-      {onDismiss && (
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="dismiss"
-          className="shrink-0 leading-none opacity-60 hover:opacity-100"
-          style={{ color: palette.color }}
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function StatusBadge({
   configured,
   configuredLabel,
@@ -245,118 +212,6 @@ export function StatusBadge({
     >
       {configured ? configuredLabel : notConfiguredLabel}
     </span>
-  );
-}
-
-/**
- * In-app confirm dialog that replaces window.confirm() so destructive actions
- * (overwrite local / overwrite remote / clear all) stay within the extension UI.
- *
- * The dialog reads the destructive tone and renders a danger-styled confirm
- * button; callers pass the message shown to the user and resolve the promise
- * with true/false. Only one confirm is expected on screen at a time, so the
- * component keeps its own open/closed state and exposes an imperative handle
- * via the returned `confirm` function.
- */
-export function useConfirm() {
-  const [state, setState] = useState<{
-    title: string;
-    message: string;
-    confirmLabel: string;
-    cancelLabel: string;
-    resolve: (ok: boolean) => void;
-  } | null>(null);
-
-  const confirm = (opts: {
-    title: string;
-    message: string;
-    confirmLabel: string;
-    cancelLabel: string;
-  }) =>
-    new Promise<boolean>((resolve) => {
-      setState({ ...opts, resolve });
-    });
-
-  const node = state ? (
-    <ConfirmDialog
-      title={state.title}
-      message={state.message}
-      confirmLabel={state.confirmLabel}
-      cancelLabel={state.cancelLabel}
-      onConfirm={() => {
-        state.resolve(true);
-        setState(null);
-      }}
-      onCancel={() => {
-        state.resolve(false);
-        setState(null);
-      }}
-    />
-  ) : null;
-
-  return { confirm, node };
-}
-
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  cancelLabel,
-  onConfirm,
-  onCancel,
-}: {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  cancelLabel: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  // Close on Escape, lock body scroll while open.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-      if (e.key !== 'Tab') return;
-      const focusable = dialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])');
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
-  return (
-    <div
-      className="ds-modal-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="ds-confirm-title"
-      onClick={onCancel}
-    >
-      <div ref={dialogRef} className="ds-modal-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="ds-confirm-title" className="ds-modal-title">
-          {title}
-        </h3>
-        <p className="ds-modal-message">{message}</p>
-        <div className="ds-modal-actions">
-          <button type="button" className="ds-btn-cancel px-3 py-2 text-[11px] font-medium" style={{ borderRadius: 'var(--radius-ctrl)' }} onClick={onCancel}>
-            {cancelLabel}
-          </button>
-          <button type="button" className="ds-btn-danger px-3 py-2 text-[11px] font-medium" style={{ borderRadius: 'var(--radius-ctrl)' }} onClick={onConfirm} autoFocus>
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
