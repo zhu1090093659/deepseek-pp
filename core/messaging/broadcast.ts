@@ -15,7 +15,11 @@ export async function broadcastRuntimeUpdate(
   excludeTabId: number | undefined,
   dependencies: RuntimeBroadcastDependencies,
 ): Promise<void> {
-  dependencies.sendRuntimeMessage(payload).catch(() => {});
+  deliverBestEffort(
+    dependencies.sendRuntimeMessage(payload),
+    'broadcast_runtime_delivery_failed',
+    dependencies,
+  );
 
   let tabs: readonly RuntimeBroadcastTab[] = [];
   try {
@@ -23,17 +27,49 @@ export async function broadcastRuntimeUpdate(
   } catch (error) {
     dependencies.reportError('broadcast_tabs_query_failed', error);
     if (excludeTabId) {
-      dependencies.sendTabMessage(excludeTabId, payload).catch(() => {});
+      deliverBestEffort(
+        dependencies.sendTabMessage(excludeTabId, payload),
+        'broadcast_tab_delivery_failed',
+        dependencies,
+      );
     }
     return;
   }
 
   for (const tab of tabs) {
     if (tab.id && tab.id !== excludeTabId) {
-      dependencies.sendTabMessage(tab.id, payload).catch(() => {});
+      deliverBestEffort(
+        dependencies.sendTabMessage(tab.id, payload),
+        'broadcast_tab_delivery_failed',
+        dependencies,
+      );
     }
   }
   if (excludeTabId) {
-    dependencies.sendTabMessage(excludeTabId, payload).catch(() => {});
+    deliverBestEffort(
+      dependencies.sendTabMessage(excludeTabId, payload),
+      'broadcast_tab_delivery_failed',
+      dependencies,
+    );
   }
+}
+
+function deliverBestEffort(
+  delivery: Promise<unknown>,
+  errorCode: string,
+  dependencies: Pick<RuntimeBroadcastDependencies, 'reportError'>,
+): void {
+  void delivery.catch((error) => {
+    if (isExpectedMissingRuntimeMessageReceiverError(error)) return;
+    dependencies.reportError(errorCode, error);
+  });
+}
+
+export function isExpectedMissingRuntimeMessageReceiverError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    'Receiving end does not exist',
+    'The message port closed before a response was received',
+    'No tab with id',
+  ].some((fragment) => message.includes(fragment));
 }

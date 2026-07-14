@@ -217,7 +217,10 @@ import {
   runConversationExport,
 } from '../core/export/service';
 import { buildPromptAugmentation } from '../core/prompt';
-import { broadcastRuntimeUpdate } from '../core/messaging/broadcast';
+import {
+  broadcastRuntimeUpdate,
+  isExpectedMissingRuntimeMessageReceiverError,
+} from '../core/messaging/broadcast';
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
 import {
   authorizeRuntimeMessage,
@@ -826,6 +829,10 @@ function registerContextMenuClickListener(): void {
 
 async function openSidePanelAndSendText(text: string) {
   await pendingChatTextStore.write(text);
+  void chrome.runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text }).catch((error) => {
+    if (isExpectedMissingRuntimeMessageReceiverError(error)) return;
+    reportBackgroundStartupError('pending_chat_text_notification_failed', error);
+  });
 }
 
 async function ensureBuiltInMcpPresets() {

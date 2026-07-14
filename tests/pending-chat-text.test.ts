@@ -132,7 +132,10 @@ describe('pending chat text storage truth', () => {
     expect(app).not.toContain('OPEN_CHAT_WITH_TEXT');
     expect(app).not.toContain("storage.local.remove('pendingChatText')");
     expect(delivery).toContain('pendingChatTextStore.write(text)');
-    expect(delivery).not.toContain('runtime.sendMessage');
+    expect(delivery).toContain("runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text })");
+    expect(delivery.indexOf('pendingChatTextStore.write(text)')).toBeLessThan(
+      delivery.indexOf("runtime.sendMessage({ type: 'OPEN_CHAT_WITH_TEXT', text })"),
+    );
     expect(delivery).not.toContain('storage.local.set');
   });
 });

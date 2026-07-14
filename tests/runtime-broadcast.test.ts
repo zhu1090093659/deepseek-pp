@@ -39,4 +39,39 @@ describe('runtime update broadcasting', () => {
 
     expect(sendTabMessage).toHaveBeenCalledWith(12, payload);
   });
+
+  it('reports unexpected runtime and tab delivery failures', async () => {
+    const runtimeError = new Error('runtime transport unavailable');
+    const tabError = new Error('tabs transport unavailable');
+    const reportError = vi.fn();
+
+    await broadcastRuntimeUpdate({ type: 'MEMORIES_UPDATED' }, undefined, {
+      tabUrlPattern: '*://chat.deepseek.com/*',
+      sendRuntimeMessage: vi.fn().mockRejectedValue(runtimeError),
+      queryTabsByUrl: vi.fn(async () => [{ id: 42 }]),
+      sendTabMessage: vi.fn().mockRejectedValue(tabError),
+      reportError,
+    });
+
+    await vi.waitFor(() => {
+      expect(reportError).toHaveBeenCalledWith('broadcast_runtime_delivery_failed', runtimeError);
+      expect(reportError).toHaveBeenCalledWith('broadcast_tab_delivery_failed', tabError);
+    });
+  });
+
+  it('bounds missing receivers as expected best-effort delivery failures', async () => {
+    const reportError = vi.fn();
+    const missingReceiver = new Error('Could not establish connection. Receiving end does not exist.');
+
+    await broadcastRuntimeUpdate({ type: 'PROJECT_CONTEXT_UPDATED' }, undefined, {
+      tabUrlPattern: '*://chat.deepseek.com/*',
+      sendRuntimeMessage: vi.fn().mockRejectedValue(missingReceiver),
+      queryTabsByUrl: vi.fn(async () => [{ id: 42 }]),
+      sendTabMessage: vi.fn().mockRejectedValue(missingReceiver),
+      reportError,
+    });
+    await Promise.resolve();
+
+    expect(reportError).not.toHaveBeenCalled();
+  });
 });
