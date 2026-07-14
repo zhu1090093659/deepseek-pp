@@ -30,12 +30,14 @@ function OAuthConfigFields({ state }: { state: SettingsState }) {
       <TextField
         label={t('sidepanel.settings.clientId')}
         value={config.clientId}
+        disabled={state.syncBusy}
         onChange={(v) => state.updateSyncField('clientId', v)}
       />
       <TextField
         label={t('sidepanel.settings.clientSecret')}
         type="password"
         value={config.clientSecret}
+        disabled={state.syncBusy}
         onChange={(v) => state.updateSyncField('clientSecret', v)}
       />
 
@@ -62,10 +64,14 @@ function OAuthConfigFields({ state }: { state: SettingsState }) {
       </div>
 
       <button
-        onClick={() => state.handleAuthorizeSync({
-          success: t('sidepanel.settings.authorizeSuccess'),
-          failed: t('sidepanel.settings.operationFailed'),
-        })}
+        onClick={() => state.handleAuthorizeSync(
+          state.captureSyncTarget(),
+          {
+            success: t('sidepanel.settings.authorizeSuccess'),
+            failed: t('sidepanel.settings.operationFailed'),
+            configChanged: t('sidepanel.settings.syncConfigChanged'),
+          },
+        )}
         disabled={state.syncBusy || !isSyncReady(config) || !state.syncRedirectUri}
         className="ds-btn-secondary w-full py-2.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5 disabled:opacity-40"
       >
@@ -116,14 +122,16 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
   };
 
   const onTest = () =>
-    state.handleTestSync({
+    state.handleTestSync(state.captureSyncTarget(), {
       permissionDenied: t('sidepanel.settings.webDavPermissionDenied'),
       operationFailed: t('sidepanel.settings.operationFailed'),
+      configChanged: t('sidepanel.settings.syncConfigChanged'),
       success: t('sidepanel.settings.connectionSuccess'),
       failed: t('sidepanel.settings.connectionFailed'),
     });
 
   const onUpload = async () => {
+    const target = state.captureSyncTarget();
     const ok = await confirm({
       title: t('sidepanel.settings.uploadLocal'),
       message: t('sidepanel.settings.uploadConfirm'),
@@ -131,15 +139,17 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    state.handleUploadSync({
+    state.handleUploadSync(target, {
       permissionDenied: t('sidepanel.settings.webDavPermissionDenied'),
       operationFailed: t('sidepanel.settings.operationFailed'),
+      configChanged: t('sidepanel.settings.syncConfigChanged'),
       failed: t('sidepanel.settings.uploadFailed'),
       success: (counts) => t('sidepanel.settings.uploadSuccess', { counts: formatSyncCounts(counts) }),
     });
   };
 
   const onDownload = async () => {
+    const target = state.captureSyncTarget();
     const ok = await confirm({
       title: t('sidepanel.settings.downloadRemote'),
       message: t('sidepanel.settings.downloadConfirm'),
@@ -147,9 +157,10 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
       cancelLabel: t('common.cancel'),
     });
     if (!ok) return;
-    state.handleDownloadSync({
+    state.handleDownloadSync(target, {
       permissionDenied: t('sidepanel.settings.webDavPermissionDenied'),
       operationFailed: t('sidepanel.settings.operationFailed'),
+      configChanged: t('sidepanel.settings.syncConfigChanged'),
       failed: t('sidepanel.settings.downloadFailed'),
       success: (counts) => t('sidepanel.settings.downloadSuccess', { counts: formatSyncCounts(counts) }),
     });
@@ -182,6 +193,7 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
           <SegmentedControl
             ariaLabel={t('sidepanel.settings.syncProvider')}
             value={state.syncConfig.provider}
+            disabled={state.syncBusy}
             onChange={(p) => state.switchSyncProvider(p as SyncProvider)}
             options={[
               { key: 'webdav', label: t('sidepanel.settings.providerWebdav') },
@@ -198,24 +210,28 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
               type="url"
               value={state.syncConfig.url}
               placeholder="https://dav.example.com/dav/"
+              disabled={state.syncBusy}
               onChange={(v) => state.updateSyncField('url', v)}
             />
             <div className="grid grid-cols-2 gap-2">
               <TextField
                 label={t('sidepanel.settings.username')}
                 value={state.syncConfig.username}
+                disabled={state.syncBusy}
                 onChange={(v) => state.updateSyncField('username', v)}
               />
               <TextField
                 label={t('sidepanel.settings.password')}
                 type="password"
                 value={state.syncConfig.password}
+                disabled={state.syncBusy}
                 onChange={(v) => state.updateSyncField('password', v)}
               />
             </div>
             <TextField
               label={t('sidepanel.settings.remotePath')}
               value={state.syncConfig.remotePath}
+              disabled={state.syncBusy}
               onChange={(v) => state.updateSyncField('remotePath', v)}
             />
           </>

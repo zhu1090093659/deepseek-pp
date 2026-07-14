@@ -6,6 +6,7 @@ const settingsState = readFileSync(
   'entrypoints/sidepanel/components/settings/useSettingsState.ts',
   'utf8',
 );
+const syncCoordinator = readFileSync('core/sync/operation-coordinator.ts', 'utf8');
 
 describe('background sync recovery integration', () => {
   it('establishes the recovery barrier before startup mutation and runtime dispatch', () => {
@@ -27,18 +28,35 @@ describe('background sync recovery integration', () => {
       background.indexOf("case 'WEBDAV_DOWNLOAD_REMOTE':"),
       background.indexOf("case 'CHAT_SUBMIT_PROMPT':"),
     );
+    const downloadEffect = background.slice(
+      background.indexOf('async function downloadRemoteSyncTarget'),
+      background.indexOf('async function notifyDownloadedSyncState'),
+    );
+    const coordinatedDownload = syncCoordinator.slice(
+      syncCoordinator.lastIndexOf('    download('),
+      syncCoordinator.indexOf('export function createSyncCommandErrorResponse'),
+    );
+    const timestampHelper = syncCoordinator.slice(
+      syncCoordinator.indexOf('const updateLastSyncAfterEffect'),
+      syncCoordinator.indexOf('return Object.freeze({'),
+    );
 
-    expect(downloadCase).toContain('const remoteSnapshot = await getRemoteSyncDataSnapshot(backend)');
-    expect(downloadCase).toContain(
+    expect(downloadCase).toContain('syncOperationCoordinator.download(');
+    expect(downloadCase).toContain('message.payload');
+    expect(downloadEffect).toContain('const remoteSnapshot = await getRemoteSyncDataSnapshot(backend)');
+    expect(downloadEffect).toContain(
       '() => mergeSyncSnapshotWithLocalImports(remoteSnapshot)',
     );
-    expect(downloadCase).toContain('const snapshot = await beginSyncLocalApply(');
-    expect(downloadCase.indexOf('const snapshot = await beginSyncLocalApply('))
-      .toBeLessThan(downloadCase.indexOf('await saveSyncConfig'));
-    expect(downloadCase.indexOf('await saveSyncConfig'))
-      .toBeLessThan(downloadCase.indexOf('await broadcastStateUpdate'));
-    expect(downloadCase).not.toContain('Promise.all(replacements)');
-    expect(downloadCase).not.toContain('replaceAllMemories');
+    expect(downloadEffect).toContain('const snapshot = await beginSyncLocalApply(');
+    expect(downloadEffect.indexOf('await getRemoteSyncDataSnapshot(backend)'))
+      .toBeLessThan(downloadEffect.indexOf('await beginSyncLocalApply('));
+    expect(coordinatedDownload.indexOf('await effects.download(config)'))
+      .toBeLessThan(coordinatedDownload.indexOf('await updateLastSyncAfterEffect'));
+    expect(coordinatedDownload.indexOf('await updateLastSyncAfterEffect'))
+      .toBeLessThan(coordinatedDownload.indexOf('await notifyCommitted?.(result)'));
+    expect(timestampHelper).toContain('store.updateLastSyncAt(revision, lastSyncAt)');
+    expect(downloadEffect).not.toContain('Promise.all(replacements)');
+    expect(downloadEffect).not.toContain('replaceAllMemories');
   });
 
   it('journals project deletion and its Memory cascade in one recoverable local-state mutation', () => {

@@ -50,6 +50,10 @@ db.version(3)
   });
 
 export async function getAllMemories(): Promise<Memory[]> {
+  return getAllMemoriesAlreadyLocked();
+}
+
+export async function getAllMemoriesAlreadyLocked(): Promise<Memory[]> {
   return readValidatedMemoryRecords();
 }
 

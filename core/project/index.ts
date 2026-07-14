@@ -25,6 +25,7 @@ export {
   stageDeleteProjectContextAndMemoriesAlreadyLocked,
   formatProjectPromptContext,
   getProjectContextState,
+  getProjectContextStateAlreadyLocked,
   getProjectForConversation,
   getProjectPromptContextForConversation,
   PROJECT_CONTEXT_STORAGE_KEY,

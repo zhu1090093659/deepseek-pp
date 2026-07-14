@@ -368,6 +368,7 @@ export const en = {
       apiKeyCleared: 'Cleared. Context menu scenarios are limited to DeepSeek pages again.',
       webDavPermissionDenied: 'Permission is required to connect to the WebDAV server',
       operationFailed: 'Operation failed',
+      syncConfigChanged: 'Sync settings changed. Review the current target and try again.',
       syncCounts: '{memories} memories, {skills} Skills, {presets} presets, {projects} projects, {projectConversations} project conversations, {savedItems} saved items',
       connectionSuccess: 'Connection succeeded',
       connectionFailed: 'Connection failed',
@@ -1013,6 +1014,8 @@ export const en = {
     sync: {
       missingWebDav: 'WebDAV is not configured',
       missingSync: 'Cloud sync is not configured',
+      configChanged: 'Sync settings changed in another extension window. Review the current target and try again.',
+      configCommitIndeterminate: 'Could not confirm whether the sync settings were saved. The current settings will be reloaded.',
       missingRemoteFile: 'Remote file {file} is missing. Download stopped to avoid overwriting local data.',
       authorizationNotRequired: 'The current sync method does not require authorization',
       identityUnavailable: 'OAuth authorization is not available in this browser context',

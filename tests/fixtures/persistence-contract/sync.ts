@@ -1,6 +1,37 @@
 import { PROJECT_V1_STATE, PROJECT_V2_STATE } from './project';
 import { SAVED_ITEMS_REJECTED_STATES, SAVED_ITEMS_V1_STATE } from './saved-items';
 
+export const SYNC_CONFIG_STORAGE_FIXTURES = {
+  providerlessWebdavV0: {
+    url: 'https://dav.contract.test/root',
+    username: 'contract-user',
+    password: 'contract-password',
+    remotePath: 'DeepSeekPP',
+    lastSyncAt: null,
+    additiveField: { preserve: true },
+  },
+  gdriveV1: {
+    provider: 'gdrive',
+    clientId: 'contract-client',
+    clientSecret: 'contract-secret',
+    refreshToken: 'contract-refresh',
+    lastSyncAt: 1_700_000_000_000,
+    schemaVersion: 1,
+    revision: 9,
+    additiveField: { preserve: true },
+  },
+  future: {
+    provider: 'webdav',
+    url: 'https://dav.contract.test/root',
+    username: 'contract-user',
+    password: 'contract-password',
+    remotePath: 'DeepSeekPP',
+    lastSyncAt: null,
+    schemaVersion: 99,
+    revision: 10,
+  },
+} as const;
+
 export const SYNC_MEMORY_RECORD = {
   id: 77,
   syncId: 'sync-remote-77',

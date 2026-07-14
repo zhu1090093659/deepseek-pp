@@ -79,6 +79,24 @@ describe('oauth token management', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('does not reuse an access token for a different refresh-token identity', async () => {
+    let tokenCall = 0;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      tokenCall += 1;
+      return jsonResponse({ access_token: `token-${tokenCall}`, expires_in: 3600 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const first = await getAccessToken('test-key', 'refresh-account-a', REFRESH_URL, { client_id: 'c' });
+    const second = await getAccessToken('test-key', 'refresh-account-b', REFRESH_URL, { client_id: 'c' });
+
+    expect(first).toBe('token-1');
+    expect(second).toBe('token-2');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const secondBody = fetchImpl.mock.calls[1][1]?.body as URLSearchParams;
+    expect(secondBody.get('refresh_token')).toBe('refresh-account-b');
+  });
+
   it('uses the injected translator for token refresh failures', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => textResponse('bad token', 500)));
 

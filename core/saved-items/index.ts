@@ -19,6 +19,7 @@ export {
   deleteSavedItem,
   getAllSavedItems,
   getSavedItemsState,
+  getSavedItemsStateAlreadyLocked,
   SAVED_ITEMS_STORAGE_KEY,
   saveSavedItem,
 } from './store';

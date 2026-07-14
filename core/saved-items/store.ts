@@ -24,6 +24,10 @@ export async function getSavedItemsState(): Promise<SavedItemsState> {
   return savedItemsRepository.read();
 }
 
+export async function getSavedItemsStateAlreadyLocked(): Promise<SavedItemsState> {
+  return savedItemsRepository.readAlreadyLocked();
+}
+
 export async function getAllSavedItems(): Promise<SavedItem[]> {
   return (await getSavedItemsState()).items;
 }

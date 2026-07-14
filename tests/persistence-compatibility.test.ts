@@ -28,7 +28,7 @@ import {
   getAllScenarios,
   SCENARIO_STORAGE_KEY,
 } from '../core/scenario/store';
-import { SYNC_CONFIG_STORAGE_KEY } from '../core/sync/config';
+import { SYNC_CONFIG_STORAGE_KEY, decodeStoredSyncConfig } from '../core/sync/config';
 import {
   SYNC_RECOVERY_DATABASE_NAME,
   SYNC_RECOVERY_DATABASE_VERSION,
@@ -81,6 +81,7 @@ import {
 } from './fixtures/persistence-contract/scenario';
 import {
   SYNC_JSON_FIXTURES,
+  SYNC_CONFIG_STORAGE_FIXTURES,
   SYNC_LEGACY_JSON_FIXTURES,
   SYNC_LOCAL_APPLY_JOURNAL_V1_FIXTURE,
   SYNC_MEMORY_RECORD,
@@ -223,6 +224,23 @@ describe('persistence and sync compatibility contract', () => {
 
   it('preserves fixed sync and configuration keys and decodes all six JSON files', () => {
     expect(SYNC_CONFIG_STORAGE_KEY).toBe('deepseek_pp_sync_config');
+    expect(decodeStoredSyncConfig(SYNC_CONFIG_STORAGE_FIXTURES.providerlessWebdavV0))
+      .toMatchObject({
+        revision: 0,
+        config: {
+          provider: 'webdav',
+          schemaVersion: 1,
+          revision: 0,
+          additiveField: { preserve: true },
+        },
+      });
+    expect(decodeStoredSyncConfig(SYNC_CONFIG_STORAGE_FIXTURES.gdriveV1))
+      .toEqual({
+        revision: 9,
+        config: SYNC_CONFIG_STORAGE_FIXTURES.gdriveV1,
+      });
+    expect(() => decodeStoredSyncConfig(SYNC_CONFIG_STORAGE_FIXTURES.future))
+      .toThrow('Sync configuration schema is not supported');
     expect(Object.values(SYNC_FILE_KEYS)).toEqual(SYNC_JSON_FIXTURES.map((fixture) => fixture.key));
     expect(REQUIRED_SYNC_FILE_KEYS).toEqual(
       SYNC_JSON_FIXTURES.filter((fixture) => fixture.required).map((fixture) => fixture.key),

@@ -4,9 +4,9 @@ export const RUNTIME_TOPOLOGY = {
   shared: 89,
   liveOnly: 32,
   declaredOnly: 2,
-  readsPayload: 77,
-  ignoresPayload: 44,
-  directPayloadCasts: 71,
+  readsPayload: 79,
+  ignoresPayload: 42,
+  directPayloadCasts: 68,
 } as const;
 
 export const RUNTIME_REQUEST_FIXTURES = [
@@ -19,6 +19,26 @@ export const RUNTIME_REQUEST_FIXTURES = [
     name: 'command with required payload',
     family: 'required',
     message: { type: 'GET_MEMORY_BY_ID', payload: { id: 7 } },
+  },
+  {
+    name: 'sync command with confirmed target',
+    family: 'required',
+    message: {
+      type: 'WEBDAV_UPLOAD_LOCAL',
+      payload: {
+        config: {
+          provider: 'webdav',
+          url: 'https://dav.contract.test/root',
+          username: 'contract-user',
+          password: 'contract-password',
+          remotePath: 'DeepSeekPP',
+          lastSyncAt: null,
+          schemaVersion: 1,
+          revision: 7,
+        },
+        expectedRevision: 7,
+      },
+    },
   },
   {
     name: 'command with optional payload',

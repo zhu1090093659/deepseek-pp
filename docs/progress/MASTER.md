@@ -2,7 +2,7 @@
 
 > **Task**: Refactor the extension, Shell Host, sync, persistence, and automation for higher performance, stability, compatibility, maintainability, and backward compatibility.
 > **Started**: 2026-07-13
-> **Last Updated**: 2026-07-13
+> **Last Updated**: 2026-07-14
 > **Mode**: GITHUB_STANDARD
 > **Repo**: `zhu1090093659/deepseek-pp`
 > **Run ID**: `core-refactor-2026-07`
@@ -32,7 +32,7 @@
 |:--:|:--|:--|--:|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 5 | 5 | 5 | 10 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 4 | 6 | 5 | 10 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
 | 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
@@ -59,7 +59,7 @@
 | R3.3 | [#353](https://github.com/zhu1090093659/deepseek-pp/issues/353) | Extract active DeepSeek protocol and network-policy core | closed |
 | R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | closed |
 | R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | closed |
-| R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | open |
+| R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | closed |
 | R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | open |
 | R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | open |
 | R3.9 | [#359](https://github.com/zhu1090093659/deepseek-pp/issues/359) | Remove dead platform facade and preserve PC capability truth | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (5/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (6/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.6 / [Issue #356](https://github.com/zhu1090093659/deepseek-pp/issues/356) — converged Memory and Artifact IndexedDB truth.
+**Active Task**: R3.7 / [Issue #357](https://github.com/zhu1090093659/deepseek-pp/issues/357) — serialize sync config/actions and fence confirmed targets.
 
-**Execution Branch**: `codex/356-memory-artifact-indexeddb` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/356-memory-artifact-indexeddb`, based on `main@3a30229`.
+**Execution Branch**: `codex/357-sync-confirmed-target-fencing` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/357-sync-confirmed-target-fencing`, based on `main@304120f`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `3a30229` after R3.5. The baseline passes 106 test files / 817 tests, full PC quality/package checks, and R3.5 hosted validation through PR #386. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `304120f` after R3.6. R3.6 passed 108 files / 846 tests plus the full PC quality/package matrix; hosted quality and contribution-evidence runs `29298217865` / `29298386118` passed before PR #387 squash-merged at `304120fcfbd512a4f46f471dfd58327d05515028`. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -205,7 +205,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Split the provider-agnostic `StorageBackend` port from the concrete composition factory, removing the sync provider dependency cycle while retaining the same WebDAV, Google Drive, and OneDrive implementations.
 - New uploads serialize all six logical files, precompute SHA-256/UTF-8 byte metadata, stage generation-scoped payloads, write a schema-v1 manifest, and replace `sync-current.json` last. They never dual-write legacy fixed files.
 - Readers use legacy fixed files only when the pointer is absent. A present pointer requires a valid manifest, exact six-file allowlist, generation identity, byte lengths, and checksums; corrupt/future/incomplete generations fail visibly before local mutation.
-- Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 has since closed staged local apply and rollback; config-operation serialization/concurrent overwrite is now owned by R3.7 / #357, and committed-with-local-bookkeeping warning UX by R4.11 / #370.
+- Fault injection covers every payload/manifest/pointer write boundary, all-settled staging with provider error detail, lost pointer responses, commit-indeterminate verification, concurrent publishers, strict read failures, and newest-live Google Drive canonical-object selection that excludes trashed duplicates. T2.5 closes staged local apply and rollback; R3.7 now closes config/action serialization and confirmed-target overwrite, while committed-with-local-bookkeeping warning UX remains R4.11 / #370.
 - Current validation passes 6 targeted files / 73 tests and the 60-second full suite at 84 files / 613 tests, plus TypeScript compile, prompt freeze, i18n, manifest/UTF-8 policy, Chrome/Edge/Firefox builds, `git diff --check`, and orphan-process checks. Three independent final reviews report no remaining merge blocker after provider error-detail, raw-fixture, lost-response, manifest-integrity, and GDrive duplicate-object corrections.
 - PR #347 merged at `2928d85f5d0de361a98af461d5e54a566709d36f`; Issue #319 closed after telemetry, hosted quality and contribution-evidence runs passed, and Milestone #44 advanced to 5/7 with cumulative drift score 1.
 
@@ -270,7 +270,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Project, Saved Items, and Scenario pages now report repository failures rather than rendering fake empty/default success; Background scenario/context-menu failures are logged. Targeted validation passes 11 files / 113 tests, and TypeScript plus the 60-second full suite pass at 106 files / 817 tests with no orphan Vitest/Vite process. Full `ci:quality` also passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings. Three independent final contract reviews report no remaining P0-P2 finding after the additive-field, Project v1 optional-source, invalid-broadcast, context-menu ordering, and post-commit notification fixes.
 - Hosted quality and contribution-evidence runs `29295019441` / `29295019497` passed. PR #386 squash-merged at `3a30229aca99a7d47a5cfc3824e052abdb1e2fc6`; Issue #355 closed after telemetry and Milestone #45 advanced to 5/10 completed with cumulative drift score 1.
 
-**R3.6 Evidence (local validation complete)**:
+**R3.6 Evidence (closed)**:
 
 - Added one exact-preserving Memory codec consumed by IndexedDB, sync, Settings import, Content, and Side Panel. Every ordinary read/mutation validates the complete table and current native DB version; a complete import batch validates before one shared lock and Dexie transaction, so Nth-row failure rolls back every new row and concurrent batches cannot interleave.
 - Made Artifact IndexedDB the sole runtime truth. The released Chrome-storage array is strict migration input only: complete legal arrays merge without retention pruning, conflicts/corruption/future DB versions preserve both raw stores, failed cleanup retries, and a lost remove response is verified before convergence succeeds.
@@ -278,6 +278,16 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Memory and Project UIs decode complete snapshots before committing, retain last-known valid data, end failed initial loading explicitly, and expose repository failures instead of projecting empty success. Missing Memory IDs now fail rather than returning a no-op success. Artifact retention always keeps the just-committed row, and released dual writes treat only Chrome-omitted versus IndexedDB-preserved `undefined` object properties as canonical equivalents while real nested/additive differences remain conflicts.
 - Three independent contract reviews reproduced one P1 and five P2 findings across released Artifact dual writes, repository self-poisoning, clock-rollback retention, Project/Memory mixed UI snapshots, stale compatibility targets, and missing-ID updates. All six were fixed with regression coverage; post-fix reviews report no remaining P0-P2 finding.
 - Targeted validation passes 15 files / 139 tests. TypeScript and the 60-second full suite pass at 108 files / 846 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
+- Hosted quality and contribution-evidence runs `29298217865` / `29298386118` passed. PR #387 squash-merged at `304120fcfbd512a4f46f471dfd58327d05515028`; Issue #356 closed after telemetry and Milestone #45 advanced to 6/10 completed with cumulative drift score 1.
+
+**R3.7 Evidence (local validation complete)**:
+
+- Replaced raw sync-config casts and whole-key writes with one exact-preserving schema-v1 codec/store on the released `deepseek_pp_sync_config` key. Provider-less and unversioned records project read-only to revision 0; explicit writes preserve additive fields and use one in-key monotonic revision/CAS. Future/corrupt values and unverifiable lost-write outcomes fail without overwrite.
+- Added one Background FIFO for GET/save/test/auth/upload/download. Every action payload now contains the validated deep-frozen target plus expected revision; upload/download no longer re-read mutable global config or use payload-less commands, and OAuth authorization conditionally publishes its token only to the same revision. Post-effect token/timestamp persistence conflicts or indeterminate commits are classified without claiming a stale baseline and force an authoritative FIFO reread.
+- Side Panel captures upload/download targets before confirmation, detects intervening form changes, keeps an operation-active state independent of status text, disables provider/credential fields while pending, and reconciles explicit cross-window conflicts. OAuth access-token caching now requires the refresh-token fingerprint, preventing same-client cross-account reuse without storing or logging the raw credential.
+- Existing generation pointer, legacy pointer-absence fallback, local journal/raw rollback, and recovery barrier remain the only remote/local commit protocols. Upload snapshot reads now share the existing local-state lock. Config/coordinator/UI/OAuth tests cover migrations, stale writers, lost responses, FIFO ordering, form changes, provider/apply faults, queue recovery, and credential switching.
+- Three independent contract reviews reproduced four distinct P2 findings: notification-failure timestamp rollback, silent `undefined` deletion, post-effect timestamp bookkeeping misclassification, and post-OAuth token persistence misclassification. All were fixed with fault/UI regressions; final reviews report no remaining P0-P2 finding.
+- Targeted sync/persistence validation passes 20 files / 201 tests. TypeScript, i18n, seven prompt goldens, and the 60-second full suite pass at 111 files / 881 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes workflow checks, zero production vulnerabilities, automation/MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
 
 ## Governance Status
 
@@ -301,9 +311,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Commit and publish R3.6 for hosted quality and contribution-evidence checks.
-2. Record R3.6 telemetry, merge/close Issue #356, and enforce Phase 3 adaptive thresholds.
-3. Begin R3.7 only after the R3.6 hosted closure is complete.
+1. Commit and publish R3.7 for hosted quality and contribution-evidence checks.
+2. Record R3.7 telemetry, merge/close Issue #357, and enforce Phase 3 adaptive thresholds.
+3. Begin R3.8 only after the R3.7 hosted closure is complete.
 
 ## Session Log
 
@@ -365,3 +375,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-13 | R3.6 execution start | Opened `codex/356-memory-artifact-indexeddb` from `3a30229`; audited Memory v1-v3/import/sync/UI, Artifact legacy/IndexedDB convergence, Project cascade, recovery journal, and future/corrupt preservation boundaries. |
 | 2026-07-13 | R3.6 implementation | Added sole Memory/Artifact codecs and explicit DB-version guards, transactional Memory batches, one-way Artifact migration, journaled Project/Memory cascade, and visible last-known-state UI errors without restoring Android or adding a second persistence truth. |
 | 2026-07-13 | R3.6 local validation | Closed all six independent-review findings; passed 15 files / 139 targeted tests, 108 files / 846 full tests, TypeScript, the complete PC Chrome/Edge/Firefox quality/package matrix, diff checks, and orphan-process checks. |
+| 2026-07-14 | R3.6 closure | Hosted quality/contribution runs passed; PR #387 squash-merged at `304120f`, Issue #356 closed after telemetry, and Milestone #45 advanced to 6/10 with cumulative drift score 1. |
+| 2026-07-14 | R3.7 execution start | Opened `codex/357-sync-confirmed-target-fencing` from `304120f`; audited UI confirmation, runtime payloads, config writes, remote/local ordering, OAuth credential identity, and existing generation/journal contracts before implementing the single sync authority. |
+| 2026-07-14 | R3.7 implementation | Added the exact-preserving config codec/CAS, complete-action FIFO, immutable confirmed targets, locked upload snapshots, credential-bound OAuth cache, explicit post-effect persistence classification, and Side Panel reconciliation without changing the generation or local-journal protocols. |
+| 2026-07-14 | R3.7 local validation | Closed four independent-review P2 findings; passed 20 files / 201 targeted tests, 111 files / 881 full tests, TypeScript, the complete PC Chrome/Edge/Firefox quality/package matrix, diff checks, and orphan-process checks. |

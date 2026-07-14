@@ -237,6 +237,9 @@ export type NewMemory = Omit<
 };
 
 export interface SyncConfigBase {
+  /** Additive local-storage metadata. Versionless records remain readable as revision 0. */
+  schemaVersion?: 1;
+  revision?: number;
   lastSyncAt: number | null;
 }
 
@@ -266,12 +269,10 @@ export type SyncConfig = WebdavSyncConfig | GDriveSyncConfig | OneDriveSyncConfi
 
 export type SyncProvider = SyncConfig['provider'];
 
-// Distributive Omit: applies Omit to each member of a union separately,
-// preserving provider discrimination when stripping shared fields like lastSyncAt.
-type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
-
-// Strip lastSyncAt from any SyncConfig variant for "save without timestamp" flows.
-export type SyncConfigDraft = DistributiveOmit<SyncConfig, 'lastSyncAt'>;
+export interface SyncCommandTarget {
+  config: SyncConfig;
+  expectedRevision: number | null;
+}
 
 export interface SyncCounts {
   memories: number;
@@ -613,12 +614,12 @@ export type MessageAction =
   | { type: 'SAVE_OFFICIAL_API_CHAT_CONFIG'; payload: Partial<OfficialApiChatConfigType> }
   | { type: 'TOOL_CALL_EXECUTED'; payload: ToolCall }
   | { type: 'MEMORIES_UPDATED' }
-  | { type: 'WEBDAV_TEST'; payload: SyncConfigDraft }
-  | { type: 'WEBDAV_UPLOAD_LOCAL' }
-  | { type: 'WEBDAV_DOWNLOAD_REMOTE' }
-  | { type: 'SYNC_AUTHORIZE'; payload: SyncConfigDraft }
+  | { type: 'WEBDAV_TEST'; payload: SyncCommandTarget }
+  | { type: 'WEBDAV_UPLOAD_LOCAL'; payload: SyncCommandTarget }
+  | { type: 'WEBDAV_DOWNLOAD_REMOTE'; payload: SyncCommandTarget }
+  | { type: 'SYNC_AUTHORIZE'; payload: SyncCommandTarget }
   | { type: 'GET_SYNC_CONFIG' }
-  | { type: 'SAVE_SYNC_CONFIG'; payload: SyncConfig }
+  | { type: 'SAVE_SYNC_CONFIG'; payload: SyncCommandTarget }
   | { type: 'GET_BACKGROUND' }
   | { type: 'SAVE_BACKGROUND'; payload: BackgroundConfig }
   | { type: 'CLEAR_BACKGROUND' }

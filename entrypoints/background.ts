@@ -1,5 +1,6 @@
 import {
   getAllMemories,
+  getAllMemoriesAlreadyLocked,
   getMemoryById,
   importMemoriesAtomically,
   saveMemory,
@@ -44,7 +45,16 @@ import { getBackgroundConfig, saveBackgroundConfig, clearBackgroundConfig } from
 import { getPetConfig, savePetConfig, clearPetConfig } from '../core/pet/store';
 import { clearUsageRecords, getUsageSummary, recordUsageTurn } from '../core/usage/store';
 import { getExtensionVersion } from '../core/version';
-import { getSyncConfig, saveSyncConfig } from '../core/sync/config';
+import {
+  createBrowserSyncConfigStoragePort,
+  createSyncConfigStore,
+  type VersionedOAuthSyncConfig,
+} from '../core/sync/config';
+import {
+  createSyncCommandErrorResponse,
+  createSyncOperationCoordinator,
+  type SyncDownloadResult,
+} from '../core/sync/operation-coordinator';
 import {
   OPTIONAL_SYNC_FILE_KEYS,
   REQUIRED_SYNC_FILE_KEYS,
@@ -61,6 +71,7 @@ import {
   runLocalStateMutationWithRecovery,
   stageAndApplySyncSnapshotLocally,
 } from '../core/sync/local-apply-runtime';
+import { withSyncLocalStateLock } from '../core/persistence/local-state-lock';
 import { createSyncRecoveryBarrier } from '../core/sync/recovery-barrier';
 import { createStorageBackend } from '../core/sync/backend-factory';
 import type { StorageBackend } from '../core/sync/storage-backend';
@@ -113,6 +124,7 @@ import {
   stageDeleteProjectContextAndMemoriesAlreadyLocked,
   formatProjectPromptContext,
   getProjectContextState,
+  getProjectContextStateAlreadyLocked,
   getProjectForConversation,
   getProjectPromptContextForConversation,
   refreshProjectConversation,
@@ -126,6 +138,7 @@ import {
   decodeSavedItemsState,
   getAllSavedItems,
   getSavedItemsState,
+  getSavedItemsStateAlreadyLocked,
   saveSavedItem,
 } from '../core/saved-items';
 import {
@@ -281,7 +294,7 @@ import {
   watchLocalePreference,
 } from '../core/i18n/store';
 import type { WebSearchToolName } from '../core/tool/web-search';
-import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncConfigDraft, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
+import type { BackgroundConfig, CurrentDeepSeekConversation, DeepSeekTheme, GitHubSkillImportRequest, GitHubSkillSource, LocalSkillImportRequest, Memory, ModelType, NewMemory, PetConfig, SavedItemInput, Skill, SkillImportSource, SyncConfig, SyncCounts, SystemPromptPreset, ToolAuthorizationSubject, ToolCall, ToolDescriptor, ToolExecutionRecord, ToolExecutionTrigger, ToolResult, UsageTurnInput } from '../core/types';
 import type { McpServerConfig, McpServerCreateInput, McpServerUpdateInput } from '../core/mcp/types';
 import type { AutomationCreateInput, AutomationRunnerRequest, AutomationRunnerResult, AutomationStatus, AutomationUpdateInput } from '../core/automation/types';
 import type { AutomationExecutionContext } from '../core/automation/execution';
@@ -322,6 +335,20 @@ const syncLocalRecoveryBarrier = createSyncRecoveryBarrier({
   onNotificationFailure(error) {
     reportBackgroundStartupError('sync_local_recovery_broadcast_failed', error);
   },
+});
+const syncConfigStore = createSyncConfigStore(
+  createBrowserSyncConfigStoragePort(),
+  {
+    conflictMessage: () => backgroundT('background.sync.configChanged'),
+    commitIndeterminateMessage: () => backgroundT('background.sync.configCommitIndeterminate'),
+  },
+);
+const syncOperationCoordinator = createSyncOperationCoordinator(syncConfigStore, {
+  test: testSyncTarget,
+  authorize: authorizeSyncTarget,
+  upload: uploadLocalSyncTarget,
+  download: downloadRemoteSyncTarget,
+  authorizationNotRequiredMessage: () => backgroundT('background.sync.authorizationNotRequired'),
 });
 const SANDBOX_OFFSCREEN_URL = 'sandbox-offscreen.html';
 const browserSandboxRuntime: SandboxToolRuntime = {
@@ -1314,67 +1341,29 @@ async function handleLegacyMessage(
     }
 
     case 'GET_SYNC_CONFIG':
-      return getSyncConfig();
+      return syncOperationCoordinator.getConfig();
 
     case 'SAVE_SYNC_CONFIG': {
-      await saveSyncConfig(message.payload as SyncConfig);
-      return { ok: true };
+      return handleSyncCommand(() => syncOperationCoordinator.save(message.payload));
     }
 
     case 'WEBDAV_TEST': {
-      const backend = createStorageBackend(message.payload as SyncConfig, backgroundT);
-      await backend.test();
-      return { ok: true };
+      return handleSyncCommand(() => syncOperationCoordinator.test(message.payload));
     }
 
     case 'SYNC_AUTHORIZE': {
-      // Must run in background: chrome.identity.launchWebAuthFlow requires the
-      // extension context and cannot be called from a content/offscreen context.
-      const draft = message.payload as SyncConfigDraft;
-      if (draft.provider === 'gdrive') {
-        const refreshToken = await authorizeGDrive(draft, backgroundT);
-        return { ok: true, refreshToken };
-      }
-      if (draft.provider === 'onedrive') {
-        const refreshToken = await authorizeOneDrive(draft, backgroundT);
-        return { ok: true, refreshToken };
-      }
-      throw new Error(backgroundT('background.sync.authorizationNotRequired'));
+      return handleSyncCommand(() => syncOperationCoordinator.authorize(message.payload));
     }
 
     case 'WEBDAV_UPLOAD_LOCAL': {
-      const config = await getSyncConfig();
-      if (!config) throw new Error(backgroundT('background.sync.missingSync'));
-
-      const backend = createStorageBackend(config, backgroundT);
-      const [, snapshot] = await Promise.all([
-        backend.ensureStore(),
-        getLocalSyncDataSnapshot(),
-      ]);
-
-      await uploadSyncDataSnapshot(backend, snapshot);
-
-      const now = Date.now();
-      await saveSyncConfig({ ...config, lastSyncAt: now });
-      return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
+      return handleSyncCommand(() => syncOperationCoordinator.upload(message.payload));
     }
 
     case 'WEBDAV_DOWNLOAD_REMOTE': {
-      const config = await getSyncConfig();
-      if (!config) throw new Error(backgroundT('background.sync.missingSync'));
-
-      const backend = createStorageBackend(config, backgroundT);
-      const remoteSnapshot = await getRemoteSyncDataSnapshot(backend);
-      const snapshot = await beginSyncLocalApply(
-        () => mergeSyncSnapshotWithLocalImports(remoteSnapshot),
-      );
-
-      const now = Date.now();
-      await saveSyncConfig({ ...config, lastSyncAt: now });
-      await broadcastStateUpdate(context.tabId);
-      if (snapshot.projectContext) await broadcastProjectContextUpdate(context.tabId);
-      if (snapshot.savedItems) await broadcastSavedItemsUpdate(context.tabId);
-      return { ok: true, lastSyncAt: now, counts: getSyncCounts(snapshot) };
+      return handleSyncCommand(() => syncOperationCoordinator.download(
+        message.payload,
+        (result) => notifyDownloadedSyncState(result, context),
+      ));
     }
 
     case 'CHAT_SUBMIT_PROMPT': {
@@ -2311,24 +2300,79 @@ function isAutomationStatus(status: unknown): status is AutomationStatus {
   return status === 'active' || status === 'paused' || status === 'archived';
 }
 
-async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
-  const [memories, userSkills, skillSources, presets, projectContext, savedItems] = await Promise.all([
-    getAllMemories(),
-    getUserSkills(),
-    getAllSkillSources(),
-    getAllPresets(),
-    getProjectContextState(),
-    getSavedItemsState(),
-  ]);
+async function handleSyncCommand<T>(operation: () => Promise<T>): Promise<T | ReturnType<typeof createSyncCommandErrorResponse>> {
+  try {
+    return await operation();
+  } catch (error) {
+    const response = createSyncCommandErrorResponse(error);
+    if (response) return response;
+    throw error;
+  }
+}
 
+async function testSyncTarget(config: SyncConfig): Promise<void> {
+  await createStorageBackend(config, backgroundT).test();
+}
+
+async function authorizeSyncTarget(config: VersionedOAuthSyncConfig): Promise<string> {
+  // chrome.identity.launchWebAuthFlow is available only in the extension
+  // background context; the coordinator keeps this target immutable in queue.
+  if (config.provider === 'gdrive') return authorizeGDrive(config, backgroundT);
+  return authorizeOneDrive(config, backgroundT);
+}
+
+async function uploadLocalSyncTarget(config: SyncConfig): Promise<SyncCounts> {
+  const backend = createStorageBackend(config, backgroundT);
+  const [, snapshot] = await Promise.all([
+    backend.ensureStore(),
+    getLocalSyncDataSnapshot(),
+  ]);
+  await uploadSyncDataSnapshot(backend, snapshot);
+  return getSyncCounts(snapshot);
+}
+
+async function downloadRemoteSyncTarget(config: SyncConfig): Promise<SyncDownloadResult> {
+  const backend = createStorageBackend(config, backgroundT);
+  const remoteSnapshot = await getRemoteSyncDataSnapshot(backend);
+  const snapshot = await beginSyncLocalApply(
+    () => mergeSyncSnapshotWithLocalImports(remoteSnapshot),
+  );
   return {
-    memories: memories.map(({ id, ...memory }) => memory),
-    skills: userSkills.filter(isSyncableSkill),
-    skillSources: skillSources.filter(isSyncableSkillSource),
-    presets,
-    projectContext,
-    savedItems,
+    counts: getSyncCounts(snapshot),
+    projectContextChanged: snapshot.projectContext !== null,
+    savedItemsChanged: snapshot.savedItems !== null,
   };
+}
+
+async function notifyDownloadedSyncState(
+  result: SyncDownloadResult,
+  context: RuntimeMessageContext,
+): Promise<void> {
+  await broadcastStateUpdate(context.tabId);
+  if (result.projectContextChanged) await broadcastProjectContextUpdate(context.tabId);
+  if (result.savedItemsChanged) await broadcastSavedItemsUpdate(context.tabId);
+}
+
+async function getLocalSyncDataSnapshot(): Promise<SyncDataSnapshot> {
+  return withSyncLocalStateLock(async () => {
+    const [memories, userSkills, skillSources, presets, projectContext, savedItems] = await Promise.all([
+      getAllMemoriesAlreadyLocked(),
+      getUserSkills(),
+      getAllSkillSources(),
+      getAllPresets(),
+      getProjectContextStateAlreadyLocked(),
+      getSavedItemsStateAlreadyLocked(),
+    ]);
+
+    return {
+      memories: memories.map(({ id, ...memory }) => memory),
+      skills: userSkills.filter(isSyncableSkill),
+      skillSources: skillSources.filter(isSyncableSkillSource),
+      presets,
+      projectContext,
+      savedItems,
+    };
+  });
 }
 
 async function uploadSyncDataSnapshot(backend: StorageBackend, snapshot: SyncDataSnapshot): Promise<void> {

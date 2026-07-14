@@ -36,6 +36,10 @@ export async function getProjectContextState(): Promise<ProjectContextState> {
   return projectContextRepository.read();
 }
 
+export async function getProjectContextStateAlreadyLocked(): Promise<ProjectContextState> {
+  return projectContextRepository.readAlreadyLocked();
+}
+
 export async function saveProjectContextStateForSyncApply(state: ProjectContextState): Promise<void> {
   await projectContextRepository.replaceAlreadyLocked(state);
 }

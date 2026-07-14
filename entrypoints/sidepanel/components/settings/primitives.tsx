@@ -139,6 +139,7 @@ export function TextField({
   value,
   placeholder,
   autoComplete,
+  disabled = false,
   onChange,
   onKeyDown,
   trailing,
@@ -149,6 +150,7 @@ export function TextField({
   value: string;
   placeholder?: string;
   autoComplete?: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   trailing?: ReactNode;
@@ -159,9 +161,10 @@ export function TextField({
       value={value}
       placeholder={placeholder}
       autoComplete={autoComplete}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
-      className={`${inputClass} ${trailing ? 'flex-1' : ''}`}
+      className={`${inputClass} ${trailing ? 'flex-1' : ''} disabled:cursor-not-allowed disabled:opacity-50`}
       style={inputStyle}
     />
   );
@@ -309,10 +312,23 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   // Close on Escape, lock body scroll while open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
+      if (e.key !== 'Tab') return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])');
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -326,7 +342,7 @@ function ConfirmDialog({
       aria-labelledby="ds-confirm-title"
       onClick={onCancel}
     >
-      <div className="ds-modal-card" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} className="ds-modal-card" onClick={(e) => e.stopPropagation()}>
         <h3 id="ds-confirm-title" className="ds-modal-title">
           {title}
         </h3>
@@ -403,12 +419,14 @@ export function SegmentedControl<T extends string>({
   onChange,
   ariaLabel,
   size = 'md',
+  disabled = false,
 }: {
   options: { key: T; label: string }[];
   value: T;
   onChange: (key: T) => void;
   ariaLabel: string;
   size?: 'sm' | 'md';
+  disabled?: boolean;
 }) {
   const padding = size === 'sm' ? 'px-2 py-1 text-[11px]' : 'px-2.5 py-1.5 text-[11px]';
   return (
@@ -421,8 +439,9 @@ export function SegmentedControl<T extends string>({
             type="button"
             role="radio"
             aria-checked={active}
+            disabled={disabled}
             onClick={() => onChange(option.key)}
-            className={`${padding} font-medium border transition-colors duration-150`}
+            className={`${padding} font-medium border transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50`}
             style={{
               borderRadius: 'var(--radius-ctrl)',
               background: active ? 'var(--ds-blue)' : 'transparent',

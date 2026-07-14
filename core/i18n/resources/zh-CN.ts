@@ -368,6 +368,7 @@ export const zhCN = {
       apiKeyCleared: '已清除，右键场景恢复为仅 DeepSeek 网页可用',
       webDavPermissionDenied: '需要访问权限才能连接 WebDAV 服务器',
       operationFailed: '操作失败',
+      syncConfigChanged: '同步设置已变化，请确认当前目标后重试',
       syncCounts: '记忆 {memories} 条，Skill {skills} 个，预设 {presets} 个，项目 {projects} 个，项目对话 {projectConversations} 个，保存项 {savedItems} 条',
       connectionSuccess: '连接成功',
       connectionFailed: '连接失败',
@@ -1013,6 +1014,8 @@ export const zhCN = {
     sync: {
       missingWebDav: '未配置 WebDAV',
       missingSync: '未配置云同步',
+      configChanged: '其他扩展窗口已修改同步设置，请确认当前目标后重试',
+      configCommitIndeterminate: '无法确认同步设置是否已保存，将重新读取当前设置',
       missingRemoteFile: '云端缺少 {file}，已停止下载以避免覆盖本地数据',
       authorizationNotRequired: '当前同步方式不需要授权',
       identityUnavailable: '当前浏览器环境不支持 OAuth 授权',
