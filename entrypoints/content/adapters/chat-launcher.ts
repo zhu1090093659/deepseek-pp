@@ -1,4 +1,5 @@
 import { getFloatingChatEnabled } from '../../../core/floating-chat/store';
+import { resolveFloatingChatRuntimeState } from '../../../core/floating-chat/runtime-state';
 import { isExtensionContextInvalidatedError } from '../../../core/platform/chrome-api';
 
 export interface ChatLauncherController {
@@ -11,14 +12,28 @@ const WINDOW_ID = 'dpp-floating-chat-window';
 const SIDE_PANEL_PATH = 'sidepanel.html?surface=floating-chat';
 const STORAGE_KEY = 'deepseek_pp_floating_chat_enabled';
 const PET_SPRITE_PATH = 'pet/deepseek-whale-pet-states.png';
+const OWNER_ATTRIBUTE = 'data-dpp-chat-launcher-owner';
 // Pointer must move farther than this (px) to count as a drag instead of a click.
 const DRAG_THRESHOLD = 6;
 
-let dragState: { isDragging: boolean; startX: number; startY: number; startRight: number; startBottom: number } | null = null;
+let dragState: {
+  ownerId: string;
+  isDragging: boolean;
+  startX: number;
+  startY: number;
+  startRight: number;
+  startBottom: number;
+} | null = null;
+let activeLauncherStop: (() => void) | null = null;
 
 type HostTheme = 'light' | 'dark';
 
 export function startChatLauncher(): ChatLauncherController {
+  activeLauncherStop?.();
+  removeButton();
+  removeWindow();
+  stopActiveDrag();
+
   // Bail out cleanly if the document isn't ready for injection. document_idle
   // should guarantee a body, but defending here avoids a null-deref crash on
   // the first addEventListener if the script runs earlier than expected.
@@ -26,6 +41,7 @@ export function startChatLauncher(): ChatLauncherController {
     return { stop() {} };
   }
 
+  const ownerId = createOwnerId();
   let spriteUrl: string;
   let floatingChatUrl: string;
   try {
@@ -40,7 +56,7 @@ export function startChatLauncher(): ChatLauncherController {
   }
 
   injectStyles();
-  const button = ensureButton(spriteUrl);
+  const button = ensureButton(spriteUrl, ownerId);
 
   // Pointer state — a press only becomes a drag once the pointer moves past
   // DRAG_THRESHOLD. This avoids swallowing clicks that take longer than the
@@ -92,7 +108,7 @@ export function startChatLauncher(): ChatLauncherController {
     if (!movedPastThreshold) {
       // It was a click, not a drag — toggle the chat window.
       e.preventDefault();
-      toggleFloatingWindow(floatingChatUrl);
+      toggleFloatingWindow(floatingChatUrl, ownerId);
     }
   };
 
@@ -102,20 +118,24 @@ export function startChatLauncher(): ChatLauncherController {
   button.addEventListener('pointercancel', onPointerUp);
 
   let disposed = false;
-  const themeObserver = new MutationObserver(syncWindowTheme);
+  const themeObserver = new MutationObserver(() => syncWindowTheme(ownerId));
   const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
     if (areaName !== 'local') return;
     if (STORAGE_KEY in changes) void renderFromStorage();
   };
   const renderFromStorage = async () => {
-    try {
-      const enabled = await getFloatingChatEnabled();
-      if (disposed) return;
-      renderLauncher(enabled);
-    } catch (error) {
-      if (!isExtensionContextInvalidatedError(error)) throw error;
+    const state = await resolveFloatingChatRuntimeState({
+      readEnabled: getFloatingChatEnabled,
+      // Reaching this declared content script proves the page host permission.
+      hasHostPermission: async () => true,
+      isContextInvalidated: isExtensionContextInvalidatedError,
+    });
+    if (disposed) return;
+    if (state.kind === 'invalidated') {
       stop();
+      return;
     }
+    renderLauncher(state.kind === 'ready', ownerId);
   };
 
   const stop = () => {
@@ -131,8 +151,10 @@ export function startChatLauncher(): ChatLauncherController {
       if (!isExtensionContextInvalidatedError(error)) throw error;
     }
     themeObserver.disconnect();
-    removeButton();
-    removeWindow();
+    stopActiveDrag(ownerId);
+    removeButton(ownerId);
+    removeWindow(ownerId);
+    if (activeLauncherStop === stop) activeLauncherStop = null;
   };
 
   try {
@@ -145,22 +167,22 @@ export function startChatLauncher(): ChatLauncherController {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-dpp-theme'] });
   void renderFromStorage();
 
+  activeLauncherStop = stop;
   return { stop };
 }
 
-function renderLauncher(enabled: boolean): void {
+function renderLauncher(enabled: boolean, ownerId: string): void {
   const button = document.getElementById(BUTTON_ID) as HTMLButtonElement | null;
-  if (!button) return;
+  if (!button || button.getAttribute(OWNER_ATTRIBUTE) !== ownerId) return;
   button.style.display = enabled ? '' : 'none';
   button.title = 'Open DS++ Chat';
   button.setAttribute('aria-label', 'Open DS++ Chat');
 }
 
-function ensureButton(spriteUrl: string): HTMLButtonElement {
-  const existing = document.getElementById(BUTTON_ID) as HTMLButtonElement | null;
-  if (existing) return existing;
+function ensureButton(spriteUrl: string, ownerId: string): HTMLButtonElement {
   const button = document.createElement('button');
   button.id = BUTTON_ID;
+  button.setAttribute(OWNER_ATTRIBUTE, ownerId);
   button.type = 'button';
   button.style.display = 'none';
   button.innerHTML = createWhaleMarkup(spriteUrl);
@@ -168,11 +190,13 @@ function ensureButton(spriteUrl: string): HTMLButtonElement {
   return button;
 }
 
-function removeButton(): void {
-  document.getElementById(BUTTON_ID)?.remove();
+function removeButton(ownerId?: string): void {
+  const button = document.getElementById(BUTTON_ID);
+  if (!button || (ownerId && button.getAttribute(OWNER_ATTRIBUTE) !== ownerId)) return;
+  button.remove();
 }
 
-function toggleFloatingWindow(floatingChatUrl: string): void {
+function toggleFloatingWindow(floatingChatUrl: string, ownerId: string): void {
   const existing = document.getElementById(WINDOW_ID);
   if (existing) {
     existing.remove();
@@ -181,6 +205,7 @@ function toggleFloatingWindow(floatingChatUrl: string): void {
   if (!document.body) return;
   const panel = document.createElement('section');
   panel.id = WINDOW_ID;
+  panel.setAttribute(OWNER_ATTRIBUTE, ownerId);
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'DeepSeek++ Chat');
   applyWindowTheme(panel);
@@ -193,11 +218,11 @@ function toggleFloatingWindow(floatingChatUrl: string): void {
     + `<iframe class="dpp-floating-chat__frame" title="DS++ Chat" src="${frameSrc}"></iframe>`;
   panel.querySelector('[data-dpp-floating-chat-close]')?.addEventListener('click', () => panel.remove());
   const dragHandle = panel.querySelector('[data-dpp-drag-handle]') as HTMLElement | null;
-  dragHandle?.addEventListener('pointerdown', (e) => startDrag(e, panel));
+  dragHandle?.addEventListener('pointerdown', (e) => startDrag(e, panel, ownerId));
   document.body.appendChild(panel);
 }
 
-function startDrag(e: PointerEvent, panel: HTMLElement): void {
+function startDrag(e: PointerEvent, panel: HTMLElement, ownerId: string): void {
   // Interactive controls inside the header own their pointer sequence. Starting
   // a drag here would prevent their click and move pointer capture to the header.
   if (e.button !== 0) return;
@@ -206,6 +231,7 @@ function startDrag(e: PointerEvent, panel: HTMLElement): void {
   try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   const rect = panel.getBoundingClientRect();
   dragState = {
+    ownerId,
     isDragging: true,
     startX: e.clientX,
     startY: e.clientY,
@@ -227,7 +253,10 @@ function isInteractiveDragTarget(target: EventTarget | null): boolean {
 function onDrag(e: PointerEvent): void {
   if (!dragState?.isDragging) return;
   const panel = document.getElementById(WINDOW_ID);
-  if (!panel) return;
+  if (!panel || panel.getAttribute(OWNER_ATTRIBUTE) !== dragState.ownerId) {
+    stopActiveDrag(dragState.ownerId);
+    return;
+  }
   const deltaX = e.clientX - dragState.startX;
   const deltaY = e.clientY - dragState.startY;
   const newRight = Math.max(0, dragState.startRight - deltaX);
@@ -237,8 +266,15 @@ function onDrag(e: PointerEvent): void {
 }
 
 function stopDrag(): void {
+  stopActiveDrag();
+}
+
+function stopActiveDrag(ownerId?: string): void {
+  if (ownerId && dragState?.ownerId !== ownerId) return;
   const panel = document.getElementById(WINDOW_ID);
-  panel?.classList.remove('dpp-floating-chat--dragging');
+  if (!ownerId || panel?.getAttribute(OWNER_ATTRIBUTE) === ownerId) {
+    panel?.classList.remove('dpp-floating-chat--dragging');
+  }
   document.body.classList.remove('dpp-floating-chat-dragging');
   dragState = null;
   document.removeEventListener('pointermove', onDrag);
@@ -246,13 +282,15 @@ function stopDrag(): void {
   document.removeEventListener('pointercancel', stopDrag);
 }
 
-function removeWindow(): void {
-  document.getElementById(WINDOW_ID)?.remove();
+function removeWindow(ownerId?: string): void {
+  const panel = document.getElementById(WINDOW_ID);
+  if (!panel || (ownerId && panel.getAttribute(OWNER_ATTRIBUTE) !== ownerId)) return;
+  panel.remove();
 }
 
-function syncWindowTheme(): void {
+function syncWindowTheme(ownerId: string): void {
   const panel = document.getElementById(WINDOW_ID);
-  if (!panel) return;
+  if (!panel || panel.getAttribute(OWNER_ATTRIBUTE) !== ownerId) return;
   applyWindowTheme(panel);
 }
 
@@ -272,6 +310,10 @@ function getHostTheme(): HostTheme {
 // a 4x2 grid) and shows the "thinking" frame as its resting pose.
 function createWhaleMarkup(spriteUrl: string): string {
   return `<span class="dpp-chat-launcher__whale" style="background-image:url('${spriteUrl}')"></span>`;
+}
+
+function createOwnerId(): string {
+  return `launcher-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function injectStyles(): void {

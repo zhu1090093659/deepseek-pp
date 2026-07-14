@@ -81,6 +81,32 @@ describe('floating chat launcher', () => {
     });
     expect(chrome.storage.onChanged.removeListener).toHaveBeenCalledOnce();
   });
+
+  it('replaces an active controller without duplicating UI or letting stale teardown remove it', () => {
+    const first = startChatLauncher();
+    const firstButton = document.getElementById('dpp-chat-launcher-button');
+
+    controller = startChatLauncher();
+    const secondButton = document.getElementById('dpp-chat-launcher-button');
+
+    expect(secondButton).toBeInstanceOf(HTMLButtonElement);
+    expect(secondButton).not.toBe(firstButton);
+    expect(document.querySelectorAll('#dpp-chat-launcher-button')).toHaveLength(1);
+    first.stop();
+    expect(document.getElementById('dpp-chat-launcher-button')).toBe(secondButton);
+    expect(chrome.storage.onChanged.addListener).toHaveBeenCalledTimes(2);
+    expect(chrome.storage.onChanged.removeListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('tears down owned resources exactly once', () => {
+    controller = startChatLauncher();
+    controller.stop();
+    controller.stop();
+
+    expect(document.getElementById('dpp-chat-launcher-button')).toBeNull();
+    expect(document.getElementById('dpp-floating-chat-window')).toBeNull();
+    expect(chrome.storage.onChanged.removeListener).toHaveBeenCalledOnce();
+  });
 });
 
 function pointerEvent(type: string): MouseEvent {
