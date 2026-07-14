@@ -63,7 +63,12 @@ export function createConversationExportRuntimeHandlers(
       }
       await dependencies.broadcastProgress(progress, entry.excludeTabId);
     });
-    entry.progressTail = operation.catch(() => undefined);
+    // `operation` is returned to the caller, which observes its failure. The
+    // private tail must settle so a later terminal notification can still run.
+    entry.progressTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     return operation;
   };
 
