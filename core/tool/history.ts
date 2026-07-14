@@ -1,6 +1,8 @@
 import type { ToolCall, ToolCallHistoryRecord, ToolExecutionTrigger, ToolResult } from './types';
+import { decodeToolCallHistory, encodeToolCallHistory } from './history-codec';
+import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 
-const STORAGE_KEY = 'deepseek_pp_tool_history';
+export const TOOL_HISTORY_STORAGE_KEY = 'deepseek_pp_tool_history';
 // Lowered from 200 → 100. Each record carries detail/output snapshots, and the
 // full history array is rewritten on every tool call (chrome.storage.local.set
 // replaces the whole key). 200 records of untrimmed MCP output easily pushed
@@ -11,40 +13,54 @@ const MAX_HISTORY = 100;
 // Reserve headroom so other storage keys (memories, skills, settings) are not
 // evicted when tool history grows. 0.75 of the per-key budget.
 const HISTORY_BUDGET_RATIO = 0.75;
+const toolHistoryOperations = createSerialOperationQueue();
 
 export async function appendToolCallHistory(
   call: ToolCall,
   result: ToolResult,
   source: ToolExecutionTrigger,
 ): Promise<ToolCallHistoryRecord> {
-  const record: ToolCallHistoryRecord = {
-    id: crypto.randomUUID(),
-    call: sanitizeCall(call),
-    result: sanitizeResult(result),
-    source,
-    createdAt: Date.now(),
-  };
-  const history = await getToolCallHistory();
-  const budgetBytes = getHistoryBudgetBytes();
-  const trimmed = trimToFit([record, ...history], budgetBytes);
-  await chrome.storage.local.set({
-    [STORAGE_KEY]: trimmed.slice(0, MAX_HISTORY),
+  return toolHistoryOperations.run(async () => {
+    const history = orderToolCallHistory(await readToolCallHistoryAlreadyOwned());
+    const record: ToolCallHistoryRecord = {
+      id: crypto.randomUUID(),
+      call: sanitizeCall(call),
+      result: sanitizeResult(result),
+      source,
+      createdAt: Date.now(),
+    };
+    const budgetBytes = getHistoryBudgetBytes();
+    const trimmed = trimToFit([record, ...history.slice(0, MAX_HISTORY)], budgetBytes);
+    await chrome.storage.local.set({
+      [TOOL_HISTORY_STORAGE_KEY]: encodeToolCallHistory(trimmed.slice(0, MAX_HISTORY)),
+    });
+    return record;
   });
-  return record;
 }
 
 export async function getToolCallHistory(limit: number = MAX_HISTORY): Promise<ToolCallHistoryRecord[]> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  const raw = data[STORAGE_KEY];
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((item): item is ToolCallHistoryRecord => Boolean(item && typeof item === 'object'))
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, limit);
+  return toolHistoryOperations.run(async () => {
+    const history = orderToolCallHistory(await readToolCallHistoryAlreadyOwned());
+    return history.slice(0, limit);
+  });
 }
 
 export async function clearToolCallHistory(): Promise<void> {
-  await chrome.storage.local.remove(STORAGE_KEY);
+  await toolHistoryOperations.run(async () => {
+    await readToolCallHistoryAlreadyOwned();
+    await chrome.storage.local.remove(TOOL_HISTORY_STORAGE_KEY);
+  });
+}
+
+async function readToolCallHistoryAlreadyOwned(): Promise<ToolCallHistoryRecord[]> {
+  const data = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
+  return decodeToolCallHistory(data[TOOL_HISTORY_STORAGE_KEY]);
+}
+
+function orderToolCallHistory(
+  history: readonly ToolCallHistoryRecord[],
+): ToolCallHistoryRecord[] {
+  return [...history].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 function sanitizeCall(call: ToolCall): ToolCall {

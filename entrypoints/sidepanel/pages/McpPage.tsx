@@ -29,8 +29,10 @@ import type {
   ToolExecutionMode,
   PlatformEnvironment,
 } from '../../../core/types';
+import { decodeToolCallHistory } from '../../../core/tool/history-codec';
 import PageIntro from '../components/PageIntro';
 import { useI18n } from '../i18n';
+import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 import {
   SettingsSection,
   StatusMessage,
@@ -162,13 +164,17 @@ export default function McpPage() {
       );
       setCaches(Object.fromEntries(cacheEntries));
 
-      const recent: ToolCallHistoryRecord[] = await chrome.runtime.sendMessage({
+      const historyResponse = await chrome.runtime.sendMessage({
         type: 'GET_TOOL_CALL_HISTORY',
         payload: { limit: 12 },
       });
-      setHistory(recent ?? []);
+      const recent = unwrapRuntimeResponse<unknown>(
+        historyResponse,
+        t('sidepanel.mcpPage.messages.loadFailed'),
+      );
+      setHistory(decodeToolCallHistory(recent, 'GET_TOOL_CALL_HISTORY response'));
     } catch (err) {
-      showBanner('error', err instanceof Error ? err.message : t('sidepanel.mcpPage.messages.loadFailed'));
+      showBanner('error', getRuntimeErrorMessage(err) || t('sidepanel.mcpPage.messages.loadFailed'));
     } finally {
       setLoading(false);
     }

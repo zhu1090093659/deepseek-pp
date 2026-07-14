@@ -6,6 +6,11 @@ import {
 } from '../core/artifact/schema';
 import { ARTIFACT_SCHEMA_VERSION } from '../core/artifact/types';
 import {
+  AUTOMATION_STORAGE_KEY,
+  LEGACY_AUTOMATION_RUN_TIMEOUT_MS,
+  decodeAutomationStorageState,
+} from '../core/automation/storage-codec';
+import {
   MEMORY_DATABASE_NAME,
   MEMORY_TABLE_NAME,
   MEMORY_TABLE_SCHEMAS,
@@ -29,6 +34,10 @@ import {
   SCENARIO_STORAGE_KEY,
 } from '../core/scenario/store';
 import { SYNC_CONFIG_STORAGE_KEY, decodeStoredSyncConfig } from '../core/sync/config';
+import { TOOL_HISTORY_STORAGE_KEY } from '../core/tool/history';
+import { decodeToolCallHistory } from '../core/tool/history-codec';
+import { USAGE_STORAGE_KEY } from '../core/usage/store';
+import { decodeUsageRecords } from '../core/usage/codec';
 import {
   SYNC_RECOVERY_DATABASE_NAME,
   SYNC_RECOVERY_DATABASE_VERSION,
@@ -56,6 +65,11 @@ import {
   LEGACY_ARTIFACT_RECORD,
   REJECTED_LEGACY_ARTIFACT_STATES,
 } from './fixtures/persistence-contract/artifact';
+import {
+  AUTOMATION_STORAGE_REJECTED_STATES,
+  AUTOMATION_STORAGE_V1_LEGACY,
+  AUTOMATION_STORAGE_V1_ORPHAN_RUN,
+} from './fixtures/persistence-contract/automation';
 import {
   MEMORY_BOUNDED_GAPS,
   MEMORY_V1_RECORD,
@@ -87,6 +101,14 @@ import {
   SYNC_MEMORY_RECORD,
   SYNC_VERSIONING_FIXTURES,
 } from './fixtures/persistence-contract/sync';
+import {
+  TOOL_HISTORY_LEGACY_RECORD,
+  TOOL_HISTORY_STORAGE_REJECTED_STATES,
+} from './fixtures/persistence-contract/tool-history';
+import {
+  USAGE_LEGACY_RECORD,
+  USAGE_STORAGE_REJECTED_STATES,
+} from './fixtures/persistence-contract/usage';
 
 let storage: Record<string, unknown>;
 let storageGet: ReturnType<typeof vi.fn>;
@@ -156,6 +178,59 @@ describe('persistence and sync compatibility contract', () => {
 
     for (const raw of Object.values(REJECTED_LEGACY_ARTIFACT_STATES)) {
       expect(() => decodeArtifactRecords(raw)).toThrow();
+    }
+  });
+
+  it('freezes Automation, Usage, and Tool History released whole-key contracts', () => {
+    expect(AUTOMATION_STORAGE_KEY).toBe('deepseek_pp_automations');
+    const automation = decodeAutomationStorageState(structuredClone(AUTOMATION_STORAGE_V1_LEGACY));
+    expect(automation).toMatchObject({
+      additiveRootField: { preserve: true },
+      automations: [{
+        deepseek: {
+          chatSessionId: null,
+          parentMessageId: null,
+          sessionUrl: null,
+          lastHistorySyncedAt: null,
+        },
+        additiveAutomationField: { preserve: true },
+      }],
+      runs: [{
+        request: {
+          parentMessageId: 42,
+          deadlineAt: 1_100 + LEGACY_AUTOMATION_RUN_TIMEOUT_MS,
+        },
+        additiveRunField: { preserve: true },
+      }],
+    });
+    expect(decodeAutomationStorageState(structuredClone(AUTOMATION_STORAGE_V1_ORPHAN_RUN)).runs)
+      .toHaveLength(1);
+    for (const raw of Object.values(AUTOMATION_STORAGE_REJECTED_STATES)) {
+      expect(() => decodeAutomationStorageState(structuredClone(raw))).toThrow();
+    }
+
+    expect(USAGE_STORAGE_KEY).toBe('deepseek_pp_usage_turns_v1');
+    expect(decodeUsageRecords(structuredClone([USAGE_LEGACY_RECORD]))[0]).toMatchObject({
+      source: 'deepseek-web',
+      chatSessionId: null,
+      assistantMessageId: null,
+      modelType: null,
+      tokenSource: 'estimated',
+      tps: 0,
+      speedSource: 'estimated',
+      elapsedMs: 0,
+      messageCount: 2,
+      additiveUsageField: { preserve: true },
+    });
+    for (const raw of Object.values(USAGE_STORAGE_REJECTED_STATES)) {
+      expect(() => decodeUsageRecords(structuredClone(raw))).toThrow();
+    }
+
+    expect(TOOL_HISTORY_STORAGE_KEY).toBe('deepseek_pp_tool_history');
+    expect(decodeToolCallHistory(structuredClone([TOOL_HISTORY_LEGACY_RECORD])))
+      .toEqual([TOOL_HISTORY_LEGACY_RECORD]);
+    for (const raw of Object.values(TOOL_HISTORY_STORAGE_REJECTED_STATES)) {
+      expect(() => decodeToolCallHistory(structuredClone(raw))).toThrow();
     }
   });
 

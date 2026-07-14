@@ -3,7 +3,6 @@ import type {
   AutomationCreateInput,
   AutomationId,
   AutomationRun,
-  AutomationRunCreateInput,
   AutomationRunId,
   AutomationRunListOptions,
   AutomationRunnerRequest,
@@ -14,23 +13,15 @@ import type {
   AutomationStatus,
   AutomationUpdateInput,
 } from './types';
+import {
+  AUTOMATION_STORAGE_KEY,
+  decodeAutomationStorageState,
+  encodeAutomationStorageState,
+  type AutomationStorageState,
+} from './storage-codec';
+import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 
-const STORAGE_KEY = 'deepseek_pp_automations';
-const STORAGE_VERSION = 1;
 const DEFAULT_RUN_HISTORY_LIMIT = 100;
-const LEGACY_AUTOMATION_RUN_TIMEOUT_MS = 180_000;
-
-interface AutomationStorageState {
-  version: number;
-  automations: Automation[];
-  runs: AutomationRun[];
-}
-
-const EMPTY_STATE: AutomationStorageState = {
-  version: STORAGE_VERSION,
-  automations: [],
-  runs: [],
-};
 
 export type AutomationRunClaimResult =
   | { kind: 'claimed'; automation: Automation; run: AutomationRun }
@@ -60,39 +51,42 @@ interface ReconcileStaleRunsOptions {
   runtimePatch?: (automation: Automation, run: AutomationRun) => AutomationRuntimeUpdate;
 }
 
-let stateMutation = Promise.resolve();
+const automationOperations = createSerialOperationQueue();
 
 export async function getAllAutomations(): Promise<Automation[]> {
-  const state = await readState();
-  return [...state.automations].sort((a, b) => b.updatedAt - a.updatedAt);
+  return automationOperations.run(async () => {
+    const state = await readStateAlreadyOwned();
+    return [...state.automations].sort((a, b) => b.updatedAt - a.updatedAt);
+  });
 }
 
 export async function getAutomationById(id: AutomationId): Promise<Automation | null> {
-  const state = await readState();
-  return state.automations.find((automation) => automation.id === id) ?? null;
+  return automationOperations.run(async () => {
+    const state = await readStateAlreadyOwned();
+    return state.automations.find((automation) => automation.id === id) ?? null;
+  });
 }
 
 export async function createAutomation(input: AutomationCreateInput): Promise<Automation> {
-  const now = Date.now();
-  const automation: Automation = {
-    ...input,
-    id: crypto.randomUUID(),
-    status: 'active',
-    deepseek: {
-      chatSessionId: null,
-      parentMessageId: null,
-      sessionUrl: null,
-      lastHistorySyncedAt: null,
-    },
-    createdAt: now,
-    updatedAt: now,
-    lastRunAt: null,
-    nextRunAt: null,
-    lastError: null,
-    version: 1,
-  };
-
   return mutateState((state) => {
+    const now = Date.now();
+    const automation: Automation = {
+      ...input,
+      id: crypto.randomUUID(),
+      status: 'active',
+      deepseek: {
+        chatSessionId: null,
+        parentMessageId: null,
+        sessionUrl: null,
+        lastHistorySyncedAt: null,
+      },
+      createdAt: now,
+      updatedAt: now,
+      lastRunAt: null,
+      nextRunAt: null,
+      lastError: null,
+      version: 1,
+    };
     return {
       nextState: {
         ...state,
@@ -135,28 +129,6 @@ export async function deleteAutomation(id: AutomationId): Promise<void> {
       changed: nextAutomations.length !== state.automations.length || nextRuns.length !== state.runs.length,
     };
   });
-}
-
-export async function createAutomationRun(input: AutomationRunCreateInput): Promise<AutomationRun> {
-  const now = Date.now();
-  const run: AutomationRun = {
-    id: input.id ?? crypto.randomUUID(),
-    automationId: input.automationId,
-    trigger: input.trigger,
-    status: 'queued',
-    scheduledFor: input.scheduledFor,
-    attempt: input.attempt ?? 1,
-    request: input.request,
-    result: null,
-    error: null,
-    createdAt: now,
-    startedAt: null,
-    completedAt: null,
-    updatedAt: now,
-  };
-
-  await appendAutomationRun(run);
-  return run;
 }
 
 export async function claimAutomationRun(
@@ -266,17 +238,6 @@ export async function finalizeAutomationRun(
   });
 }
 
-export async function appendAutomationRun(run: AutomationRun): Promise<void> {
-  await mutateState((state) => {
-    const runs = [run, ...state.runs.filter((stored) => stored.id !== run.id)];
-    return {
-      nextState: { ...state, runs: pruneRunHistory(runs) },
-      result: undefined,
-      changed: true,
-    };
-  });
-}
-
 export async function updateAutomationRun(
   id: AutomationRunId,
   patch: AutomationRunUpdateInput,
@@ -305,17 +266,21 @@ export async function updateAutomationRun(
 export async function getAutomationRuns(
   options: AutomationRunListOptions,
 ): Promise<AutomationRun[]> {
-  const state = await readState();
-  const limit = options.limit ?? DEFAULT_RUN_HISTORY_LIMIT;
-  return state.runs
-    .filter((run) => run.automationId === options.automationId)
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, limit);
+  return automationOperations.run(async () => {
+    const state = await readStateAlreadyOwned();
+    const limit = options.limit ?? DEFAULT_RUN_HISTORY_LIMIT;
+    return state.runs
+      .filter((run) => run.automationId === options.automationId)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+  });
 }
 
 export async function getAutomationRunById(id: AutomationRunId): Promise<AutomationRun | null> {
-  const state = await readState();
-  return state.runs.find((run) => run.id === id) ?? null;
+  return automationOperations.run(async () => {
+    const state = await readStateAlreadyOwned();
+    return state.runs.find((run) => run.id === id) ?? null;
+  });
 }
 
 /**
@@ -436,18 +401,14 @@ async function patchAutomation(
   });
 }
 
-async function readState(): Promise<AutomationStorageState> {
-  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
-  return normalizeState(data[STORAGE_KEY]);
+async function readStateAlreadyOwned(): Promise<AutomationStorageState> {
+  const data = await chrome.storage.local.get(AUTOMATION_STORAGE_KEY) as Record<string, unknown>;
+  return decodeAutomationStorageState(data[AUTOMATION_STORAGE_KEY]);
 }
 
 async function writeState(state: AutomationStorageState): Promise<void> {
   await chrome.storage.local.set({
-    [STORAGE_KEY]: {
-      version: STORAGE_VERSION,
-      automations: state.automations,
-      runs: state.runs,
-    },
+    [AUTOMATION_STORAGE_KEY]: encodeAutomationStorageState(state),
   });
 }
 
@@ -458,113 +419,12 @@ async function mutateState<TResult>(
     changed: boolean;
   },
 ): Promise<TResult> {
-  const operation = stateMutation.then(async () => {
-    const state = await readState();
+  return automationOperations.run(async () => {
+    const state = await readStateAlreadyOwned();
     const outcome = mutation(state);
     if (outcome.changed) await writeState(outcome.nextState);
     return outcome.result;
   });
-  stateMutation = operation.then(() => undefined, () => undefined);
-  return operation;
-}
-
-function normalizeState(raw: unknown): AutomationStorageState {
-  if (!raw || typeof raw !== 'object') return { ...EMPTY_STATE };
-
-  const value = raw as Partial<AutomationStorageState>;
-  return {
-    version: typeof value.version === 'number' ? value.version : STORAGE_VERSION,
-    automations: Array.isArray(value.automations)
-      ? value.automations.map(normalizeAutomation).filter((item): item is Automation => item !== null)
-      : [],
-    runs: Array.isArray(value.runs)
-      ? value.runs.map(normalizeAutomationRun).filter((item): item is AutomationRun => item !== null)
-      : [],
-  };
-}
-
-function normalizeAutomation(raw: unknown): Automation | null {
-  if (!raw || typeof raw !== 'object') return null;
-
-  const automation = raw as Automation;
-  const deepseek = automation.deepseek ?? {
-    chatSessionId: null,
-    parentMessageId: null,
-    sessionUrl: null,
-    lastHistorySyncedAt: null,
-  };
-
-  return {
-    ...automation,
-    deepseek: {
-      ...deepseek,
-      parentMessageId: normalizeStoredMessageId(deepseek.parentMessageId),
-    },
-  };
-}
-
-function normalizeAutomationRun(raw: unknown): AutomationRun | null {
-  if (!raw || typeof raw !== 'object') return null;
-
-  const run = raw as AutomationRun;
-  return {
-    ...run,
-    request: run.request
-      ? {
-        ...run.request,
-        deadlineAt: normalizeStoredDeadline(
-          run.request.deadlineAt,
-          run.request.requestedAt,
-          run.startedAt ?? run.createdAt,
-        ),
-        parentMessageId: normalizeStoredMessageId(run.request.parentMessageId),
-      }
-      : null,
-    result: normalizeRunResult(run.result),
-  };
-}
-
-function normalizeStoredDeadline(value: unknown, requestedAt: unknown, fallbackAt: number): number {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  const normalizedRequestedAt = typeof requestedAt === 'number' && Number.isFinite(requestedAt)
-    ? requestedAt
-    : fallbackAt;
-  return normalizedRequestedAt + LEGACY_AUTOMATION_RUN_TIMEOUT_MS;
-}
-
-function normalizeRunResult(result: AutomationRun['result']): AutomationRun['result'] {
-  if (!result) return null;
-  if (result.ok) {
-    return {
-      ...result,
-      parentMessageId: normalizeStoredMessageId(result.parentMessageId) ?? 0,
-      assistantMessageId: normalizeStoredMessageId(result.assistantMessageId),
-      history: result.history
-        ? {
-          ...result.history,
-          parentMessageId: normalizeStoredMessageId(result.history.parentMessageId),
-          assistantMessageId: normalizeStoredMessageId(result.history.assistantMessageId),
-        }
-        : null,
-    };
-  }
-
-  return {
-    ...result,
-    parentMessageId: normalizeStoredMessageId(result.parentMessageId),
-  };
-}
-
-function normalizeStoredMessageId(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xFFFFFFFF) return value;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!/^\d+$/.test(trimmed)) return null;
-    const parsed = Number(trimmed);
-    if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 0xFFFFFFFF) return parsed;
-  }
-  return null;
 }
 
 function pruneRunHistory(runs: AutomationRun[]): AutomationRun[] {

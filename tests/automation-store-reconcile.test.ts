@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendAutomationRun,
   createAutomation,
   getAutomationRunById,
   reconcileStaleRuns,
@@ -31,7 +30,19 @@ afterEach(() => {
 });
 
 async function seedRun(run: AutomationRun): Promise<void> {
-  await appendAutomationRun(run);
+  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
+  const current = data[STORAGE_KEY] as {
+    version: 1;
+    automations: unknown[];
+    runs: AutomationRun[];
+  } | undefined;
+  await chrome.storage.local.set({
+    [STORAGE_KEY]: {
+      version: 1,
+      automations: current?.automations ?? [],
+      runs: [run, ...(current?.runs ?? []).filter((stored) => stored.id !== run.id)],
+    },
+  });
 }
 
 function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
@@ -56,7 +67,7 @@ function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
 
 describe('reconcileStaleRuns', () => {
   it('marks a stale running run as failed with an interrupted error', async () => {
-    const { storage, chromeStub } = createChromeStub();
+    const { chromeStub } = createChromeStub();
     vi.stubGlobal('chrome', chromeStub);
     // Seed an automation so the run has a parent, then the run.
     await createAutomation({

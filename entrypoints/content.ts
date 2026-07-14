@@ -32,6 +32,7 @@ import { containsInternalPromptMarker, sanitizeInternalPromptText } from '../cor
 import { createRestoredArtifactToolResult } from '../core/artifact';
 import type { ResponseCompletePayload, ResponseTokenSpeedPayload } from '../core/interceptor/fetch-hook';
 import { shouldIgnoreEmptyTokenSpeedProgress } from '../core/deepseek/stream-metrics';
+import { createUsageProgressWriteCoordinator } from '../core/usage/progress-write-coordinator';
 import { runInlineAgentLoop } from '../core/inline-agent/loop';
 import {
   INCOMPLETE_TOOL_CALL_ERROR_CODE,
@@ -293,7 +294,7 @@ let tokenSpeedMountTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTokenSpeedProgress: ResponseTokenSpeedPayload = createIdleTokenSpeedProgress();
 let tokenSpeedRouteKey = '';
 let tokenSpeedRouteTimer: ReturnType<typeof setInterval> | null = null;
-const recordedUsageProgressSignatures = new Map<string, string>();
+const usageProgressWrites = createUsageProgressWriteCoordinator();
 let multimodalMediaObserver: MutationObserver | null = null;
 let multimodalMediaMountTimer: ReturnType<typeof setTimeout> | null = null;
 let multimodalMediaButtonEl: HTMLButtonElement | null = null;
@@ -3876,7 +3877,8 @@ function createIdleTokenSpeedProgress(): ResponseTokenSpeedPayload {
 }
 
 function recordUsageProgress(progress: ResponseTokenSpeedPayload) {
-  if (progress.active || !progress.requestId) return;
+  const requestId = progress.requestId;
+  if (progress.active || !requestId) return;
   const totalTokens = progress.accumulatedTokens ?? progress.estimatedTokens;
   if (!Number.isFinite(totalTokens) || totalTokens <= 0) return;
 
@@ -3889,29 +3891,26 @@ function recordUsageProgress(progress: ResponseTokenSpeedPayload) {
     progress.assistantMessageId ?? '',
   ].join('|');
 
-  if (recordedUsageProgressSignatures.get(progress.requestId) === signature) return;
-  recordedUsageProgressSignatures.set(progress.requestId, signature);
-  if (recordedUsageProgressSignatures.size > 200) {
-    const firstKey = recordedUsageProgressSignatures.keys().next().value;
-    if (typeof firstKey === 'string') recordedUsageProgressSignatures.delete(firstKey);
-  }
-
-  void sendRuntimeMessage({
-    type: 'RECORD_USAGE_TURN',
-    payload: {
-      id: progress.requestId,
-      recordedAt: Date.now(),
-      source: 'deepseek-web',
-      chatSessionId: progress.chatSessionId ?? getCurrentChatSessionId(),
-      assistantMessageId: progress.assistantMessageId ?? null,
-      modelType: progress.modelType,
-      totalTokens: Math.round(totalTokens),
-      tokenSource: progress.tokenSource,
-      tps: progress.tokensPerSecond,
-      speedSource: progress.speedSource,
-      elapsedMs: progress.elapsedMs,
-      messageCount: 2,
-    },
+  void usageProgressWrites.persist(requestId, signature, async () => {
+    await sendRuntimeMessageStrict({
+      type: 'RECORD_USAGE_TURN',
+      payload: {
+        id: requestId,
+        recordedAt: Date.now(),
+        source: 'deepseek-web',
+        chatSessionId: progress.chatSessionId ?? getCurrentChatSessionId(),
+        assistantMessageId: progress.assistantMessageId ?? null,
+        modelType: progress.modelType,
+        totalTokens: Math.round(totalTokens),
+        tokenSource: progress.tokenSource,
+        tps: progress.tokensPerSecond,
+        speedSource: progress.speedSource,
+        elapsedMs: progress.elapsedMs,
+        messageCount: 2,
+      },
+    });
+  }).catch((error) => {
+    console.error('[DeepSeek++] Failed to persist usage turn.', error);
   });
 }
 

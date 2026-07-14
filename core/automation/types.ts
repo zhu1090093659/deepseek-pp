@@ -156,12 +156,6 @@ export interface AutomationRun {
   updatedAt: number;
 }
 
-export type AutomationRunCreateInput = Pick<
-  AutomationRun,
-  'automationId' | 'trigger' | 'scheduledFor' | 'request'
-> &
-  Partial<Pick<AutomationRun, 'id' | 'attempt'>>;
-
 export type AutomationRunUpdateInput = Partial<
   Pick<
     AutomationRun,

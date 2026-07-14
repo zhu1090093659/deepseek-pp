@@ -1,4 +1,5 @@
 import type { SyncCommandTarget, SyncCounts } from '../types';
+import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 import {
   SyncConfigCommitIndeterminateError,
   SyncConfigConflictError,
@@ -77,13 +78,7 @@ export function createSyncOperationCoordinator(
   store: SyncConfigStore,
   effects: SyncOperationEffects,
 ): SyncOperationCoordinator {
-  let tail: Promise<void> = Promise.resolve();
-
-  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = tail.then(operation, operation);
-    tail = result.then(() => undefined, () => undefined);
-    return result;
-  };
+  const operations = createSerialOperationQueue();
 
   const runAfterConfigCommit = async <T>(
     target: SyncCommandTarget,
@@ -119,24 +114,24 @@ export function createSyncOperationCoordinator(
   );
 
   return Object.freeze({
-    getConfig: () => enqueue(async () => (await store.read())?.config ?? null),
+    getConfig: () => operations.run(async () => (await store.read())?.config ?? null),
     save(payload: unknown) {
       const target = decodeSyncCommandTarget(payload);
-      return enqueue(async () => {
+      return operations.run(async () => {
         const stored = await store.replace(target);
         return { ok: true as const, revision: stored.revision };
       });
     },
     test(payload: unknown) {
       const target = decodeSyncCommandTarget(payload);
-      return enqueue(() => runAfterConfigCommit(target, async (config, revision) => {
+      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
         await effects.test(config);
         return { ok: true as const, revision };
       }));
     },
     authorize(payload: unknown) {
       const target = decodeSyncCommandTarget(payload);
-      return enqueue(async () => {
+      return operations.run(async () => {
         await store.assertExpectedRevision(target.expectedRevision);
         if (target.config.provider === 'webdav') {
           throw new Error(
@@ -157,7 +152,7 @@ export function createSyncOperationCoordinator(
     },
     upload(payload: unknown) {
       const target = decodeSyncCommandTarget(payload);
-      return enqueue(() => runAfterConfigCommit(target, async (config, revision) => {
+      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
         const counts = await effects.upload(config);
         const lastSyncAt = effects.now?.() ?? Date.now();
         const updated = await updateLastSyncAfterEffect(revision, lastSyncAt);
@@ -169,7 +164,7 @@ export function createSyncOperationCoordinator(
       notifyCommitted?: (result: SyncDownloadResult) => Promise<void>,
     ) {
       const target = decodeSyncCommandTarget(payload);
-      return enqueue(() => runAfterConfigCommit(target, async (config, revision) => {
+      return operations.run(() => runAfterConfigCommit(target, async (config, revision) => {
         const result = await effects.download(config);
         const lastSyncAt = effects.now?.() ?? Date.now();
         const updated = await updateLastSyncAfterEffect(revision, lastSyncAt);

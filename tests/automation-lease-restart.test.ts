@@ -4,7 +4,6 @@ import {
   scanDueAutomations,
 } from '../core/automation/scheduler';
 import {
-  appendAutomationRun,
   claimAutomationRun,
   createAutomation,
   finalizeAutomationRun,
@@ -57,7 +56,7 @@ describe('automation durable lease and restart recovery', () => {
     const now = Date.parse('2026-07-13T08:00:00Z');
     const automation = await createScheduledAutomation();
     await updateAutomationRuntime(automation.id, { nextRunAt: now });
-    await appendAutomationRun(makePersistedRun({
+    await seedPersistedRun(makePersistedRun({
       id: 'legacy-random-run-id',
       automationId: automation.id,
       scheduledFor: now,
@@ -78,7 +77,7 @@ describe('automation durable lease and restart recovery', () => {
     const now = Date.parse('2026-07-13T08:00:00Z');
     const automation = await createScheduledAutomation();
     await updateAutomationRuntime(automation.id, { nextRunAt: now });
-    await appendAutomationRun(makePersistedRun({
+    await seedPersistedRun(makePersistedRun({
       id: 'legacy-stale-run-id',
       automationId: automation.id,
       trigger: 'retry',
@@ -114,7 +113,7 @@ describe('automation durable lease and restart recovery', () => {
     const now = Date.parse('2026-07-13T08:00:00Z');
     const automation = await createScheduledAutomation();
     await updateAutomationRuntime(automation.id, { nextRunAt: now });
-    await appendAutomationRun(makePersistedRun({
+    await seedPersistedRun(makePersistedRun({
       id: 'legacy-queued-run-id',
       automationId: automation.id,
       status: 'queued',
@@ -193,7 +192,7 @@ describe('automation durable lease and restart recovery', () => {
       },
     });
     const oldResult = successResult(oldCompletedAt);
-    await appendAutomationRun(makePersistedRun({
+    await seedPersistedRun(makePersistedRun({
       id: 'old-terminal-occurrence',
       automationId: automation.id,
       trigger: 'retry',
@@ -254,7 +253,7 @@ describe('automation durable lease and restart recovery', () => {
     vi.stubGlobal('chrome', createChromeStub());
     const now = 12_000_000;
     const automation = await createScheduledAutomation();
-    await appendAutomationRun(makePersistedRun({
+    await seedPersistedRun(makePersistedRun({
       id: 'custom-deadline',
       automationId: automation.id,
       startedAt: now - AUTOMATION_RUN_TIMEOUT_MS,
@@ -336,6 +335,19 @@ function makePersistedRun(overrides: Partial<AutomationRun>): AutomationRun {
     updatedAt: 1,
     ...overrides,
   };
+}
+
+async function seedPersistedRun(run: AutomationRun): Promise<void> {
+  const key = 'deepseek_pp_automations';
+  const data = await chrome.storage.local.get(key) as Record<string, unknown>;
+  const current = data[key] as { version: 1; automations: Automation[]; runs: AutomationRun[] } | undefined;
+  await chrome.storage.local.set({
+    [key]: {
+      version: 1,
+      automations: current?.automations ?? [],
+      runs: [run, ...(current?.runs ?? []).filter((stored) => stored.id !== run.id)],
+    },
+  });
 }
 
 function successResult(completedAt: number): Extract<AutomationRunnerResult, { ok: true }> {

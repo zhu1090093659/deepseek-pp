@@ -824,6 +824,7 @@ export const zhCN = {
       summary: '{total} 个任务，{active} 个启用',
       create: '新建',
       created: '自动化已创建',
+      loadFailed: '自动化数据加载失败',
       empty: '暂无自动化',
       emptyHelp: '新建任务后，可以让它定时跟踪信息、复盘内容或重复执行固定 Prompt。',
       namePromptRequired: '名称和 Prompt 不能为空',

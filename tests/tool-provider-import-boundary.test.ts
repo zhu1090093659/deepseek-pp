@@ -18,6 +18,7 @@ describe('tool provider import boundary', () => {
       '../i18n',
       '../messaging/tool-record-codec',
       './authorization',
+      './execution-error',
       './externalized-payload',
       './history',
       './provider-registry',

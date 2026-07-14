@@ -1,4 +1,6 @@
-let localStateTail: Promise<void> = Promise.resolve();
+import { createSerialOperationQueue } from './serial-operation-queue';
+
+const localStateOperations = createSerialOperationQueue();
 let requiredRecovery: (() => Promise<void>) | null = null;
 
 export function requireLocalStateRecovery(recover: () => Promise<void>): void {
@@ -28,10 +30,5 @@ export function withSyncLocalStateRecoveryLock<T>(operation: () => Promise<T>): 
 }
 
 function enqueueLocalStateOperation<T>(operation: () => Promise<T>): Promise<T> {
-  const run = async () => {
-    return operation();
-  };
-  const result = localStateTail.then(run, run);
-  localStateTail = result.then(() => undefined, () => undefined);
-  return result;
+  return localStateOperations.run(operation);
 }

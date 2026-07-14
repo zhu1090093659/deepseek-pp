@@ -32,7 +32,7 @@
 |:--:|:--|:--|--:|--:|--:|--:|
 | 1 | Compatibility Firewall | [#43](https://github.com/zhu1090093659/deepseek-pp/milestone/43) | 0 | 5 | 0 | 5 |
 | 2 | Critical Boundaries and Failure Safety | [#44](https://github.com/zhu1090093659/deepseek-pp/milestone/44) | 0 | 7 | 0 | 7 |
-| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 4 | 6 | 5 | 10 |
+| 3 | Authoritative Contracts and Real Ports | [#45](https://github.com/zhu1090093659/deepseek-pp/milestone/45) | 3 | 7 | 5 | 10 |
 | 4 | Strangler Cutover of Runtime Hotspots | [#46](https://github.com/zhu1090093659/deepseek-pp/milestone/46) | 13 | 0 | 5 | 13 |
 | 5 | Stability and Compatibility Closure | [#47](https://github.com/zhu1090093659/deepseek-pp/milestone/47) | 2 | 0 | 2 | 2 |
 | 6 | Measured Performance Optimization | [#48](https://github.com/zhu1090093659/deepseek-pp/milestone/48) | 5 | 0 | 3 | 5 |
@@ -60,7 +60,7 @@
 | R3.4 | [#354](https://github.com/zhu1090093659/deepseek-pp/issues/354) | Reuse DeepSeek codecs in passive interceptor adapters | closed |
 | R3.5 | [#355](https://github.com/zhu1090093659/deepseek-pp/issues/355) | Version Project, Saved Items, and Scenario repositories | closed |
 | R3.6 | [#356](https://github.com/zhu1090093659/deepseek-pp/issues/356) | Converge Memory and Artifact IndexedDB truth | closed |
-| R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | open |
+| R3.7 | [#357](https://github.com/zhu1090093659/deepseek-pp/issues/357) | Serialize sync config/actions and fence confirmed targets | closed |
 | R3.8 | [#358](https://github.com/zhu1090093659/deepseek-pp/issues/358) | Version Automation state and own Usage/Tool History mutations | open |
 | R3.9 | [#359](https://github.com/zhu1090093659/deepseek-pp/issues/359) | Remove dead platform facade and preserve PC capability truth | open |
 | R3.10 | [#380](https://github.com/zhu1090093659/deepseek-pp/issues/380) | Version remaining Skill/Preset/History local state and cross-key mutations | open |
@@ -110,7 +110,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
-- [ ] Phase 3: Authoritative Contracts and Real Ports (6/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
+- [ ] Phase 3: Authoritative Contracts and Real Ports (7/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
 - [ ] Phase 4: Strangler Cutover of Runtime Hotspots (0/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
 - [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
 - [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
@@ -119,13 +119,13 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 **Active Phase**: Phase 3 — Authoritative Contracts and Real Ports (replanned; implementation active)
 
-**Active Task**: R3.7 / [Issue #357](https://github.com/zhu1090093659/deepseek-pp/issues/357) — serialize sync config/actions and fence confirmed targets.
+**Active Task**: R3.8 / [Issue #358](https://github.com/zhu1090093659/deepseek-pp/issues/358) — version Automation state and own Usage/Tool History mutations.
 
-**Execution Branch**: `codex/357-sync-confirmed-target-fencing` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/357-sync-confirmed-target-fencing`, based on `main@304120f`.
+**Execution Branch**: `codex/358-automation-usage-history` in isolated worktree `/Users/zcl/code/deepseek-pp-worktrees/358-automation-usage-history`, based on `main@08546c2`.
 
 **Blockers**: None. Work is isolated from the original repository's user-owned changes.
 
-**Baseline Evidence**: PC-only main is `304120f` after R3.6. R3.6 passed 108 files / 846 tests plus the full PC quality/package matrix; hosted quality and contribution-evidence runs `29298217865` / `29298386118` passed before PR #387 squash-merged at `304120fcfbd512a4f46f471dfd58327d05515028`. Android project/build/runtime/test support remains retired.
+**Baseline Evidence**: PC-only main is `08546c2` after R3.7. R3.7 passed 111 files / 881 tests plus the full PC quality/package matrix; hosted quality and corrected contribution-evidence runs `29301564567` / `29301618575` passed before PR #388 squash-merged at `08546c2ba45f99472d5a7672c5c112c3a66a5d59`. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -280,7 +280,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Targeted validation passes 15 files / 139 tests. TypeScript and the 60-second full suite pass at 108 files / 846 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes seven prompt goldens, workflow/i18n/automation checks, zero production vulnerabilities, MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
 - Hosted quality and contribution-evidence runs `29298217865` / `29298386118` passed. PR #387 squash-merged at `304120fcfbd512a4f46f471dfd58327d05515028`; Issue #356 closed after telemetry and Milestone #45 advanced to 6/10 completed with cumulative drift score 1.
 
-**R3.7 Evidence (local validation complete)**:
+**R3.7 Evidence (closed)**:
 
 - Replaced raw sync-config casts and whole-key writes with one exact-preserving schema-v1 codec/store on the released `deepseek_pp_sync_config` key. Provider-less and unversioned records project read-only to revision 0; explicit writes preserve additive fields and use one in-key monotonic revision/CAS. Future/corrupt values and unverifiable lost-write outcomes fail without overwrite.
 - Added one Background FIFO for GET/save/test/auth/upload/download. Every action payload now contains the validated deep-frozen target plus expected revision; upload/download no longer re-read mutable global config or use payload-less commands, and OAuth authorization conditionally publishes its token only to the same revision. Post-effect token/timestamp persistence conflicts or indeterminate commits are classified without claiming a stale baseline and force an authoritative FIFO reread.
@@ -288,6 +288,17 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - Existing generation pointer, legacy pointer-absence fallback, local journal/raw rollback, and recovery barrier remain the only remote/local commit protocols. Upload snapshot reads now share the existing local-state lock. Config/coordinator/UI/OAuth tests cover migrations, stale writers, lost responses, FIFO ordering, form changes, provider/apply faults, queue recovery, and credential switching.
 - Three independent contract reviews reproduced four distinct P2 findings: notification-failure timestamp rollback, silent `undefined` deletion, post-effect timestamp bookkeeping misclassification, and post-OAuth token persistence misclassification. All were fixed with fault/UI regressions; final reviews report no remaining P0-P2 finding.
 - Targeted sync/persistence validation passes 20 files / 201 tests. TypeScript, i18n, seven prompt goldens, and the 60-second full suite pass at 111 files / 881 tests with no orphan Vitest/Vite/WXT process. Full `ci:quality` passes workflow checks, zero production vulnerabilities, automation/MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, release-asset verification, and `git diff --check`; builds emit only the existing Pyodide `node:*` externalization warnings.
+- Hosted quality and corrected contribution-evidence runs `29301564567` / `29301618575` passed. PR #388 squash-merged at `08546c2ba45f99472d5a7672c5c112c3a66a5d59`; Issue #357 closed after telemetry and Milestone #45 advanced to 7/10 completed with cumulative drift score 1.
+
+**R3.8 Evidence (local validation complete)**:
+
+- Added the sole exact-preserving Automation v1 codec on the released `deepseek_pp_automations` key. Missing DeepSeek session state, decimal-string/empty message IDs, requests without `deadlineAt`, additive fields, and historical orphan runs remain compatible; future/corrupt/duplicate/nested-invalid state rejects before clocks, UUIDs, mutation, or clear. Obsolete free-form run creation/append paths and their unused input type were removed.
+- Automation, Usage, and Tool History now each own one independent non-reentrant whole-key FIFO shared by reads, mutations, and clear. Mutation rereads inside its authority; rejected work does not poison later work. The same small queue primitive replaces the duplicate FIFO implementations in sync action coordination and local-state recovery without joining these three stores to the sync-global lock.
+- Usage keeps its released bare array and projects only historical missing fields. Calendar days, enums, IDs, and metrics validate strictly; quality/timestamp-aware merge prevents stale metadata or estimates from replacing newer server state. Content persistence uses a tested signature coordinator that releases only a failed still-owned write for retry. Side Panel caches last-known data per range and generation-fences range changes, slow responses, clear, and post-clear reload against stale resurrection.
+- Tool History keeps its released bare array and authoritative tool-record validator. Unsorted legal input up to the historical 200-row limit is ordered before bounded retention; append/clear reject corrupt or future state without overwrite. A non-quota history failure after a provider returned is surfaced as non-retryable with `externalOutcome:ambiguous`, while quota-only history loss remains the existing explicit best effort.
+- Automation, Usage, and MCP receiving surfaces decode complete responses before commit, retain the last confirmed state on failure, and treat notifications as invalidations rather than unvalidated payloads. Automation reload generations prevent older focus/notification responses from replacing a newer snapshot or writing after unmount.
+- Three independent reviews reproduced and closed the historical-orphan compatibility trap, Usage range/clear response races, invalid day acceptance, unsorted Tool-History eviction, post-provider retry ambiguity, duplicate FIFO implementation, and notification data bypass. Final reviews report no remaining P0-P2 finding.
+- Raw compatibility fixtures now cover all three released shapes, aliases, additive fields, historical orphan state, and future/corrupt rejection. TypeScript, i18n, prompt freeze, the 60-second full suite at 118 files / 929 tests, and the complete PC-only `ci:quality` matrix pass: workflow/audit, automation/MCP/live-mock/Shell/PoW smoke, Chrome/Edge/Firefox builds and packages, UTF-8/manifest policy, and release-asset verification. Builds emit only the existing Pyodide `node:*` externalization warnings; Android remains absent and unsupported.
 
 ## Governance Status
 
@@ -311,9 +322,9 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Commit and publish R3.7 for hosted quality and contribution-evidence checks.
-2. Record R3.7 telemetry, merge/close Issue #357, and enforce Phase 3 adaptive thresholds.
-3. Begin R3.8 only after the R3.7 hosted closure is complete.
+1. Complete the final diff review, commit, push, and open the R3.8 PR for Issue #358.
+2. Require hosted quality and contribution-evidence checks, then record Issue telemetry and squash-merge only after both pass.
+3. Sync the R3.8 closure on fresh `main`, update Milestone #45 adaptive state, and start R3.9 / Issue #359 in a new isolated worktree.
 
 ## Session Log
 
@@ -379,3 +390,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R3.7 execution start | Opened `codex/357-sync-confirmed-target-fencing` from `304120f`; audited UI confirmation, runtime payloads, config writes, remote/local ordering, OAuth credential identity, and existing generation/journal contracts before implementing the single sync authority. |
 | 2026-07-14 | R3.7 implementation | Added the exact-preserving config codec/CAS, complete-action FIFO, immutable confirmed targets, locked upload snapshots, credential-bound OAuth cache, explicit post-effect persistence classification, and Side Panel reconciliation without changing the generation or local-journal protocols. |
 | 2026-07-14 | R3.7 local validation | Closed four independent-review P2 findings; passed 20 files / 201 targeted tests, 111 files / 881 full tests, TypeScript, the complete PC Chrome/Edge/Firefox quality/package matrix, diff checks, and orphan-process checks. |
+| 2026-07-14 | R3.7 closure | Hosted quality/contribution runs passed; PR #388 squash-merged at `08546c2`, Issue #357 closed after telemetry, and Milestone #45 advanced to 7/10 with cumulative drift score 1. |
+| 2026-07-14 | R3.8 execution start | Opened `codex/358-automation-usage-history` from `08546c2`; began the version, mutation-authority, concurrency, restart, and sync-lock audit for Automation, Usage, and Tool History. |
+| 2026-07-14 | R3.8 implementation | Added strict released-shape codecs, independent whole-key authorities, the shared FIFO primitive, stale-writer and UI generation fencing, explicit post-provider history failure semantics, and raw compatibility fixtures without restoring Android or changing released keys. |
+| 2026-07-14 | R3.8 local validation | Closed all independent-review P0-P2 findings; passed 118 files / 926 full tests, TypeScript, prompt/i18n checks, the complete PC Chrome/Edge/Firefox quality/package matrix, smoke tests, diff checks, and orphan-process checks. |

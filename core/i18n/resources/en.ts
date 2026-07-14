@@ -824,6 +824,7 @@ export const en = {
       summary: '{total} tasks, {active} active',
       create: 'New',
       created: 'Automation created',
+      loadFailed: 'Failed to load automation data',
       empty: 'No automations',
       emptyHelp: 'Create a task to track information, review content, or repeat a fixed prompt on schedule.',
       namePromptRequired: 'Name and prompt are required',

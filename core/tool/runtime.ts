@@ -1,5 +1,6 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { appendToolCallHistory } from './history';
+import { ToolPostEffectPersistenceError } from './execution-error';
 import type {
   RuntimeToolAuthorizationContext,
   ToolCall,
@@ -131,15 +132,17 @@ async function executeRuntimeToolCall(
 
   let result: ToolResult;
   let resolvedCall = authorized.call;
+  let providerCompleted = false;
   try {
     resolvedCall = await resolveToolCallPayload(
       authorized.call,
       authorized.externalPayloadNamespace,
     );
     assertRuntimeExecutionActive(options);
-    result = resolvedCall.parseError
-      ? createParseErrorToolResult(resolvedCall, locale)
-      : await providerRegistry.execute(
+    if (resolvedCall.parseError) {
+      result = createParseErrorToolResult(resolvedCall, locale);
+    } else {
+      result = await providerRegistry.execute(
         resolvedCall,
         authorized.descriptor,
         {
@@ -149,13 +152,20 @@ async function executeRuntimeToolCall(
           maxResultBytes: options.maxResultBytes,
         },
       );
+      providerCompleted = true;
+    }
     assertRuntimeExecutionActive(options);
   } catch (error) {
     await completeAuthorizationAfterProvider(authorized.reservation);
     throw error;
   }
   await completeAuthorizationAfterProvider(authorized.reservation, result);
-  await appendRuntimeToolHistory(resolvedCall, result, authorized.trigger);
+  try {
+    await appendRuntimeToolHistory(resolvedCall, result, authorized.trigger);
+  } catch (error) {
+    if (providerCompleted) throw new ToolPostEffectPersistenceError(error);
+    throw error;
+  }
   assertRuntimeExecutionActive(options);
   return result;
 }

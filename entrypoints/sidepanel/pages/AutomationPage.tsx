@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Automation,
   AutomationCreateInput,
@@ -7,11 +7,22 @@ import type {
   AutomationSchedule,
   AutomationScheduleKind,
 } from '../../../core/automation/types';
+import {
+  decodeAutomationList,
+  decodeAutomationRunList,
+} from '../../../core/automation/storage-codec';
 import { validateAutomationSchedule } from '../../../core/automation/schedule';
 import type { SupportedLocale } from '../../../core/i18n';
 import PageIntro from '../components/PageIntro';
-import { SkeletonList, ToggleRow, useBanner, useConfirm } from '../components/settings/primitives';
+import {
+  SkeletonList,
+  StatusMessage,
+  ToggleRow,
+  useBanner,
+  useConfirm,
+} from '../components/settings/primitives';
 import { useI18n } from '../i18n';
+import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
 
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
 
@@ -53,6 +64,9 @@ export default function AutomationPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [hasConfirmedSnapshot, setHasConfirmedSnapshot] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
@@ -62,31 +76,54 @@ export default function AutomationPage() {
   );
 
   const load = async () => {
-    const list: Automation[] = await chrome.runtime.sendMessage({ type: 'GET_AUTOMATIONS' });
-    const items = list ?? [];
-    setAutomations(items);
-    const runEntries = await Promise.all(
-      items.map(async (automation) => {
-        const recent: AutomationRun[] = await chrome.runtime.sendMessage({
-          type: 'GET_AUTOMATION_RUNS',
-          payload: { automationId: automation.id, limit: 3 },
-        });
-        return [automation.id, recent ?? []] as const;
-      }),
-    );
-    setRuns(Object.fromEntries(runEntries));
-    setLoading(false);
+    const generation = ++loadGeneration.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const listResponse = await chrome.runtime.sendMessage({ type: 'GET_AUTOMATIONS' });
+      const items = decodeAutomationList(
+        unwrapRuntimeResponse<unknown>(
+          listResponse,
+          t('sidepanel.automationPage.loadFailed'),
+        ),
+        'GET_AUTOMATIONS response',
+      );
+      const runEntries = await Promise.all(
+        items.map(async (automation) => {
+          const runResponse = await chrome.runtime.sendMessage({
+            type: 'GET_AUTOMATION_RUNS',
+            payload: { automationId: automation.id, limit: 3 },
+          });
+          const recent = decodeAutomationRunList(
+            unwrapRuntimeResponse<unknown>(
+              runResponse,
+              t('sidepanel.automationPage.loadFailed'),
+            ),
+            'GET_AUTOMATION_RUNS response',
+          );
+          return [automation.id, recent] as const;
+        }),
+      );
+      if (generation !== loadGeneration.current) return;
+      setAutomations(items);
+      setRuns(Object.fromEntries(runEntries));
+      setHasConfirmedSnapshot(true);
+    } catch (error) {
+      if (generation !== loadGeneration.current) return;
+      setLoadError(
+        getRuntimeErrorMessage(error) || t('sidepanel.automationPage.loadFailed'),
+      );
+    } finally {
+      if (generation === loadGeneration.current) setLoading(false);
+    }
   };
 
   useEffect(() => {
     void load();
 
-    const handleUpdate = (msg: { type?: string; automations?: Automation[] }) => {
+    const handleUpdate = (msg: { type?: string }) => {
       if (msg.type === 'AUTOMATIONS_UPDATED' || msg.type === 'AUTOMATION_RUNS_UPDATED') {
         void load();
-      }
-      if (msg.type === 'AUTOMATIONS_UPDATED' && Array.isArray(msg.automations)) {
-        setAutomations(msg.automations);
       }
     };
     const refreshWhenVisible = () => {
@@ -98,6 +135,7 @@ export default function AutomationPage() {
     window.addEventListener('focus', refreshWhenVisible);
 
     return () => {
+      loadGeneration.current += 1;
       chrome.runtime.onMessage.removeListener(handleUpdate);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.removeEventListener('focus', refreshWhenVisible);
@@ -224,6 +262,7 @@ export default function AutomationPage() {
       />
 
       {banner.node}
+      {loadError && <StatusMessage tone="error">{loadError}</StatusMessage>}
       {confirmNode}
 
       {showForm && (
@@ -238,9 +277,9 @@ export default function AutomationPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && !hasConfirmedSnapshot ? (
         <SkeletonList rows={3} />
-      ) : automations.length === 0 && !showForm ? (
+      ) : !hasConfirmedSnapshot ? null : automations.length === 0 && !showForm ? (
         <div className="ds-empty-state">
           <div className="ds-empty-state-icon">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
