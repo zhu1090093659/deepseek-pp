@@ -12,6 +12,20 @@ const distDir = resolve(root, 'dist');
 const failures = [];
 const pyodidePolicyEntry = 'scripts/pyodide-package-policy.json';
 const pyodidePolicy = readPyodidePolicy(resolve(root, pyodidePolicyEntry));
+const bundledSkillPolicyEntry = 'scripts/bundled-skill-package-policy.json';
+const bundledSkillPolicy = readBundledSkillPolicy(resolve(root, bundledSkillPolicyEntry));
+const bundledSkillSourceRoots = {
+  officecli: resolve(root, 'core/skill/officecli-official'),
+  'spec-driven-develop': resolve(root, 'core/skill/spec-driven-develop-official'),
+};
+const bundledSkillGroups = {
+  officecli: collectFiles(bundledSkillSourceRoots.officecli).filter((path) =>
+    /^skills\/[^/]+\/SKILL\.md$/.test(path) || path === 'styles/INDEX.md',
+  ),
+  'spec-driven-develop': collectFiles(bundledSkillSourceRoots['spec-driven-develop']).filter((path) =>
+    /\.(?:md|py|sh|js)$/.test(path),
+  ),
+};
 
 const extensionZips = ['chrome', 'edge', 'firefox'].map((browser) => ({
   browser,
@@ -38,6 +52,7 @@ for (const zip of extensionZips) {
   assertZipContains(zip.path, '_locales/en/messages.json', `${zip.browser} zip must contain English locale messages`);
   assertZipContains(zip.path, '_locales/zh_CN/messages.json', `${zip.browser} zip must contain Chinese locale messages`);
   inspectPyodidePackage(zip.browser, zip.path);
+  inspectBundledSkillPackage(zip.browser, zip.path);
 }
 
 assertFile(sourceZip, 'source zip');
@@ -45,9 +60,11 @@ if (existsSync(sourceZip)) {
   assertZipContains(sourceZip, 'package.json', 'source zip must contain package.json');
   assertZipContains(sourceZip, 'wxt.config.ts', 'source zip must contain wxt.config.ts');
   assertZipContains(sourceZip, pyodidePolicyEntry, `source zip must contain ${pyodidePolicyEntry}`);
+  assertZipContains(sourceZip, bundledSkillPolicyEntry, `source zip must contain ${bundledSkillPolicyEntry}`);
   assertZipContains(sourceZip, '.github/workflows/release.yml', 'source zip must contain release workflow');
   assertZipDoesNotContain(sourceZip, 'node_modules/', 'source zip must not contain node_modules');
   assertZipDoesNotContain(sourceZip, 'dist/', 'source zip must not contain dist');
+  assertZipDoesNotContain(sourceZip, 'bundled-skills/', 'source zip must not duplicate generated bundled Skill assets');
   const sourcePyodidePayloads = readZipListing(sourceZip).filter((entry) =>
     pyodidePolicy.assets.some(({ file }) =>
       entry === `pyodide/${file}` || entry.endsWith(`/pyodide/${file}`),
@@ -201,6 +218,72 @@ function inspectPyodidePackage(browser, zipFile) {
   }
 }
 
+function inspectBundledSkillPackage(browser, zipFile) {
+  const buildDir = resolve(distDir, `${browser}-mv3/bundled-skills`);
+  const buildManifestPath = resolve(buildDir, 'manifest.json');
+  if (!existsSync(buildManifestPath)) {
+    failures.push(`${browser} build bundled Skill manifest is missing: ${buildManifestPath}`);
+    return;
+  }
+
+  const expectedPayloadEntries = Object.entries(bundledSkillGroups)
+    .flatMap(([group, paths]) => paths.map((path) => `${group}/${path}`))
+    .sort();
+  const expectedBuildEntries = ['manifest.json', ...expectedPayloadEntries].sort();
+  assertExactEntries(collectFiles(buildDir), expectedBuildEntries, `${browser} build bundled Skill assets`);
+
+  const buildManifest = JSON.parse(readFileSync(buildManifestPath, 'utf8'));
+  assertBundledSkillManifest(buildManifest, `${browser} build bundled Skill manifest`);
+
+  const zipEntries = readZipListing(zipFile)
+    .filter((entry) => entry.startsWith('bundled-skills/') && !entry.endsWith('/'))
+    .map((entry) => entry.slice('bundled-skills/'.length))
+    .sort();
+  assertExactEntries(zipEntries, expectedBuildEntries, `${browser} zip bundled Skill assets`);
+  const zipManifest = readZipJson(zipFile, 'bundled-skills/manifest.json');
+  if (zipManifest) assertBundledSkillManifest(zipManifest, `${browser} zip bundled Skill manifest`);
+
+  let rawBytes = 0;
+  for (const [group, paths] of Object.entries(bundledSkillGroups)) {
+    for (const path of paths) {
+      const relativePath = `${group}/${path}`;
+      const source = readFileSync(resolve(bundledSkillSourceRoots[group], path));
+      const built = readFileSync(resolve(buildDir, relativePath));
+      const zipped = readZipEntry(zipFile, `bundled-skills/${relativePath}`);
+      rawBytes += built.byteLength;
+      if (!source.equals(built)) {
+        failures.push(`${browser} build bundled Skill asset changed bytes: ${relativePath}`);
+      }
+      if (zipped && !source.equals(zipped)) {
+        failures.push(`${browser} zip bundled Skill asset changed bytes: ${relativePath}`);
+      }
+    }
+  }
+
+  if (expectedPayloadEntries.length !== bundledSkillPolicy.budget.assetCount) {
+    failures.push(`${browser} bundled Skill count ${expectedPayloadEntries.length} does not match ${bundledSkillPolicy.budget.assetCount}`);
+  }
+  if (rawBytes !== bundledSkillPolicy.budget.assetRawBytes) {
+    failures.push(`${browser} bundled Skill bytes ${rawBytes} do not match ${bundledSkillPolicy.budget.assetRawBytes}`);
+  }
+  console.log(`[bundled-skills:${browser}] count=${expectedPayloadEntries.length} rawBytes=${rawBytes}`);
+}
+
+function assertBundledSkillManifest(manifest, label) {
+  if (manifest?.schemaVersion !== 1 || !manifest.groups) {
+    failures.push(`${label} must use schemaVersion 1`);
+    return;
+  }
+  for (const [group, expectedPaths] of Object.entries(bundledSkillGroups)) {
+    assertExactEntries(manifest.groups[group] ?? [], expectedPaths, `${label} ${group}`);
+  }
+  const unexpectedGroups = Object.keys(manifest.groups)
+    .filter((group) => !(group in bundledSkillGroups));
+  if (unexpectedGroups.length > 0) {
+    failures.push(`${label} has unexpected groups: ${unexpectedGroups.join(', ')}`);
+  }
+}
+
 function readPyodidePolicy(file) {
   const policy = JSON.parse(readFileSync(file, 'utf8'));
   if (!policy || !Array.isArray(policy.assets) || !policy.budgets) {
@@ -230,6 +313,19 @@ function readPyodidePolicy(file) {
   return policy;
 }
 
+function readBundledSkillPolicy(file) {
+  const policy = JSON.parse(readFileSync(file, 'utf8'));
+  if (
+    policy?.schemaVersion !== 1
+    || !policy.budget
+    || !Number.isInteger(policy.budget.assetCount)
+    || !Number.isInteger(policy.budget.assetRawBytes)
+  ) {
+    throw new Error(`${file}: invalid bundled Skill package policy`);
+  }
+  return policy;
+}
+
 function readZipEntry(zipFile, entry) {
   try {
     return execFileSync('unzip', ['-p', zipFile, entry], { maxBuffer: 32 * 1024 * 1024 });
@@ -249,6 +345,20 @@ function readZipMetrics(zipFile) {
       compressedBytes: Number(parts[2]),
       name: parts.slice(7).join(' '),
     }));
+}
+
+function collectFiles(directory, prefix = '') {
+  if (!existsSync(directory)) return [];
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...collectFiles(resolve(directory, entry.name), path));
+    } else if (entry.isFile()) {
+      files.push(path);
+    }
+  }
+  return files.sort();
 }
 
 function assertExactEntries(actual, expected, label) {
