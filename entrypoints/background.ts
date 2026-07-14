@@ -628,7 +628,7 @@ type ActionApi = {
 };
 
 export default defineBackground(() => {
-  void syncLocalRecoveryBarrier.ensureReady().catch(() => undefined);
+  void syncLocalRecoveryBarrier.ensureReady().catch(acknowledgeReportedSyncRecoveryFailure);
   enableSidePanelActionClick();
   registerContextMenuClickListener();
   registerWhatsNewInstallListener();
@@ -649,7 +649,7 @@ export default defineBackground(() => {
   syncLocalRecoveryBarrier.ensureReady()
     .then(() => archiveStaleMemories()
       .catch((error) => reportBackgroundStartupError('archive_stale_memories_failed', error)))
-    .catch(() => undefined);
+    .catch(acknowledgeReportedSyncRecoveryFailure);
   ensureBuiltInMcpPresets().catch((error) => reportBackgroundStartupError('builtin_mcp_presets_failed', error));
   refreshWhatsNewBadge().catch((error) => reportBackgroundStartupError('whats_new_badge_failed', error));
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
@@ -658,7 +658,7 @@ export default defineBackground(() => {
   syncLocalRecoveryBarrier.ensureReady()
     .then(() => scanDueAutomationsFromWake()
       .catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error)))
-    .catch(() => undefined);
+    .catch(acknowledgeReportedSyncRecoveryFailure);
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     let envelope: RuntimeMessageEnvelope | undefined;
@@ -703,7 +703,7 @@ function registerAutomationAlarmListener() {
     syncLocalRecoveryBarrier.ensureReady()
       .then(() => scanDueAutomationsFromWake()
         .catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error)))
-      .catch(() => undefined);
+      .catch(acknowledgeReportedSyncRecoveryFailure);
   });
 }
 
@@ -875,6 +875,12 @@ async function ensureShellMcpCompatibility(server: McpServerConfig) {
 function reportBackgroundStartupError(code: string, error: unknown) {
   const detail = error instanceof Error ? error.message : String(error);
   console.error(`[DeepSeek++] ${code}: ${detail}`, error);
+}
+
+function acknowledgeReportedSyncRecoveryFailure(error: unknown): void {
+  // The recovery barrier invokes onRecoveryFailure before rejecting. Startup
+  // observers consume that already-reported rejection to prevent an unhandled promise.
+  void error;
 }
 
 async function handleMessage(
