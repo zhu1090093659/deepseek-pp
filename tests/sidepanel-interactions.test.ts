@@ -176,43 +176,43 @@ describe('sidepanel interactions', () => {
   });
 
   it('shows scenario repository failures instead of silently loading built-ins', async () => {
-    vi.stubGlobal('chrome', {
-      storage: {
-        local: {
-          get: vi.fn(async () => ({
-            scenarioConfigs: { schemaVersion: 2, items: [] },
-          })),
-          set: vi.fn(),
-        },
-      },
-      runtime: {
-        sendMessage: vi.fn(),
-      },
-    });
+    const sendMessage = vi.fn(async () => ({
+      ok: false,
+      error: 'scenarios.schemaVersion is not supported',
+    }));
+    stubChrome(sendMessage);
 
     await renderElement(React.createElement(ScenarioManager));
     await flushPromises();
 
     expect(container.textContent)
       .toContain('场景操作失败：scenarios.schemaVersion is not supported');
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'SCENARIOS_UPDATED',
+      payload: { operation: 'get' },
+    });
   });
 
   it('reports a committed Scenario separately when background menu refresh fails', async () => {
-    let scenarioConfigs: unknown;
-    const sendMessage = vi.fn(async () => ({ ok: false, error: 'menu offline' }));
-    vi.stubGlobal('chrome', {
-      storage: {
-        local: {
-          get: vi.fn(async () => (
-            scenarioConfigs === undefined ? {} : { scenarioConfigs }
-          )),
-          set: vi.fn(async (patch: { scenarioConfigs: unknown }) => {
-            scenarioConfigs = patch.scenarioConfigs;
-          }),
-        },
-      },
-      runtime: { sendMessage },
+    let scenarios = [{
+      id: 'summarize',
+      label: '总结',
+      template: '总结 {text}',
+      builtIn: true,
+      enabled: true,
+    }];
+    const sendMessage = vi.fn(async (message: {
+      type: string;
+      payload?: { operation?: string; scenario?: typeof scenarios[number] };
+    }) => {
+      if (message.payload?.operation === 'get') return { ok: true, scenarios };
+      if (message.payload?.operation === 'save' && message.payload.scenario) {
+        scenarios = [message.payload.scenario];
+        return { ok: false, error: 'menu offline' };
+      }
+      return null;
     });
+    stubChrome(sendMessage);
 
     await renderElement(React.createElement(ScenarioManager));
     await flushPromises();
@@ -221,8 +221,15 @@ describe('sidepanel interactions', () => {
     await act(async () => firstToggle?.click());
     await flushPromises();
 
-    expect((scenarioConfigs as Array<{ id: string; enabled: boolean }>)[0])
+    expect(scenarios[0])
       .toMatchObject({ id: 'summarize', enabled: false });
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'SCENARIOS_UPDATED',
+      payload: {
+        operation: 'save',
+        scenario: expect.objectContaining({ id: 'summarize', enabled: false }),
+      },
+    });
     expect(container.textContent)
       .toContain('场景已保存，但后台右键菜单刷新失败：menu offline');
     expect(container.textContent).not.toContain('场景操作失败：menu offline');

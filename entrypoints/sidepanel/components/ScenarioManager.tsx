@@ -1,14 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ScenarioConfig } from '../../../core/types';
-import {
-  getAllScenarios,
-  saveScenario,
-  deleteScenario,
-  addCustomScenario,
-} from '../../../core/scenario/store';
+import { createRequestGenerationFence } from '../async-state';
+import { createScenarioController } from '../controllers/scenario-controller';
 import { useI18n } from '../i18n';
-import { getRuntimeErrorMessage, unwrapRuntimeResponse } from '../runtime-response';
+import { getRuntimeErrorMessage } from '../runtime-response';
 import { useBanner } from './settings/primitives';
+
+const scenarioController = createScenarioController();
 
 export default function ScenarioManager() {
   const { t } = useI18n();
@@ -18,17 +16,27 @@ export default function ScenarioManager() {
   const [newLabel, setNewLabel] = useState('');
   const [newTemplate, setNewTemplate] = useState('');
   const banner = useBanner();
+  const requestFence = useRef(createRequestGenerationFence());
 
   useEffect(() => {
-    void getAllScenarios()
-      .then(setScenarios)
+    const generation = requestFence.current.begin();
+    void scenarioController.getAll()
+      .then((next) => {
+        if (requestFence.current.isCurrent(generation)) setScenarios(next);
+      })
       .catch((error) => {
+        if (!requestFence.current.isCurrent(generation)) return;
         banner.show('error', t('sidepanel.scenario.operationFailed', { error: getRuntimeErrorMessage(error) }));
       });
+    return () => requestFence.current.invalidate();
   }, []);
 
   const toggleEnabled = async (scenario: ScenarioConfig) => {
-    await runMutation(() => saveScenario({ ...scenario, enabled: !scenario.enabled }));
+    const next = { ...scenario, enabled: !scenario.enabled };
+    await runMutation(
+      { operation: 'save', scenario: next },
+      (items) => items.some((item) => item.id === next.id && item.enabled === next.enabled),
+    );
   };
 
   const startEdit = (scenario: ScenarioConfig) => {
@@ -37,50 +45,76 @@ export default function ScenarioManager() {
   };
 
   const saveTemplate = async (scenario: ScenarioConfig) => {
-    await runMutation(async () => {
-      await saveScenario({ ...scenario, template: editTemplate });
-      setEditingId(null);
-    });
+    const next = { ...scenario, template: editTemplate };
+    await runMutation(
+      { operation: 'save', scenario: next },
+      (items) => items.some((item) => item.id === next.id && item.template === next.template),
+      () => {
+        setEditingId(null);
+      },
+    );
   };
 
   const handleAdd = async () => {
     if (!newLabel.trim() || !newTemplate.trim()) return;
-    await runMutation(async () => {
-      await addCustomScenario(newLabel.trim(), newTemplate.trim());
-      setNewLabel('');
-      setNewTemplate('');
-    });
+    const label = newLabel.trim();
+    const template = newTemplate.trim();
+    await runMutation(
+      { operation: 'add', label, template },
+      (items) => items.some((item) => !item.builtIn && item.label === label && item.template === template),
+      () => {
+        setNewLabel('');
+        setNewTemplate('');
+      },
+    );
   };
 
   const handleDelete = async (id: string) => {
-    await runMutation(() => deleteScenario(id));
+    await runMutation(
+      { operation: 'delete', id },
+      (items) => items.every((item) => item.id !== id),
+    );
   };
 
-  const runMutation = async (operation: () => Promise<unknown>) => {
+  const runMutation = async (
+    request:
+      | { operation: 'save'; scenario: ScenarioConfig }
+      | { operation: 'add'; label: string; template: string }
+      | { operation: 'delete'; id: string },
+    wasCommitted: (items: ScenarioConfig[]) => boolean,
+    onCommitted?: () => void,
+  ) => {
+    const generation = requestFence.current.begin();
     try {
       banner.clear();
-      await operation();
-    } catch (error) {
-      banner.show('error', t('sidepanel.scenario.operationFailed', { error: getRuntimeErrorMessage(error) }));
+      const next = await scenarioController.mutate(request);
+      if (!requestFence.current.isCurrent(generation)) return;
+      setScenarios(next);
+      onCommitted?.();
       return;
-    }
-
-    const warnings: string[] = [];
-    try {
-      setScenarios(await getAllScenarios());
     } catch (error) {
-      warnings.push(t('sidepanel.scenario.savedButReloadFailed', { error: getRuntimeErrorMessage(error) }));
-    }
-    try {
-      unwrapRuntimeResponse(
-        await chrome.runtime.sendMessage({ type: 'SCENARIOS_UPDATED' }),
-        t('sidepanel.scenario.backgroundUnavailable'),
-      );
-    } catch (error) {
-      warnings.push(t('sidepanel.scenario.savedButMenuFailed', { error: getRuntimeErrorMessage(error) }));
-    }
-    if (warnings.length > 0) {
-      banner.show('warning', warnings.join(' '));
+      if (!requestFence.current.isCurrent(generation)) return;
+      try {
+        const next = await scenarioController.getAll();
+        if (!requestFence.current.isCurrent(generation)) return;
+        setScenarios(next);
+        if (wasCommitted(next)) {
+          onCommitted?.();
+          banner.show('warning', t('sidepanel.scenario.savedButMenuFailed', {
+            error: getRuntimeErrorMessage(error),
+          }));
+          return;
+        }
+      } catch (reloadError) {
+        if (!requestFence.current.isCurrent(generation)) return;
+        banner.show('warning', t('sidepanel.scenario.savedButReloadFailed', {
+          error: getRuntimeErrorMessage(reloadError),
+        }));
+        return;
+      }
+      banner.show('error', t('sidepanel.scenario.operationFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
     }
   };
 
