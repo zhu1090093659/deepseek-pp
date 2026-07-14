@@ -157,6 +157,69 @@ describe('content bridge controllers', () => {
     expect(disconnectRuntimeState).toHaveBeenCalledOnce();
     expect(kernel.snapshot().resources.total).toBe(0);
   });
+
+  it('reconnects when either bridge world restarts without a full page reload', async () => {
+    vi.useFakeTimers();
+    const target = createLoopbackFakeWindow();
+    const syncRuntimeState = vi.fn();
+    const disconnectRuntimeState = vi.fn(async () => undefined);
+    const mainController = createMainWorldBridgeController({
+      target,
+      createSessionId: createSequentialId('main'),
+      applyState: vi.fn(),
+      clearState: vi.fn(),
+      reportError: vi.fn(),
+    });
+    const isolatedController = createIsolatedBridgeController({
+      target,
+      createSessionId: createSequentialId('isolated'),
+      createMessageChannel: () => createLinkedFakeMessageChannel() as unknown as MessageChannel,
+      handleAugmentRequestBody: vi.fn(async () => undefined),
+      handleMainWorldMessage: vi.fn(),
+      syncRuntimeState,
+      disconnectRuntimeState,
+      reportError: vi.fn(),
+    });
+    const mainKernel = createContentLifecycleKernel([mainController]);
+    const isolatedKernel = createContentLifecycleKernel([isolatedController]);
+
+    try {
+      await mainKernel.start();
+      await isolatedKernel.start();
+      await vi.advanceTimersByTimeAsync(50);
+      await flushBridgeEvents();
+      expect(isolatedController.ready).toBe(true);
+      expect(syncRuntimeState).toHaveBeenCalledTimes(1);
+
+      await isolatedKernel.stop('reinjection');
+      await flushBridgeEvents();
+      expect(disconnectRuntimeState).toHaveBeenCalledTimes(1);
+      await isolatedKernel.start();
+      await vi.advanceTimersByTimeAsync(50);
+      await flushBridgeEvents();
+      expect(isolatedController.ready).toBe(true);
+      expect(syncRuntimeState).toHaveBeenCalledTimes(2);
+
+      await mainKernel.stop('reinjection');
+      await flushBridgeEvents();
+      expect(disconnectRuntimeState).toHaveBeenCalledTimes(2);
+      await mainKernel.start();
+      await vi.advanceTimersByTimeAsync(50);
+      await flushBridgeEvents();
+      expect(isolatedController.ready).toBe(true);
+      expect(syncRuntimeState).toHaveBeenCalledTimes(3);
+    } finally {
+      await Promise.allSettled([
+        isolatedKernel.stop('manual'),
+        mainKernel.stop('manual'),
+      ]);
+      await flushBridgeEvents();
+      vi.useRealTimers();
+    }
+
+    expect(mainKernel.snapshot().resources.total).toBe(0);
+    expect(isolatedKernel.snapshot().resources.total).toBe(0);
+  });
 });
 
 interface FakePort {
@@ -181,6 +244,18 @@ function createFakePort(): FakePort {
   };
 }
 
+function createLinkedFakeMessageChannel(): { port1: FakePort; port2: FakePort } {
+  const port1 = createFakePort();
+  const port2 = createFakePort();
+  port1.postMessage.mockImplementation((data: unknown) => {
+    queueMicrotask(() => port2.emit(data));
+  });
+  port2.postMessage.mockImplementation((data: unknown) => {
+    queueMicrotask(() => port1.emit(data));
+  });
+  return { port1, port2 };
+}
+
 function createFakeWindow(): Window {
   const target = new EventTarget() as EventTarget & {
     location: { origin: string };
@@ -191,6 +266,31 @@ function createFakeWindow(): Window {
   target.top = target;
   target.postMessage = vi.fn();
   return target as unknown as Window;
+}
+
+function createLoopbackFakeWindow(): Window {
+  const target = createFakeWindow() as Window & {
+    postMessage: ReturnType<typeof vi.fn>;
+  };
+  target.postMessage.mockImplementation((
+    data: Record<string, unknown>,
+    _targetOrigin: string,
+    transfer: MessagePort[] = [],
+  ) => {
+    queueMicrotask(() => {
+      target.dispatchEvent(createHandshakeEvent(target, data, transfer));
+    });
+  });
+  return target;
+}
+
+function createSequentialId(prefix: string): () => string {
+  let index = 0;
+  return () => `${prefix}-${++index}`;
+}
+
+async function flushBridgeEvents(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
 function createHandshakeEvent(

@@ -403,6 +403,34 @@ export const BRIDGE_HANDSHAKE_CONTRACT = {
         transferredPortCount: 1,
       },
     },
+    {
+      name: 'main accepts a same-origin content disconnect for its active port',
+      check: {
+        value: { source: CONTENT, type: 'DPP_BRIDGE_DISCONNECT' },
+        actualOrigin: 'https://chat.deepseek.com',
+        expectedOrigin: 'https://chat.deepseek.com',
+        expectedSource: CONTENT,
+        expectedType: 'DPP_BRIDGE_DISCONNECT',
+        alreadyConnected: true,
+        allowWhileConnected: true,
+        forbidTransferredPorts: true,
+        transferredPortCount: 0,
+      },
+    },
+    {
+      name: 'content accepts a same-origin MAIN disconnect for its active port',
+      check: {
+        value: { source: MAIN, type: 'DPP_BRIDGE_DISCONNECT' },
+        actualOrigin: 'https://chat.deepseek.com',
+        expectedOrigin: 'https://chat.deepseek.com',
+        expectedSource: MAIN,
+        expectedType: 'DPP_BRIDGE_DISCONNECT',
+        alreadyConnected: true,
+        allowWhileConnected: true,
+        forbidTransferredPorts: true,
+        transferredPortCount: 0,
+      },
+    },
   ],
   rejected: [
     {
@@ -462,6 +490,20 @@ export const BRIDGE_HANDSHAKE_CONTRACT = {
         alreadyConnected: true,
       },
     },
+    {
+      name: 'disconnect carrying a transferred port',
+      check: {
+        value: { source: CONTENT, type: 'DPP_BRIDGE_DISCONNECT' },
+        actualOrigin: 'https://chat.deepseek.com',
+        expectedOrigin: 'https://chat.deepseek.com',
+        expectedSource: CONTENT,
+        expectedType: 'DPP_BRIDGE_DISCONNECT',
+        alreadyConnected: true,
+        allowWhileConnected: true,
+        forbidTransferredPorts: true,
+        transferredPortCount: 1,
+      },
+    },
   ],
   mainWorldTrustPolicy: {
     name: 'same-origin page code still shares MAIN world identity after transport hardening',
@@ -477,6 +519,7 @@ export const BRIDGE_HANDSHAKE_CONTRACT = {
   },
   request: { source: MAIN, type: 'DPP_BRIDGE_REQUEST' },
   init: { source: CONTENT, type: 'DPP_BRIDGE_INIT' },
+  disconnect: { type: 'DPP_BRIDGE_DISCONNECT' },
   ready: { source: MAIN, type: 'DPP_BRIDGE_READY' },
   originPolicy: 'window.location.origin',
   retry: { intervalMs: 50, maxAttempts: 100 },

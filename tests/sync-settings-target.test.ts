@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useSettingsController } from '../entrypoints/sidepanel/controllers/useSettingsController';
 import SettingsPage from '../entrypoints/sidepanel/pages/SettingsPage';
 
 const INITIAL_CONFIG = {
@@ -18,36 +19,28 @@ const INITIAL_CONFIG = {
 let container: HTMLDivElement;
 let root: Root | null;
 let sendMessage: ReturnType<typeof vi.fn>;
+let runtimeMessageListener: ((message: {
+  type?: string;
+  config?: Record<string, unknown> | null;
+}) => void) | null;
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.append(container);
   root = null;
-  sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
-    switch (message.type) {
-      case 'GET_SYNC_CONFIG': return structuredClone(INITIAL_CONFIG);
-      case 'GET_CONFIG': return { version: '1.10.0' };
-      case 'GET_MEMORIES': return [];
-      case 'GET_DEEPSEEK_API_KEY_STATUS': return { configured: false };
-      case 'GET_MULTIMODAL_SETTINGS_STATUS': return multimodalStatus();
-      case 'GET_MODEL_TYPE':
-      case 'GET_BACKGROUND':
-      case 'GET_PET': return null;
-      case 'WEBDAV_UPLOAD_LOCAL': return {
-        ok: true,
-        lastSyncAt: 99,
-        revision: 3,
-        counts: syncCounts(),
-      };
-      default: return null;
-    }
-  });
+  runtimeMessageListener = null;
+  sendMessage = vi.fn(defaultRuntimeResponse);
 
   vi.stubGlobal('chrome', {
     runtime: {
       sendMessage,
-      onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+      onMessage: {
+        addListener: vi.fn((listener) => {
+          runtimeMessageListener = listener;
+        }),
+        removeListener: vi.fn(),
+      },
     },
     storage: {
       local: {
@@ -243,6 +236,71 @@ describe('Settings sync confirmed target', () => {
   });
 });
 
+describe('Settings initial load ordering', () => {
+  it('decodes malformed GET_CONFIG responses without leaving Settings loading forever', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    sendMessage.mockImplementation(async (message: { type: string; payload?: unknown }) => (
+      message.type === 'GET_CONFIG' ? true : defaultRuntimeResponse(message)
+    ));
+
+    await renderSettingsProbe();
+
+    const probe = requireSettingsProbe();
+    expect(probe.dataset.loading).toBe('false');
+    expect(probe.dataset.version).toBe('');
+    expect(consoleError).toHaveBeenCalledWith(
+      '[DeepSeek++] Failed to load extension version settings.',
+      expect.anything(),
+    );
+  });
+
+  it('keeps a PET_UPDATED event authoritative over an older initial GET_PET response', async () => {
+    const petLoad = deferred<unknown>();
+    sendMessage.mockImplementation(async (message: { type: string; payload?: unknown }) => (
+      message.type === 'GET_PET' ? petLoad.promise : defaultRuntimeResponse(message)
+    ));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(React.createElement(SettingsProbe));
+    });
+    await flushPromises();
+    expect(runtimeMessageListener).toBeTruthy();
+
+    await act(async () => {
+      runtimeMessageListener?.({
+        type: 'PET_UPDATED',
+        config: {
+          enabled: true,
+          position: 'bottom-left',
+          size: 196,
+          opacity: 0.65,
+          motion: false,
+        },
+      });
+      petLoad.resolve({
+        enabled: false,
+        position: 'bottom-right',
+        size: 92,
+        opacity: 0.9,
+        motion: true,
+      });
+      await petLoad.promise;
+    });
+    await vi.waitFor(() => {
+      expect(requireSettingsProbe().dataset.loading).toBe('false');
+    });
+
+    expect(requireSettingsProbe().dataset).toMatchObject({
+      petEnabled: 'true',
+      petPosition: 'bottom-left',
+      petSize: '196',
+      petOpacity: '0.65',
+      petMotion: 'false',
+    });
+  });
+});
+
 async function renderDataSettings() {
   await act(async () => {
     root = createRoot(container);
@@ -253,6 +311,36 @@ async function renderDataSettings() {
   await vi.waitFor(() => {
     expect(findButtonByExactText('上传本地')).toBeTruthy();
   });
+}
+
+function SettingsProbe() {
+  const state = useSettingsController();
+  return React.createElement('output', {
+    'data-settings-probe': 'true',
+    'data-loading': String(state.loading),
+    'data-version': state.version,
+    'data-pet-enabled': String(state.petEnabled),
+    'data-pet-position': state.petPosition,
+    'data-pet-size': String(state.petSize),
+    'data-pet-opacity': String(state.petOpacity),
+    'data-pet-motion': String(state.petMotion),
+  });
+}
+
+async function renderSettingsProbe() {
+  await act(async () => {
+    root = createRoot(container);
+    root.render(React.createElement(SettingsProbe));
+  });
+  await vi.waitFor(() => {
+    expect(requireSettingsProbe().dataset.loading).toBe('false');
+  });
+}
+
+function requireSettingsProbe(): HTMLOutputElement {
+  const probe = container.querySelector<HTMLOutputElement>('[data-settings-probe="true"]');
+  expect(probe).toBeTruthy();
+  return probe!;
 }
 
 async function openUploadConfirmation() {
@@ -318,6 +406,26 @@ function multimodalStatus() {
     openaiBaseUrl: 'https://api.openai.com/v1',
     geminiBaseUrl: 'https://generativelanguage.googleapis.com',
   };
+}
+
+async function defaultRuntimeResponse(message: { type: string; payload?: unknown }) {
+  switch (message.type) {
+    case 'GET_SYNC_CONFIG': return structuredClone(INITIAL_CONFIG);
+    case 'GET_CONFIG': return { version: '1.10.0' };
+    case 'GET_MEMORIES': return [];
+    case 'GET_DEEPSEEK_API_KEY_STATUS': return { configured: false };
+    case 'GET_MULTIMODAL_SETTINGS_STATUS': return multimodalStatus();
+    case 'GET_MODEL_TYPE':
+    case 'GET_BACKGROUND':
+    case 'GET_PET': return null;
+    case 'WEBDAV_UPLOAD_LOCAL': return {
+      ok: true,
+      lastSyncAt: 99,
+      revision: 3,
+      counts: syncCounts(),
+    };
+    default: return null;
+  }
 }
 
 function deferred<T>() {

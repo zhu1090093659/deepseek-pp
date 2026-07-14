@@ -33,6 +33,7 @@ export const BRIDGE_SOURCES = {
 export const BRIDGE_HANDSHAKE_TYPES = {
   request: 'DPP_BRIDGE_REQUEST',
   init: 'DPP_BRIDGE_INIT',
+  disconnect: 'DPP_BRIDGE_DISCONNECT',
 } as const;
 
 export const BRIDGE_TYPE_SOURCES = {
@@ -70,7 +71,9 @@ export interface BridgeHandshakeCheck {
   actualTopLevel?: boolean;
   requireTopLevel?: boolean;
   requireTransferredPort?: boolean;
+  forbidTransferredPorts?: boolean;
   transferredPortCount?: number;
+  allowWhileConnected?: boolean;
 }
 
 export interface ValidatedBridgeMessage {
@@ -110,7 +113,10 @@ const BRIDGE_TYPES: ReadonlySet<string> = new Set(BRIDGE_MESSAGE_TYPES);
  * untrusted until validateBridgeMessage has decoded its full legal shape.
  */
 export function isBridgeHandshakeMessage(check: BridgeHandshakeCheck): boolean {
-  if (check.actualOrigin !== check.expectedOrigin || check.alreadyConnected) return false;
+  if (
+    check.actualOrigin !== check.expectedOrigin
+    || (check.alreadyConnected && !check.allowWhileConnected)
+  ) return false;
   if (!isPlainRecord(check.value)) return false;
   if (
     check.expectedWindowSource !== undefined &&
@@ -119,6 +125,7 @@ export function isBridgeHandshakeMessage(check: BridgeHandshakeCheck): boolean {
   if (check.requireTopLevel && check.actualTopLevel !== true) return false;
   if (check.value.source !== check.expectedSource || check.value.type !== check.expectedType) return false;
   if (check.requireTransferredPort && check.transferredPortCount !== 1) return false;
+  if (check.forbidTransferredPorts && (check.transferredPortCount ?? 0) !== 0) return false;
   return true;
 }
 

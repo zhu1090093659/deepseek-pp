@@ -3,6 +3,10 @@ import type {
   TypedRuntimeCommandResponse,
   TypedRuntimeCommandType,
 } from '../../core/messaging/runtime-command-registry';
+import {
+  getRuntimeErrorMessage,
+  isRuntimeFailure,
+} from '../../core/messaging/runtime-response';
 
 export type SidepanelRuntimeErrorKind =
   | 'transport'
@@ -74,7 +78,7 @@ export function createSidepanelRuntimeClient(
         throw new SidepanelRuntimeError({
           kind: 'transport',
           command: request.type,
-          message: getErrorMessage(error),
+          message: getRuntimeErrorMessage(error),
           cause: error,
         });
       }
@@ -103,7 +107,7 @@ export function createSidepanelRuntimeClient(
         throw new SidepanelRuntimeError({
           kind: 'protocol',
           command: request.type,
-          message: getErrorMessage(error),
+          message: getRuntimeErrorMessage(error),
           cause: error,
         });
       }
@@ -114,16 +118,3 @@ export function createSidepanelRuntimeClient(
 export const sidepanelRuntimeClient = createSidepanelRuntimeClient(
   (request) => chrome.runtime.sendMessage(request),
 );
-
-function isRuntimeFailure(value: unknown): value is { ok: false; error?: unknown } {
-  return Boolean(
-    value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && (value as { ok?: unknown }).ok === false,
-  );
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

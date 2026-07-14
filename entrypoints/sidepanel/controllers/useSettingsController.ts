@@ -6,6 +6,7 @@ import {
 } from '../../../core/background/config';
 import { getChatEnabled, setChatEnabled } from '../../../core/chat/store';
 import type { FloatingChatRuntimeState } from '../../../core/floating-chat/runtime-state';
+import { decodeRuntimeConfigResponse } from '../../../core/messaging/bootstrap-client';
 import {
   DEFAULT_PET_CONFIG,
   clampPetOpacity,
@@ -202,6 +203,7 @@ export function useSettingsController() {
   const syncFormVersionRef = useRef(0);
   const syncBusyRef = useRef(false);
   const syncOperationRef = useRef(0);
+  const petLoadGenerationRef = useRef(0);
 
   const bgPreview = bgType === 'url' ? bgUrl : bgImageData;
   const syncBusy = activeSyncStatus !== null;
@@ -254,6 +256,7 @@ export function useSettingsController() {
   // --- initial load ---
   useEffect(() => {
     let cancelled = false;
+    const initialPetLoadGeneration = ++petLoadGenerationRef.current;
     (async () => {
       const [chatOn, floatingState, keyStatus, mmStatus, memories, cfg, syncCfg, modelType, bgCfg, petCfg] = await Promise.all([
         getChatEnabled().catch((error) => {
@@ -270,7 +273,10 @@ export function useSettingsController() {
           .catch(settingsLoadFallback('multimodal status', undefined)),
         libraryController.getMemories()
           .catch(settingsLoadFallback('memory count', [])),
-        sidepanelRuntimeClient.request({ type: 'GET_CONFIG' })
+        sidepanelRuntimeClient.request(
+          { type: 'GET_CONFIG' },
+          { decode: decodeRuntimeConfigResponse },
+        )
           .catch(settingsLoadFallback('extension version', undefined)),
         settingsSyncRuntimeController.getConfig().catch((error) => ({
           ok: false,
@@ -305,18 +311,22 @@ export function useSettingsController() {
       setModelTypeState(modelType === 'expert' || modelType === 'vision' ? modelType : null);
       const normalizedBg = normalizeBackgroundConfig(bgCfg as BackgroundConfig | null);
       if (normalizedBg) syncBgState(normalizedBg);
-      syncPetState(normalizePetConfig(petCfg as PetConfig | null));
+      if (petLoadGenerationRef.current === initialPetLoadGeneration) {
+        syncPetState(normalizePetConfig(petCfg as PetConfig | null));
+      }
       setLoading(false);
     })();
 
     const handlePetUpdate = (message: { type?: string; config?: PetConfig | null }) => {
       if (message.type === 'PET_UPDATED') {
+        petLoadGenerationRef.current += 1;
         syncPetState(normalizePetConfig(message.config));
       }
     };
     chrome.runtime.onMessage.addListener(handlePetUpdate);
     return () => {
       cancelled = true;
+      petLoadGenerationRef.current += 1;
       chrome.runtime.onMessage.removeListener(handlePetUpdate);
     };
   }, [loadSyncConfigValue, syncBgState, syncPetState, syncMultimodalStatus]);

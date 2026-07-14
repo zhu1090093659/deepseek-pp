@@ -17,6 +17,14 @@ describe('Side Panel runtime transport contract', () => {
     expect(directTransportFiles).toEqual(['entrypoints/sidepanel/runtime-client.ts']);
   });
 
+  it('reuses the authoritative runtime failure and error projection contract', () => {
+    const source = readFileSync('entrypoints/sidepanel/runtime-client.ts', 'utf8');
+
+    expect(source).toContain("from '../../core/messaging/runtime-response'");
+    expect(source).not.toContain('function isRuntimeFailure(');
+    expect(source).not.toContain('function getErrorMessage(');
+  });
+
   it('generation-fences every remaining page-owned runtime invalidation subscription', () => {
     for (const file of [
       'entrypoints/sidepanel/pages/AutomationPage.tsx',

@@ -243,6 +243,7 @@ import {
 } from './background/chat-runtime-service';
 import { createDeepSeekRuntimeHandlers } from './background/deepseek-runtime-handlers';
 import { createBackgroundRuntimeHandlers } from './background/background-runtime-handlers';
+import { refreshDeepSeekAuthFromTabs } from './background/deepseek-auth-refresh';
 import { createSyncRuntimeService } from './background/sync-runtime-service';
 import {
   createTranslator,
@@ -914,16 +915,10 @@ async function loadOrRefreshClientHeaders(preferredTabId?: number): Promise<Reco
 
 async function refreshClientHeadersFromDeepSeekTabs(preferredTabId?: number): Promise<boolean> {
   const tabs = await getDeepSeekTabsForAuthRefresh(preferredTabId);
-  for (const tab of tabs) {
-    if (!tab.id) continue;
-    try {
-      const response = await chrome.tabs.sendMessage(tab.id, REFRESH_AUTH_MESSAGE);
-      if (response?.hasToken === true) return true;
-    } catch {
-      // Content scripts may be absent on stale or restricted tabs; try the next live DeepSeek tab.
-    }
-  }
-  return false;
+  return refreshDeepSeekAuthFromTabs(tabs, {
+    sendMessage: (tabId) => chrome.tabs.sendMessage(tabId, REFRESH_AUTH_MESSAGE),
+    reportError: reportBackgroundStartupError,
+  });
 }
 
 async function getDeepSeekTabsForAuthRefresh(preferredTabId?: number): Promise<chrome.tabs.Tab[]> {

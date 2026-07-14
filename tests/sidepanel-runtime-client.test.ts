@@ -46,6 +46,18 @@ describe('sidepanel runtime client', () => {
     expect(error.message).toBe('invalid config');
   });
 
+  it('uses the shared runtime failure predicate for structured-clone objects and arrays', async () => {
+    const arrayFailure = Object.assign([], { ok: false, error: 'array failure' });
+    const client = createSidepanelRuntimeClient(async () => arrayFailure);
+
+    const error = await client.request({ type: 'GET_CONFIG' }).catch((caught) => caught);
+    expect(error).toMatchObject({
+      kind: 'command',
+      command: 'GET_CONFIG',
+      message: 'array failure',
+    });
+  });
+
   it('lets a controller decode commands whose typed status can be ok false', async () => {
     const client = createSidepanelRuntimeClient(async () => ({ ok: false, origins: [] }));
 

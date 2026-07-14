@@ -221,6 +221,16 @@ describe('bridge message compatibility contract', () => {
     expect(isBridgeHandshakeMessage({ ...base, actualTopLevel: false })).toBe(false);
     expect(isBridgeHandshakeMessage({ ...base, requireTransferredPort: true, transferredPortCount: 2 })).toBe(false);
     expect(isBridgeHandshakeMessage({ ...base, alreadyConnected: true })).toBe(false);
+    expect(isBridgeHandshakeMessage({
+      ...base,
+      alreadyConnected: true,
+      allowWhileConnected: true,
+    })).toBe(true);
+    expect(isBridgeHandshakeMessage({
+      ...base,
+      forbidTransferredPorts: true,
+      transferredPortCount: 1,
+    })).toBe(false);
   });
 
   it('uses shared handshake constants and freezes the retry budget', () => {
@@ -239,12 +249,17 @@ describe('bridge message compatibility contract', () => {
       expect(source).toContain('const CONTENT_SOURCE = BRIDGE_SOURCES.content');
       expect(source).toContain('const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request');
       expect(source).toContain('const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init');
+      expect(source).toContain('const BRIDGE_DISCONNECT_TYPE = BRIDGE_HANDSHAKE_TYPES.disconnect');
       expect(source).toContain('isBridgeHandshakeMessage({');
       expect(source).toContain('actualWindowSource: messageEvent.source');
       expect(source).toContain('expectedWindowSource: target');
       expect(source).toContain('requireTopLevel: true');
     }
-    expect(BRIDGE_HANDSHAKE_TYPES).toEqual({ request: 'DPP_BRIDGE_REQUEST', init: 'DPP_BRIDGE_INIT' });
+    expect(BRIDGE_HANDSHAKE_TYPES).toEqual({
+      request: 'DPP_BRIDGE_REQUEST',
+      init: 'DPP_BRIDGE_INIT',
+      disconnect: 'DPP_BRIDGE_DISCONNECT',
+    });
     expect(BRIDGE_READY_TYPE).toBe(BRIDGE_HANDSHAKE_CONTRACT.ready.type);
     expect(mainWorldBridgeSource).toContain(`const BRIDGE_REQUEST_INTERVAL_MS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.intervalMs}`);
     expect(mainWorldBridgeSource).toContain(`const BRIDGE_REQUEST_MAX_ATTEMPTS = ${BRIDGE_HANDSHAKE_CONTRACT.retry.maxAttempts}`);

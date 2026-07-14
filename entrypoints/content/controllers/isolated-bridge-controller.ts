@@ -10,6 +10,7 @@ import {
 import type {
   ContentCapabilityController,
   ContentLifecycleStopReason,
+  ContentResourceRelease,
   ContentResourceScope,
 } from '../lifecycle';
 
@@ -37,6 +38,7 @@ const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld;
 const CONTENT_SOURCE = BRIDGE_SOURCES.content;
 const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request;
 const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init;
+const BRIDGE_DISCONNECT_TYPE = BRIDGE_HANDSHAKE_TYPES.disconnect;
 
 export function createIsolatedBridgeController(
   dependencies: IsolatedBridgeControllerDependencies,
@@ -46,12 +48,73 @@ export function createIsolatedBridgeController(
   const createSessionId = dependencies.createSessionId ?? (() => crypto.randomUUID());
   let scope: ContentResourceScope | null = null;
   let port: MessagePort | null = null;
+  let releasePort: ContentResourceRelease | null = null;
   let ready = false;
   let bridgeSession: BridgeSessionContext | null = null;
   let bridgeSessions: ReturnType<typeof createBridgeSessionController> | null = null;
   let lifecycleState: 'created' | 'running' | 'stopped' = 'created';
+  let connectionGeneration = 0;
+  let activeConnectionGeneration: number | null = null;
+  let disconnectedGeneration = 0;
+  let disconnectTask: Promise<void> | null = null;
   const pendingMessages: Record<string, unknown>[] = [];
   const pendingDispatches = new Set<Promise<void>>();
+
+  const detachBridge = () => {
+    const currentPort = port;
+    const currentRelease = releasePort;
+    const currentGeneration = activeConnectionGeneration;
+    const session = bridgeSession;
+    port = null;
+    releasePort = null;
+    ready = false;
+    activeConnectionGeneration = null;
+    bridgeSession = null;
+    bridgeSessions?.close(session ?? undefined);
+    if (currentPort) {
+      currentPort.onmessage = null;
+      currentPort.onmessageerror = null;
+    }
+    return { release: currentRelease, generation: currentGeneration };
+  };
+
+  const resetDetachedBridge = async (
+    detached: ReturnType<typeof detachBridge>,
+  ): Promise<void> => {
+    const errors: unknown[] = [];
+    try {
+      await detached.release?.();
+    } catch (error) {
+      errors.push(error);
+    }
+    while (pendingDispatches.size > 0) {
+      await Promise.allSettled([...pendingDispatches]);
+    }
+    if (
+      detached.generation !== null
+      && detached.generation > disconnectedGeneration
+    ) {
+      disconnectedGeneration = detached.generation;
+      try {
+        await dependencies.disconnectRuntimeState();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'DeepSeek++ isolated bridge disconnect failed.');
+    }
+  };
+
+  const beginPeerDisconnect = (): Promise<void> => {
+    if (disconnectTask) return disconnectTask;
+    const detached = detachBridge();
+    const tracked = resetDetachedBridge(detached).finally(() => {
+      if (disconnectTask === tracked) disconnectTask = null;
+    });
+    disconnectTask = tracked;
+    return tracked;
+  };
 
   const post = (message: Record<string, unknown>) => {
     if (lifecycleState === 'stopped') return;
@@ -95,7 +158,7 @@ export function createIsolatedBridgeController(
   };
 
   const connect = () => {
-    if (!scope?.active || port) return;
+    if (lifecycleState !== 'running' || !scope?.active || port || disconnectTask) return;
     const channel = createMessageChannel();
     const session = bridgeSessions?.open(
       createSessionId(),
@@ -109,7 +172,10 @@ export function createIsolatedBridgeController(
     }
 
     bridgeSession = session;
-    port = scope.ownPort(channel.port1);
+    connectionGeneration += 1;
+    activeConnectionGeneration = connectionGeneration;
+    port = channel.port1;
+    releasePort = scope.addCleanup('message-port', () => channel.port1.close());
     port.onmessage = (event) => {
       const dispatch = handlePortMessage(event.data, session);
       pendingDispatches.add(dispatch);
@@ -134,6 +200,26 @@ export function createIsolatedBridgeController(
 
   const handleHandshake = (event: Event) => {
     const messageEvent = event as MessageEvent;
+    if (port && isBridgeHandshakeMessage({
+      value: messageEvent.data,
+      actualOrigin: messageEvent.origin,
+      expectedOrigin: target.location.origin,
+      expectedSource: MAIN_WORLD_SOURCE,
+      expectedType: BRIDGE_DISCONNECT_TYPE,
+      alreadyConnected: true,
+      allowWhileConnected: true,
+      actualWindowSource: messageEvent.source,
+      expectedWindowSource: target,
+      actualTopLevel: target === target.top,
+      requireTopLevel: true,
+      forbidTransferredPorts: true,
+      transferredPortCount: messageEvent.ports.length,
+    })) {
+      void beginPeerDisconnect().catch((error) => {
+        dependencies.reportError('[DeepSeek++] main-world bridge disconnect failed', error);
+      });
+      return;
+    }
     if (!isBridgeHandshakeMessage({
       value: messageEvent.data,
       actualOrigin: messageEvent.origin,
@@ -150,23 +236,24 @@ export function createIsolatedBridgeController(
   };
 
   const stop = async (_reason: ContentLifecycleStopReason) => {
-    const session = bridgeSession;
-    bridgeSession = null;
-    bridgeSessions?.close(session ?? undefined);
-    bridgeSessions = null;
     if (port) {
-      port.onmessage = null;
-      port.onmessageerror = null;
+      target.postMessage(
+        { source: CONTENT_SOURCE, type: BRIDGE_DISCONNECT_TYPE },
+        target.location.origin,
+      );
     }
-    port = null;
-    ready = false;
-    pendingMessages.length = 0;
-    scope = null;
     lifecycleState = 'stopped';
-    while (pendingDispatches.size > 0) {
-      await Promise.allSettled([...pendingDispatches]);
+    let disconnectError: unknown;
+    try {
+      if (disconnectTask) await disconnectTask;
+      else await resetDetachedBridge(detachBridge());
+    } catch (error) {
+      disconnectError = error;
     }
-    await dependencies.disconnectRuntimeState();
+    pendingMessages.length = 0;
+    bridgeSessions = null;
+    scope = null;
+    if (disconnectError) throw disconnectError;
   };
 
   return {

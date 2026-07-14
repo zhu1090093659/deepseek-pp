@@ -17,6 +17,7 @@ import type { SkillPopupCopy, SkillPopupItem } from '../../../core/ui/skill-popu
 import type {
   ContentCapabilityController,
   ContentLifecycleStopReason,
+  ContentResourceRelease,
   ContentResourceScope,
 } from '../lifecycle';
 
@@ -59,6 +60,7 @@ const MAIN_WORLD_SOURCE = BRIDGE_SOURCES.mainWorld;
 const CONTENT_SOURCE = BRIDGE_SOURCES.content;
 const BRIDGE_REQUEST_TYPE = BRIDGE_HANDSHAKE_TYPES.request;
 const BRIDGE_INIT_TYPE = BRIDGE_HANDSHAKE_TYPES.init;
+const BRIDGE_DISCONNECT_TYPE = BRIDGE_HANDSHAKE_TYPES.disconnect;
 const REQUEST_TIMEOUT_MS = 8_000;
 const BRIDGE_REQUEST_INTERVAL_MS = 50;
 const BRIDGE_REQUEST_MAX_ATTEMPTS = 100;
@@ -70,6 +72,7 @@ export function createMainWorldBridgeController(
   const createSessionId = dependencies.createSessionId ?? (() => crypto.randomUUID());
   let scope: ContentResourceScope | null = null;
   let port: MessagePort | null = null;
+  let releasePort: ContentResourceRelease | null = null;
   let bridgeSession: BridgeSessionContext | null = null;
   let bridgeSessions: ReturnType<typeof createBridgeSessionController> | null = null;
   let bridgeRequestAttempts = 0;
@@ -80,6 +83,27 @@ export function createMainWorldBridgeController(
     if (!scope || bridgeRequestTimer === null) return;
     scope.clearInterval(bridgeRequestTimer);
     bridgeRequestTimer = null;
+  };
+
+  const disconnectBridge = async () => {
+    const currentPort = port;
+    const currentRelease = releasePort;
+    const session = bridgeSession;
+    port = null;
+    releasePort = null;
+    bridgeSession = null;
+    bridgeSessions?.close(session ?? undefined);
+    if (currentPort) {
+      currentPort.onmessage = null;
+      currentPort.onmessageerror = null;
+    }
+    dependencies.clearState();
+    for (const pending of pendingRequests.values()) {
+      scope?.clearTimeout(pending.timeout);
+      pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'));
+    }
+    pendingRequests.clear();
+    await currentRelease?.();
   };
 
   const startBridgeRequests = () => {
@@ -180,6 +204,28 @@ export function createMainWorldBridgeController(
   const handleHandshake = (event: Event) => {
     if (!scope?.active) return;
     const messageEvent = event as MessageEvent;
+    if (port && isBridgeHandshakeMessage({
+      value: messageEvent.data,
+      actualOrigin: messageEvent.origin,
+      expectedOrigin: target.location.origin,
+      expectedSource: CONTENT_SOURCE,
+      expectedType: BRIDGE_DISCONNECT_TYPE,
+      alreadyConnected: true,
+      allowWhileConnected: true,
+      actualWindowSource: messageEvent.source,
+      expectedWindowSource: target,
+      actualTopLevel: target === target.top,
+      requireTopLevel: true,
+      forbidTransferredPorts: true,
+      transferredPortCount: messageEvent.ports.length,
+    })) {
+      const disconnect = disconnectBridge();
+      startBridgeRequests();
+      void disconnect.catch((error) => {
+        dependencies.reportError('[DeepSeek++] content bridge disconnect failed', error);
+      });
+      return;
+    }
     if (!isBridgeHandshakeMessage({
       value: messageEvent.data,
       actualOrigin: messageEvent.origin,
@@ -203,7 +249,8 @@ export function createMainWorldBridgeController(
     );
     if (!session) return;
     bridgeSession = session;
-    port = scope.ownPort(transferredPort);
+    port = transferredPort;
+    releasePort = scope.addCleanup('message-port', () => transferredPort.close());
     port.onmessage = (message) => handlePortMessage(message.data, session);
     port.onmessageerror = () => handlePortMessageError(session);
     port.start();
@@ -228,23 +275,16 @@ export function createMainWorldBridgeController(
     });
   };
 
-  const stop = (_reason: ContentLifecycleStopReason) => {
-    const session = bridgeSession;
-    bridgeSession = null;
-    bridgeSessions?.close(session ?? undefined);
-    bridgeSessions = null;
+  const stop = async (_reason: ContentLifecycleStopReason) => {
     stopBridgeRequests();
     if (port) {
-      port.onmessage = null;
-      port.onmessageerror = null;
+      target.postMessage(
+        { source: MAIN_WORLD_SOURCE, type: BRIDGE_DISCONNECT_TYPE },
+        target.location.origin,
+      );
     }
-    port = null;
-    dependencies.clearState();
-    for (const pending of pendingRequests.values()) {
-      scope?.clearTimeout(pending.timeout);
-      pending.reject(new Error('DeepSeek++ main/content bridge disconnected.'));
-    }
-    pendingRequests.clear();
+    await disconnectBridge();
+    bridgeSessions = null;
     scope = null;
   };
 
