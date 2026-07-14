@@ -103,6 +103,25 @@ describe('installer createWrapper + detectLogFile round-trip', () => {
     const wrapperPath = join(dir, 'shell-mcp-host');
     expect(detectLogFile(wrapperPath)).toBeNull();
   });
+
+  it('surfaces corrupt log metadata instead of silently disabling logging', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dpp-wrapper-'));
+    tempRoots.push(dir);
+    const wrapperPath = join(dir, 'shell-mcp-host');
+    writeFileSync(join(dir, 'shell-mcp-host.log-meta'), '{broken', 'utf8');
+
+    expect(() => detectLogFile(wrapperPath)).toThrow('Invalid Shell Host log metadata');
+  });
+
+  it('rejects log paths that could inject wrapper commands', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dpp-wrapper-'));
+    tempRoots.push(dir);
+    const hostPath = join(dir, 'shell-mcp-host.mjs');
+    writeFileSync(hostPath, '', 'utf8');
+
+    expect(() => createWrapper(hostPath, '/tmp/host.log\nmalicious-command'))
+      .toThrow('--log-file must be a single filesystem path without control characters.');
+  });
 });
 
 describe('installer escapeShellValue', () => {

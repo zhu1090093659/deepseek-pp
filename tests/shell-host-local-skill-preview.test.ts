@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const hostPath = resolve(testDir, '../packages/shell-host/native/shell-mcp-host.mjs');
+const pickerProviderPath = resolve(testDir, '../packages/shell-host/native/picker-provider.mjs');
 const tempRoots: string[] = [];
 
 afterEach(() => {
@@ -52,7 +53,7 @@ describe('shell native host local_skill_preview', () => {
 
 describe('shell native host local_folder_pick', () => {
   it('keeps Windows folder picker arguments out of the PowerShell command text', () => {
-    const source = readFileSync(hostPath, 'utf8');
+    const source = readFileSync(pickerProviderPath, 'utf8');
 
     expect(source).toContain("'-EncodedCommand', encodePowerShellCommand(script)");
     expect(source).toContain('DPP_FOLDER_PICK_TITLE');
