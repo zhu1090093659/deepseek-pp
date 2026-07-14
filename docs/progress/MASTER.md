@@ -111,21 +111,21 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - [x] Phase 1: Compatibility Firewall (5/5 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/43)
 - [x] Phase 2: Critical Boundaries and Failure Safety (7/7 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/44)
 - [x] Phase 3: Authoritative Contracts and Real Ports (10/10 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/45)
-- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (2/13 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
-- [ ] Phase 5: Stability and Compatibility Closure (0/2 tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
-- [ ] Phase 6: Measured Performance Optimization (0/5 replanned tasks) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
+- [ ] Phase 4: Strangler Cutover of Runtime Hotspots (2/13 GitHub-closed; 13/13 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/46)
+- [ ] Phase 5: Stability and Compatibility Closure (0/2 GitHub-closed; R5.1 implemented, R5.2 gate active) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/47)
+- [ ] Phase 6: Measured Performance Optimization (0/5 GitHub-closed; 5/5 implemented in batch branch) — [milestone](https://github.com/zhu1090093659/deepseek-pp/milestone/48)
 
 ## Current Status
 
-**Active Phase**: Phase 4 — Strangler Cutover of Runtime Hotspots (replanned; implementation active)
+**Active Phase**: Phase 5 — changed-path audit fixes are complete; the final PC compatibility/package closure is active. Phase 4 and Phase 6 implementation are complete in the batch branch but their Issues remain open until the batch PR merges.
 
-**Active Batch**: Phase 4 remaining hotspot cutover, using Issues #362–#372 as acceptance checklists rather than serial PR boundaries.
+**Active Batch**: Issues #362–#379 are acceptance checklists for one integration branch and one final PR, not serial PR boundaries.
 
 **Integration Branch**: `codex/362-background-deepseek-chat-handlers` in `/Users/zcl/code/deepseek-pp-worktrees/362-background-deepseek-chat-handlers`; Content, Side Panel, and Shell use isolated batch worktrees and merge back as internal commits. One final batch PR replaces one-Issue/one-PR execution.
 
-**Blockers**: None. Work is isolated from the original repository's user-owned changes.
+**Blockers**: No code blocker. Work is isolated from the original repository's user-owned changes. Real Chrome Content smoke remains an explicit evidence gap because Chrome 150 did not load the command-line unpacked build in either headless or temporary-profile mode; no runtime pass is claimed.
 
-**Current Evidence**: PC-only main baseline is `8fa92228`. The Background batch migrates all 33 remaining commands: production ownership is `121 typed / 0 legacy / 2 client-only`, payload topology is `80 decoded / 0 direct-cast / 0 delegated`, and the legacy switch is deleted. TypeScript, automation smoke, 14 files / 151 broad targeted tests, and the Scenario cross-realm 6-file / 66-test slice pass. Android project/build/runtime/test support remains retired.
+**Current Evidence**: PC-only main baseline is `8fa92228`; the integration branch contains 29 internal commits across 222 files. Background ownership is `121 typed / 0 legacy / 2 client-only` with `80 decoded / 0 direct-cast / 0 delegated`; Content owns one lifecycle/resource ledger and removes both 500ms route pollers; Side Panel has one request transport and lazy route budgets; Shell roots are composition-only; Pyodide, bundled Skills, and persistence bursts have executable budgets. Post-integration checks pass 20 files / 160 tests, TypeScript, seven prompt goldens, Chrome build, and the unchanged Side Panel budget. The R5.1 repair slice separately passes 6 files / 107 tests plus TypeScript: either bridge world can restart alone, malformed Settings config cannot strand loading, `PET_UPDATED` wins over stale bootstrap data, runtime error projection has one authority, and unexpected auth-refresh delivery failures remain visible. Android project/build/runtime/test support remains retired.
 
 **T1.1 Evidence**:
 
@@ -342,6 +342,16 @@ gh issue list -R zhu1090093659/deepseek-pp \
 - PC-only Chrome/Edge/Firefox scope is unchanged. Repository, build, runtime, and test scans find no Android/mobile implementation; only superseded historical records and explicit unsupported-scope statements remain.
 - Hosted quality and contribution-evidence runs `29317518877` / `29317814924` passed. PR #393 squash-merged at `8fa922285937675db9871b4c5a1f6fc1773f7408`; Issue #361 closed after telemetry and Milestone #46 advanced to 2/13 with cumulative drift score 2.
 
+**Remaining batch implementation evidence (Issues #362–#379; PR pending)**:
+
+- R4.3–R4.4: all remaining DeepSeek/chat/multimodal/export/sync/automation/usage/scenario commands use typed handlers and receiving codecs. The legacy switch/type/registry guard is deleted; Background is the sole Scenario cross-realm mutation authority; sync recovery, broadcast, context-menu, export-tail, and startup failure ownership are explicit. Root `background.ts` is 1,416 LOC.
+- R4.5–R4.7 + R6.1: one epoch kernel owns listeners, observers, timers, animation frames, DOM roots, ports, and cleanup tasks across reinjection, BFCache, navigation, startup failure, and teardown. MAIN root is 89 LOC; tool-block and inline-trace storage each use one strict codec/repository. The fixed mutation trace improves `126 → 21` hub deliveries with one relevant subscriber callback, two 500ms route watchers improve a 10-second idle trace `40 → 0`, and teardown returns the ledger to zero. The lane passed 32 files / 260 tests, compile, prompt freeze, and Chrome build.
+- R4.8: floating chat has `disabled / missing-permission / ready / invalidated` states, idempotent launcher/BFCache lifecycle, and owned drag/listener/DOM cleanup. The original working tree's invalidation changes were integrated without modifying that dirty tree.
+- R4.9–R4.11 + R6.4: Side Panel requests cross only `runtime-client.ts`; touched events decode before state changes and async reloads use generation fencing. MCP/Tools/Chat/Settings/Library policy lives in controllers. Lazy-route budgets pass with initial shell `359,793 / 108,606` raw/gzip and first Chat screen `498,113 / 150,246`, below the unchanged `500,000 / 151,000` ceiling.
+- R4.12–R4.13: Shell Native root shrinks from 2,141 to 54 LOC and installer root to 214 LOC; framing/router/session/process/file/Skill/picker/OS/logger/installer modules preserve the 12-tool order and Native/package contracts. Six targeted files / 48 tests, compile, 17/17 Shell smoke, node checks, and npm pack dry-run pass.
+- R6.2–R6.5: each browser artifact contains exactly five Pyodide runtime files instead of 25 duplicate entries, removing 54,181,580 processed bytes per browser; 28 bundled Skill resources load on demand while all 15 final Skill hashes/order remain unchanged; Usage and Tool History coalesce 100 adjacent writes to one physical write while Sync stays uncoalesced. Build/zip inventories and burst budgets are CI gates.
+- R5.1 audit and repair evidence: one Background runtime listener, zero legacy-router symbols, one Side Panel request transport, no permanent 500ms Content route poller, and zero strongly connected components across a 351-file `core/` + `entrypoints/` relative-import graph. The independent findings-first review found and closed five bounded gaps: asymmetric MAIN/isolated restart, malformed Settings `GET_CONFIG`, duplicated runtime-failure projection, stale initial `GET_PET`, and broad auth-refresh error swallowing. The repair slice passes 6 files / 107 tests and TypeScript; only the complete R5.2 PC matrix remains before publication.
+
 ## Governance Status
 
 **Shared instruction surface**: `AGENTS.md` — canonical and directly maintained.
@@ -364,8 +374,8 @@ gh issue list -R zhu1090093659/deepseek-pp \
 
 ## Next Steps
 
-1. Complete the parallel Content (#364–#366), Side Panel (#368–#370), and Shell (#371–#372) owner lanes; preserve the user-owned floating-chat provenance before #367.
-2. Integrate lane commits, run one changed-path audit, update compatibility evidence, then run the complete PC Chrome/Edge/Firefox quality/package gate once before one batch PR.
+1. Run the complete PC Chrome/Edge/Firefox quality/package gate once.
+2. Record per-Issue telemetry, then push one batch branch and open one PR covering #362–#379.
 
 ## Session Log
 
@@ -458,3 +468,7 @@ gh issue list -R zhu1090093659/deepseek-pp \
 | 2026-07-14 | R4.3 execution start | Opened `codex/362-background-deepseek-chat-handlers` from `8fa92228`; began the exact 16-command DeepSeek/chat/multimodal/export audit with R3.3 network policy, cancellation, conservative replay, output, and PC-only compatibility invariants held fixed. |
 | 2026-07-14 | Phase 4 batch acceleration | User replaced one-Issue/one-PR serial execution with one remaining-refactor batch and one final PR. Issues remain acceptance checklists; Content, Side Panel, and Shell advance in isolated owner lanes while full quality/package validation runs once after integration. |
 | 2026-07-14 | Background batch checkpoint | Internal commits `671db6e` and `8e2158d` extract all R4.3/R4.4 command families and delete the legacy router. The follow-up extends the existing Scenario command with an optional backward-compatible mutation protocol so Background becomes the cross-realm writer; ownership is `121/0/2`, payload topology is `80/0/0`, and TypeScript plus targeted suites pass. |
+| 2026-07-14 | Parallel owner-lane integration | Integrated Shell, floating-chat, Side Panel, and Content owner lanes into the single batch branch. Side Panel direct request transport is centralized; Content lifecycle/resource ownership and strict trace/block codecs are active; Shell roots are composition-only. |
+| 2026-07-14 | Measured performance batch | Added exact Pyodide and bundled-Skill package inventories, lazy Skill resources, lazy Side Panel route ceilings, Content mutation/navigation traces, and persistence burst budgets without changing PC browser targets or released storage/wire shapes. |
+| 2026-07-14 | Post-integration checkpoint | Passed 20 files / 160 integrated targeted tests, TypeScript, seven prompt goldens, Chrome build, and unchanged Side Panel budgets. Real Chrome Content smoke was not executable because Chrome 150 did not load the command-line unpacked extension; this is recorded as a gap rather than a pass. |
+| 2026-07-14 | R5.1 audit start | Static checks find one Background listener, zero legacy router symbols, one Side Panel request transport, no permanent Content route poller, and zero SCCs across 350 core/entrypoint source files; independent review remains in progress. |

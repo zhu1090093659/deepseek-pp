@@ -23,13 +23,13 @@ The refactor therefore starts with compatibility contracts, addresses critical b
 | R-03 | Sync remote publication and local apply could expose partial snapshots. | Resolved | Closed by #319 and #320 | Upload publishes only complete checksum-validated generations; download stages, journals, commits deterministically, and restores raw preimages after injected failure or restart. |
 | R-04 | Automation timeout previously returned before execution settled and could replay ambiguous work after retry or restart. | Resolved | Closed by #321 | Deadline, abort, persisted/in-process lease, and supported idempotency context reach request, DeepSeek stream, continuation, tool, and MCP boundaries. Authority remains held until settlement; ambiguous work and scheduled occurrences are not replayed. |
 | R-05 | Persistence version and migration policy remains inconsistent in the stores not yet migrated. | Partially mitigated by #355, #356, #358, and #380 | P1; remaining owners in compatibility registry | Historical data migrates deterministically; corrupt/future data fails visibly without overwrite; each concept converges on one truth source. |
-| R-06 | Background and content entrypoints have a large regression and merge radius. | High | P1 | Typed handlers/controllers own one lifecycle and one domain; migrated legacy paths are deleted. |
-| R-07 | Long-lived DOM observation and polling have no measured ownership/budget. | High | P1 | Controllers own and fully tear down their resources; callback/startup/write changes are measured against recorded baselines. |
-| R-08 | Platform abstractions and actual browser capabilities can drift. | Partially mitigated by #359 | P1; remaining R4.7/R4.9/R4.11 | The dead broad facade is absent; narrow ports appear only with real consumers, while Chrome/Edge/Firefox behavior and explicit unsupported degradation remain green. |
-| R-09 | Timeout, cancellation, retry, and body budgets vary by network/runtime path. | Resolved for active DeepSeek core | Closed by #353; passive cutover #354 pending | Active Web, Official API, and export requests use one injected policy with one scheduler-owned automation signal, standalone absolute deadlines, preserved abort reasons, semantic failure phases, 4 MiB active/Official API budgets, a separate 32 MiB per-session export budget, awaited late-response/stream cancellation, and unchanged automation ambiguous-outcome rules. |
-| R-10 | Current tests do not cover every migration, fault, or browser-runtime boundary. | High | P1 | Each behavior-changing task adds targeted executable evidence; final closure runs all applicable repository gates. |
-| R-11 | Floating-chat permission and lifecycle state can disagree across UI/runtime surfaces. | Medium | P2 | One state machine covers disabled, permission-missing, ready, and context-invalidated behavior while preserving existing user settings. |
-| R-12 | Heavy assets and hot runtime paths lack stable performance budgets. | Medium | P2 | Performance work records before/after evidence and keeps every compatibility fixture green. |
+| R-06 | Background and content entrypoints have a large regression and merge radius. | Mitigated; final gate pending | R4.3–R4.13 + R5.1 implemented | Background has one typed registry and extracted services; Content has one epoch/resource lifecycle; Shell and Side Panel have explicit composition/controller boundaries. Migrated legacy paths are absent, and paired-controller tests prove MAIN-only and isolated-only bridge restart. |
+| R-07 | Long-lived DOM observation and polling have no measured ownership/budget. | Resolved in batch implementation | R4.5–R4.7 + R6.1 | Content teardown returns the resource ledger to zero; two permanent 500ms route pollers are removed; fixed mutation/navigation traces enforce the callback baseline. |
+| R-08 | Platform abstractions and actual browser capabilities can drift. | Mitigated; all-browser gate pending | #359 + R4.7–R4.11 | No dead broad facade exists; every new narrow port has a production consumer; typed Side Panel/floating-chat degradation preserves Chrome/Edge/Firefox behavior. |
+| R-09 | Timeout, cancellation, retry, and body budgets vary by network/runtime path. | Resolved for active and passive DeepSeek paths | Closed by #353 and #354 | Active Web, Official API, export, passive Fetch/XHR, automation, continuation, and tool paths reuse the frozen codecs/policy and preserve ambiguous-outcome rules. |
+| R-10 | Current tests do not cover every migration, fault, or browser-runtime boundary. | Mitigated; final gate pending | R5.2 / #374 | Targeted fault/resource/performance/package suites are executable. A real Chrome Content smoke remains unexecuted because Chrome 150 did not load the command-line unpacked extension; no pass is claimed. |
+| R-11 | Floating-chat permission and lifecycle state can disagree across UI/runtime surfaces. | Resolved in batch implementation | R4.8 / #367 | One state machine covers disabled, permission-missing, ready, and context-invalidated behavior; launcher DOM/drag/BFCache cleanup is idempotent. |
+| R-12 | Heavy assets and hot runtime paths lack stable performance budgets. | Resolved in batch implementation | R6.1–R6.5 | CI now enforces Content traces, exact Pyodide/Skill package inventories, Side Panel chunk ceilings, and persistence burst-write budgets. |
 
 ## Compatibility and Data-Safety Rules
 
@@ -43,13 +43,12 @@ The detailed contract inventory and current gaps are maintained under [`docs/com
 
 ## Validation Risks
 
-The v1.10.0 baseline passes the current Vitest suite, TypeScript compile, prompt source freeze, Chrome/Edge/Firefox builds, manifest policy, extension UTF-8 policy, and production dependency audit. This does not yet prove:
+The batch implementation passes its targeted suites, TypeScript compile, prompt source freeze, Chrome build, package inventories, and task-local performance budgets. The final R5.2 matrix still must prove the integrated branch across all supported artifacts. Remaining evidence limits are:
 
 - real-browser lifecycle behavior;
-- historical IndexedDB migrations and future-version protection;
-- real-browser lifecycle behavior when a service worker is terminated during sync recovery;
-- exhaustive runtime/bridge authorization behavior;
-- steady-state DOM, startup, bundle, or persistence-write performance.
+- real-browser Content lifecycle behavior with an unpacked extension actually loaded;
+- real-browser service-worker termination during sync recovery beyond the existing restart/fault harness;
+- store submission/runtime behavior outside the exact built/zip asset checks.
 
 Those gaps are assigned to the specific tasks in [`docs/plan/task-breakdown.md`](../plan/task-breakdown.md); they are not deferred to an unbounded standalone testing program.
 
@@ -58,4 +57,4 @@ Those gaps are assigned to the specific tasks in [`docs/plan/task-breakdown.md`]
 - `AGENTS.md` is the sole project-level agent instruction truth source.
 - GitHub Issues, Milestones, and PRs track this run; no Project board is used.
 - Public security tracking remains generic. Detailed evidence, reproduction chains, and disclosure-sensitive reasoning stay local until an explicit disclosure decision.
-- The user's pre-existing floating-chat work is preserved and remains an overlap guard for R4.8 / Issue #367.
+- The user's pre-existing floating-chat invalidation changes were preserved and integrated into R4.8; the original dirty worktree remains untouched.

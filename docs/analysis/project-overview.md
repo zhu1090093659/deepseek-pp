@@ -21,15 +21,15 @@
 ## Analysis Snapshot
 
 - 集成分支：`codex/362-background-deepseek-chat-handlers`
-- 基线 HEAD：`8fa92228`（R4.2 / #361 merge）；当前 Background 批次检查点为 `8e2158d`
+- 基线 HEAD：`8fa92228`（R4.2 / #361 merge）；当前单批次集成分支包含 R4.3–R6.5 与最终审计修复的 29 个内部提交
 - 日期：2026-07-14
 - 当前实现位于隔离 batch worktree；原仓库中的用户改动未被覆盖或带入本分支。
 - 当前规模（排除 `node_modules/`、`dist/`、归档和生成资产）：
-  - `core/`：224 个 TypeScript/TSX 文件，约 40,559 行
-  - `entrypoints/`：69 个 TypeScript/TSX 文件，约 26,170 行
-  - `packages/shell-host/`：3 个可执行/库脚本，约 2,762 行（另含 README/package metadata）
-  - `tests/`：147 个 TypeScript 测试/fixture 源文件，其中 127 个 test files，约 29,047 行
-  - `scripts/`：16 个脚本，约 3,118 行
+  - `core/`：243 个 TypeScript/TSX 文件，约 42,714 行
+  - `entrypoints/`：108 个 TypeScript/TSX 文件，约 30,095 行
+  - `packages/shell-host/native` + `lib`：约 2,878 行（另含 README/package metadata）
+  - `tests/`：182 个 TypeScript 测试/fixture 源文件，其中 161 个 test files，约 34,291 行
+  - `scripts/`：21 个脚本，约 3,865 行
 
 ## Current Architecture
 
@@ -79,14 +79,14 @@ flowchart LR
 
 | Entry Point | Responsibility | Current Structural Signal |
 |:--|:--|:--|
-| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、sync/automation/tool composition 与 lifecycle | 根文件约 1,600 行；R4.1–R4.4 已将全部 121 个 live commands 拆为 typed handlers，单一 registry 为 `121 typed / 0 legacy`；80 个 payload-bearing commands 均在接收边界解码，旧 switch/router 已删除 |
-| `entrypoints/content.ts` | DeepSeek DOM、bridge、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 6,713 行，约 364 个函数、多个 observer/timer 和模块级可变状态 |
-| `entrypoints/main-world.content.ts` | MAIN world bridge 和网络拦截器装配 | 238 行；信任边界和 payload contract 需要加强 |
-| `entrypoints/floating-chat.content.ts` | `<all_urls>` 悬浮聊天启动 | 入口薄，但默认全站加载与权限状态需统一 |
-| `entrypoints/sidepanel/main.tsx` / `App.tsx` | React Side Panel/Firefox Sidebar | 顶层页面已 `React.lazy`；页面内部仍有多个千行级热点 |
+| `entrypoints/background.ts` + `entrypoints/background/*-handlers.ts` | Service worker bootstrap、单一 121-command registry、sync/automation/tool composition 与 lifecycle | 根文件 1,411 行；全部 121 live commands 为 typed handlers，80 个 payload-bearing commands 在接收边界解码，旧 switch/router/type 已删除；auth refresh 只忽略明确的缺失 receiver，其他 tab delivery error 可见 |
+| `entrypoints/content.ts` + `entrypoints/content/` | DeepSeek DOM capability composition、工具卡、inline agent、导出、多模态、主题、宠物、token speed、恢复状态 | 根文件仍是 7,417 行热点，但一个 epoch/resource kernel 已拥有 bridge、navigation、listener/observer/timer/root/port 生命周期；tool/trace storage 进入 strict codec/store |
+| `entrypoints/main-world.content.ts` + controllers | MAIN world bridge、navigation 和网络拦截器装配 | 根文件 89 行；patch/reinjection/BFCache teardown 幂等，payload 在接收边界解码；任一 world 单独重启都会显式断开旧 Port 并重新握手 |
+| `entrypoints/floating-chat.content.ts` + launcher lifecycle | `<all_urls>` 悬浮聊天启动 | 四态 permission/runtime 模型和幂等 start/stop 统一 disabled、missing-permission、ready、invalidated |
+| `entrypoints/sidepanel/` | React Side Panel/Firefox Sidebar、typed runtime client、domain controllers | 所有 route/subpage 按需加载；页面不直接发送 runtime request，MCP/Tools/Chat/Settings/Library policy 已移入 controllers |
 | `entrypoints/sandbox-offscreen/` | Offscreen 到 sandbox iframe 中继 | Chromium API 依赖，需要明确降级合同 |
 | `entrypoints/sandbox-runner/` | JS/TS/Python/HTML 运行 | 多层重复校验，合同尚未单一化 |
-| `packages/shell-host/` | Native Host 安装和 MCP 工具 | 主 host 文件约 2,141 行、跨平台安全边界集中 |
+| `packages/shell-host/` | Native Host 安装和 MCP 工具 | Native root 54 行、installer root 214 行；framing/router/session/process/file/Skill/picker/OS/logger 分模块拥有 |
 
 ## Persistence and Backward-Compatibility Surface
 
@@ -108,16 +108,15 @@ flowchart LR
 
 ## Performance Baseline
 
-- 当前本地单浏览器产物约 17 MB；其中 `pyodide/` 约 13 MB。
+- 当前 Chrome 产物约 18.5 MB；其中 exact-once `pyodide/` 五文件合计 13,545,395 bytes。旧构建每个 browser 处理 25 个重复条目，现已消除 54,181,580 bytes 的重复处理量。
 - Chrome 产物中：
-  - `background.js` 约 1.19 MB
-  - `content.js` 约 509 KB
-  - `main-world.js` 约 326 KB
-  - Side Panel 主 chunk 约 359 KB
-- `entrypoints/content.ts` 启动时装配主题、token speed、tool blocks、多模态、导出、history/project adapters、inline agent、pet/background 等长期能力。
-- 源码静态可见至少 9 个 `MutationObserver`、两个 500ms route watcher，以及大量 timer/listener；需要浏览器 profiler 才能量化稳态 CPU 和 DOM 成本。
+  - `background.js` 约 749 KB；bundled Skill 文档不再进入启动 JS
+  - `content.js` 约 578 KB
+  - `main-world.js` 约 353 KB
+  - Side Panel initial shell 359,793 raw / 108,606 gzip；first Chat screen 498,113 / 150,246，均受 CI ceiling 约束
+- Content 长期能力由一个 mutation hub 和 capability scopes 管理。固定 21-batch trace 从旧 6 observers / 126 deliveries 降到 21 hub deliveries / 1 relevant subscriber callback；两个永久 500ms route watcher 已删除，10 秒 idle 回调从 40 降到 0。
 - `entrypoints/floating-chat.content.ts` 匹配 `<all_urls>`；即使功能关闭，脚本仍需启动后读取状态。
-- 多个 storage store 采用“读取整个 state/array -> 修改 -> 重写整个 key”，存在写放大、并发覆盖和 quota 风险。
+- Released whole-array storage shape 保留；Usage/Tool History 的 100 次相邻 mutation 从 100 次物理写降为 1 次，read/clear/failure 是 barrier，Sync 不 coalesce。
 
 ## Build & Run
 
@@ -147,25 +146,25 @@ flowchart LR
 | `npm run verify:extension-utf8` | 78 files passed |
 | `npm run audit:prod` | 0 production vulnerabilities at configured severity |
 
-测试基线的主要缺口：
+相对初始基线的当前状态：
 
-- 全部 Vitest 都在 jsdom 中运行，没有真实加载 Chrome/Edge/Firefox 扩展的 E2E。
-- 没有 coverage gate、bundle budget、DOM performance budget 或 background cold-start budget。
-- 现有测试已通过 fake IndexedDB 执行生产 Dexie 的 Memory v1→v3/v2→v3 upgrade、v3 reopen、Artifact legacy migration，以及 T2.5 的 raw-row rollback/reopen；剩余缺口是 R3.6 负责的单一 Artifact truth、未来/损坏版本保护、Memory import 原子性和显式 ID 分配设计，而不是“没有迁移测试”。
-- Sync 已补齐远端 generation、本地 apply/rollback、单键配置 revision/CAS、confirmed-target 与完整动作 FIFO；逐写故障注入、重启恢复、凭据身份缓存与旧版无 pointer 回退保持可执行。测量后的 burst-write 优化仍归 R6.5 / #379。
+- Vitest 仍以 jsdom/fake browser boundaries 为主；Chrome 150 没有加载命令行指定的 unpacked build，因此 Content 真实浏览器 smoke 未执行，不能宣称通过。
+- 没有全局 coverage gate 或 background cold-start profiler；但已有 exact package/bundle ceiling、Content fixed trace/resource ledger 和 persistence burst-write budgets。
+- Fake IndexedDB 已执行生产 Memory migrations/reopen、Artifact one-way migration、future/corrupt guards、atomic import，以及 sync raw-preimage rollback/restart；Artifact 只有 IndexedDB runtime truth。
+- Sync generation、local journal、config CAS、confirmed target、action FIFO 和 fault/restart evidence 保持不变；R6.5 仅 coalesce Usage/Tool History，相邻 100 mutations 降至 1 次 physical write，Sync 不 coalesce。
 - `ci:quality` 只在 Ubuntu/Node 22 执行，未做浏览器运行时矩阵。
 
 ## Project Governance Baseline and Resolution
 
 | Surface | Current Status |
 |:--|:--|
-| `AGENTS.md` | 存在，但文件头声明它由同步脚本自动生成，不应直接编辑 |
+| `AGENTS.md` | 唯一项目级 instruction truth source，可直接维护 |
 | Root `CLAUDE.md` | 不存在 |
-| Claude project memory | `AGENTS.md` 引用的 `/Users/zcl/.claude/projects/-Users-zcl-code-deepseek-pp/memory` 当前不存在 |
+| Claude project memory | 不作为项目规则或 fallback 使用 |
 | `.claude/settings.local.json` | 仅包含本机命令权限，不是工程规则真相源 |
 | Cursor/Windsurf/Cline/Codex repo rules | 未发现现有等价规则文件 |
-| Repo-local memory fallback | 未声明；本轮不会擅自创建 |
-| Active `docs/progress/MASTER.md` | 不存在；这是新 spec-driven run |
+| Repo-local memory fallback | 不允许创建 |
+| Active `docs/progress/MASTER.md` | 存在；记录当前 run、GitHub mapping、证据和 resume point |
 
 分析开始时，共享规则的 canonical source 已断裂：`AGENTS.md` 声称来自一个不存在的上游。用户在 Phase 2 确认停止这条生成关系，并指定 `AGENTS.md` 为唯一项目级 agent instruction truth source。Phase 4 已将它改为可直接维护的 Codex-first 规则面；根 `CLAUDE.md` 继续保持不存在，且不创建 repo-local memory fallback。完整决议见 `docs/progress/governance-resolution.md`。
 
