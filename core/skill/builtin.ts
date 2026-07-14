@@ -2,8 +2,6 @@ import { DEFAULT_LOCALE, type SupportedLocale } from '../i18n';
 import { SHELL_MCP_NATIVE_HOST, SHELL_TOOL_NAMES } from '../shell';
 import { createMemoryToolDescriptors } from '../tool/memory';
 import type { Skill } from '../types';
-import { THIRD_PARTY_OFFICECLI_SKILLS } from './officecli-library';
-import { THIRD_PARTY_SPEC_DRIVEN_DEVELOP_SKILLS } from './spec-driven-develop-library';
 
 type BuiltinSkillText = Pick<Skill, 'description' | 'instructions'>;
 
@@ -56,8 +54,6 @@ export const BUILTIN_SKILLS: Skill[] = [
     source: 'builtin',
     memoryEnabled: false,
   },
-  ...THIRD_PARTY_OFFICECLI_SKILLS,
-  ...THIRD_PARTY_SPEC_DRIVEN_DEVELOP_SKILLS,
   {
     name: 'memory',
     description: '记忆管理：/memory save <内容> | /memory list | /memory update | /memory delete',

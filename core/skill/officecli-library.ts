@@ -1,17 +1,6 @@
 import { OFFICECLI_BIN_PATH, SHELL_MCP_NATIVE_HOST, SHELL_TOOL_NAMES } from '../shell';
 import type { Skill } from '../types';
-
-const OFFICIAL_SKILL_MODULES = import.meta.glob('./officecli-official/skills/*/SKILL.md', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>;
-
-const STYLE_INDEX_MODULE = import.meta.glob('./officecli-official/styles/INDEX.md', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>;
+import { bundledSkillAssets } from './bundled-assets';
 
 const OFFICECLI_SKILL_ORDER = [
   'officecli',
@@ -50,25 +39,35 @@ interface OfficialSkillDoc {
   body: string;
 }
 
-const officialSkillDocs = new Map(
-  Object.entries(OFFICIAL_SKILL_MODULES)
-    .map(([, raw]) => parseOfficialSkill(raw))
-    .map((doc) => [doc.name, doc]),
-);
+const officialSkillDocPromises = new Map<string, Promise<OfficialSkillDoc>>();
+let officialStyleIndexPromise: Promise<string> | null = null;
 
-const officialStyleIndex = firstModule(STYLE_INDEX_MODULE).trim();
+export async function loadThirdPartyOfficeCliSkills(
+  requestedNames: readonly string[],
+): Promise<Skill[]> {
+  const requested = new Set(requestedNames);
+  const knownNames = new Set<string>([...OFFICECLI_SKILL_ORDER, 'officecli-styles']);
+  for (const name of requested) {
+    if (!knownNames.has(name)) throw new Error(`Unknown bundled OfficeCLI Skill: ${name}`);
+  }
 
-export const THIRD_PARTY_OFFICECLI_SKILLS: Skill[] = [
-  ...OFFICECLI_SKILL_ORDER.map((name) => createThirdPartyOfficeCliSkill(name)),
-  createThirdPartyStyleSkill(),
-];
+  return Promise.all(
+    [...OFFICECLI_SKILL_ORDER, 'officecli-styles']
+      .filter((name) => requested.has(name))
+      .map((name) => (
+        name === 'officecli-styles'
+          ? createThirdPartyStyleSkill()
+          : createThirdPartyOfficeCliSkill(name)
+      )),
+  );
+}
 
-function createThirdPartyOfficeCliSkill(name: string): Skill {
-  const doc = getOfficialSkillDoc(name);
+async function createThirdPartyOfficeCliSkill(name: string): Promise<Skill> {
+  const doc = await getOfficialSkillDoc(name);
   return {
     name: doc.name,
     description: doc.description,
-    instructions: buildOfficialSkillInstructions(name),
+    instructions: await buildOfficialSkillInstructions(name, doc),
     source: 'third-party',
     memoryEnabled: false,
     enabled: false,
@@ -79,7 +78,8 @@ function createThirdPartyOfficeCliSkill(name: string): Skill {
   };
 }
 
-function createThirdPartyStyleSkill(): Skill {
+async function createThirdPartyStyleSkill(): Promise<Skill> {
+  const officialStyleIndex = await getOfficialStyleIndex();
   return {
     name: 'officecli-styles',
     description: 'OfficeCLI 第三方 PPT 样式库。与 /officecli-pptx、/officecli-pitch-deck 或 /morph-ppt 链式使用以加载完整样式细节。',
@@ -94,7 +94,7 @@ function createThirdPartyStyleSkill(): Skill {
       '',
       '## OfficeCLI Style Library',
       '',
-      renderStyleLibrary(),
+      officialStyleIndex,
     ].join('\n'),
     source: 'third-party',
     memoryEnabled: false,
@@ -106,10 +106,14 @@ function createThirdPartyStyleSkill(): Skill {
   };
 }
 
-function buildOfficialSkillInstructions(name: string): string {
-  const doc = getOfficialSkillDoc(name);
+async function buildOfficialSkillInstructions(
+  name: string,
+  doc: OfficialSkillDoc,
+): Promise<string> {
   const dependencies = SELF_CONTAINED_DEPENDENCIES[name] ?? [];
-  const dependencyDocs = dependencies.map((dependencyName) => renderDependency(dependencyName));
+  const dependencyDocs = await Promise.all(
+    dependencies.map((dependencyName) => renderDependency(dependencyName)),
+  );
   const officialDoc = renderOfficialDoc(doc.name, doc.body);
   const parts = [
     renderDeepSeekOfficeCliExecutionGuardrails(),
@@ -118,7 +122,7 @@ function buildOfficialSkillInstructions(name: string): string {
   ];
 
   if (PPT_STYLE_SKILLS.has(name)) {
-    parts.push(renderStyleIndexAppendix());
+    parts.push(renderStyleIndexAppendix(await getOfficialStyleIndex()));
   }
   if (name === 'morph-ppt' || name === 'morph-ppt-3d') {
     parts.push(renderMorphReferences());
@@ -127,8 +131,8 @@ function buildOfficialSkillInstructions(name: string): string {
   return parts.filter(Boolean).join('\n\n---\n\n');
 }
 
-function renderDependency(name: string): string {
-  const doc = getOfficialSkillDoc(name);
+async function renderDependency(name: string): Promise<string> {
+  const doc = await getOfficialSkillDoc(name);
   return renderOfficialDoc(`${doc.name} (bundled base skill)`, doc.body);
 }
 
@@ -136,7 +140,7 @@ function renderOfficialDoc(title: string, body: string): string {
   return [`# Bundled Third-party OfficeCLI Skill: ${title}`, body.trim()].join('\n\n');
 }
 
-function renderStyleIndexAppendix(): string {
+function renderStyleIndexAppendix(officialStyleIndex: string): string {
   return [
     '# Bundled OfficeCLI Style Index',
     '',
@@ -152,10 +156,6 @@ function renderMorphReferences(): string {
     '',
     'Morph reference details are no longer eagerly embedded in the background bundle. Use `/officecli-styles` for the bundled style index and load detailed style/reference material only when the user explicitly asks for it.',
   ].join('\n');
-}
-
-function renderStyleLibrary(): string {
-  return officialStyleIndex;
 }
 
 function parseOfficialSkill(raw: string): OfficialSkillDoc {
@@ -188,20 +188,29 @@ function readFrontmatterValue(meta: string, key: string): string {
   return value;
 }
 
-function getOfficialSkillDoc(name: string): OfficialSkillDoc {
-  const doc = officialSkillDocs.get(name);
-  if (!doc) {
-    throw new Error(`Missing OfficeCLI skill: ${name}`);
-  }
-  return doc;
+function getOfficialSkillDoc(name: string): Promise<OfficialSkillDoc> {
+  const existing = officialSkillDocPromises.get(name);
+  if (existing) return existing;
+  const promise = bundledSkillAssets
+    .read('officecli', `skills/${name}/SKILL.md`)
+    .then(parseOfficialSkill);
+  officialSkillDocPromises.set(name, promise);
+  void promise.catch(() => {
+    if (officialSkillDocPromises.get(name) === promise) officialSkillDocPromises.delete(name);
+  });
+  return promise;
 }
 
-function firstModule(modules: Record<string, string>): string {
-  const values = Object.values(modules);
-  if (values.length !== 1) {
-    throw new Error('Expected exactly one OfficeCLI module match.');
-  }
-  return values[0];
+function getOfficialStyleIndex(): Promise<string> {
+  if (officialStyleIndexPromise) return officialStyleIndexPromise;
+  const promise = bundledSkillAssets
+    .read('officecli', 'styles/INDEX.md')
+    .then((raw) => raw.trim());
+  officialStyleIndexPromise = promise;
+  void promise.catch(() => {
+    if (officialStyleIndexPromise === promise) officialStyleIndexPromise = null;
+  });
+  return promise;
 }
 
 function renderDeepSeekOfficeCliExecutionGuardrails(): string {

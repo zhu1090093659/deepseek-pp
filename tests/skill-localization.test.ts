@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from '../core/skill/builtin';
+import { loadBundledSkills } from '../core/skill/bundled-loader';
 import { getAllSkills, setSkillEnabled, setSkillsEnabled } from '../core/skill/registry';
 import type { Skill } from '../core/types';
+import {
+  fetchBundledSkillAsset,
+  getBundledSkillAssetUrl,
+} from './helpers/bundled-skill-assets';
 
 const SKILL_STORAGE_KEY = 'deepseek_pp_skills';
 const BUNDLED_ENABLED_STORAGE_KEY = 'deepseek_pp_bundled_skill_enabled';
@@ -16,7 +21,11 @@ function findSkill(skills: Skill[], name: string): Skill {
 
 beforeEach(() => {
   storage = {};
+  vi.stubGlobal('fetch', fetchBundledSkillAsset);
   vi.stubGlobal('chrome', {
+    runtime: {
+      getURL: getBundledSkillAssetUrl,
+    },
     storage: {
       local: {
         get: vi.fn(async (key: string) => ({ [key]: storage[key] })),
@@ -77,9 +86,9 @@ describe('builtin skill localization', () => {
     expect(englishShell.description).toContain('Local command-line assistant');
   });
 
-  it('leaves OfficeCLI third-party skills out of builtin translation scope and disabled by default', () => {
-    const english = findSkill(getLocalizedBuiltinSkills('en'), 'officecli-styles');
-    const chinese = findSkill(getLocalizedBuiltinSkills('zh-CN'), 'officecli-styles');
+  it('leaves OfficeCLI third-party skills out of builtin translation scope and disabled by default', async () => {
+    const english = findSkill(await loadBundledSkills(['officecli-styles']), 'officecli-styles');
+    const chinese = findSkill(await loadBundledSkills(['officecli-styles']), 'officecli-styles');
 
     expect(english.source).toBe('third-party');
     expect(english.enabled).toBe(false);
@@ -187,23 +196,28 @@ describe('builtin skill localization', () => {
   describe('Spec-Driven Develop bundled skills', () => {
     const SDD_SKILL_NAMES = ['spec-driven-develop', 'deep-discuss', 'review-spd'];
 
-    it('registers all three skills as third-party with spec-driven-develop provider and homepage', () => {
+    it('registers all three skills as third-party with spec-driven-develop provider and homepage', async () => {
+      const bundledSkills = await loadBundledSkills(SDD_SKILL_NAMES);
       for (const name of SDD_SKILL_NAMES) {
-        const skill = findSkill(BUILTIN_SKILLS, name);
+        const skill = findSkill(bundledSkills, name);
         expect(skill.source).toBe('third-party');
         expect(skill.metadata?.provider).toBe('spec-driven-develop');
         expect(skill.metadata?.homepage).toBe('https://github.com/zhu1090093659/spec_driven_develop');
       }
     });
 
-    it('enables deep-discuss by default but disables spec-driven-develop and review-spd', () => {
-      expect(findSkill(BUILTIN_SKILLS, 'deep-discuss').enabled).toBe(true);
-      expect(findSkill(BUILTIN_SKILLS, 'spec-driven-develop').enabled).toBe(false);
-      expect(findSkill(BUILTIN_SKILLS, 'review-spd').enabled).toBe(false);
+    it('enables deep-discuss by default but disables spec-driven-develop and review-spd', async () => {
+      const bundledSkills = await loadBundledSkills(SDD_SKILL_NAMES);
+      expect(findSkill(bundledSkills, 'deep-discuss').enabled).toBe(true);
+      expect(findSkill(bundledSkills, 'spec-driven-develop').enabled).toBe(false);
+      expect(findSkill(bundledSkills, 'review-spd').enabled).toBe(false);
     });
 
-    it('inlines references and scripts into spec-driven-develop instructions', () => {
-      const skill = findSkill(BUILTIN_SKILLS, 'spec-driven-develop');
+    it('inlines references and scripts into spec-driven-develop instructions', async () => {
+      const skill = findSkill(
+        await loadBundledSkills(['spec-driven-develop']),
+        'spec-driven-develop',
+      );
       expect(skill.instructions).toContain('Bundled Reference: references/behavioral-rules.md');
       expect(skill.instructions).toContain('Bundled Reference: references/super-philosophy.md');
       expect(skill.instructions).toContain('Bundled Reference: references/templates/plan.md');
@@ -211,15 +225,15 @@ describe('builtin skill localization', () => {
       expect(skill.instructions).toContain('DeepSeek++ 执行边界');
     });
 
-    it('inlines review-context.py script into review-spd instructions', () => {
-      const skill = findSkill(BUILTIN_SKILLS, 'review-spd');
+    it('inlines review-context.py script into review-spd instructions', async () => {
+      const skill = findSkill(await loadBundledSkills(['review-spd']), 'review-spd');
       expect(skill.instructions).toContain('Bundled Script: scripts/review-context.py');
       expect(skill.instructions).toContain('def run_git');
       expect(skill.instructions).toContain('Bundled Reference: references/output-format.md');
     });
 
-    it('deep-discuss has no references and only contains the skill body', () => {
-      const skill = findSkill(BUILTIN_SKILLS, 'deep-discuss');
+    it('deep-discuss has no references and only contains the skill body', async () => {
+      const skill = findSkill(await loadBundledSkills(['deep-discuss']), 'deep-discuss');
       expect(skill.instructions).toContain('Deep Discuss');
       expect(skill.instructions).not.toContain('Bundled Reference:');
       expect(skill.instructions).not.toContain('Bundled Script:');

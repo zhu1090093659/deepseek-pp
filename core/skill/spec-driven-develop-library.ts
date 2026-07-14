@@ -1,23 +1,6 @@
 import { SHELL_MCP_NATIVE_HOST, SHELL_TOOL_NAMES } from '../shell';
 import type { Skill } from '../types';
-
-const SKILL_MODULES = import.meta.glob('./spec-driven-develop-official/*/SKILL.md', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>;
-
-const ALL_MARKDOWN_MODULES = import.meta.glob('./spec-driven-develop-official/**/*.md', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>;
-
-const ALL_SCRIPT_MODULES = import.meta.glob('./spec-driven-develop-official/**/*.{py,sh,js}', {
-  eager: true,
-  query: '?raw',
-  import: 'default',
-}) as Record<string, string>;
+import { bundledSkillAssets } from './bundled-assets';
 
 const SKILL_ORDER = [
   'spec-driven-develop',
@@ -36,22 +19,31 @@ interface OfficialSkillDoc {
   version: string;
 }
 
-const officialSkillDocs = new Map(
-  Object.entries(SKILL_MODULES)
-    .map(([, raw]) => parseOfficialSkill(raw))
-    .map((doc) => [doc.name, doc]),
-);
+const officialSkillDocPromises = new Map<string, Promise<OfficialSkillDoc>>();
 
-export const THIRD_PARTY_SPEC_DRIVEN_DEVELOP_SKILLS: Skill[] = SKILL_ORDER.map((name) =>
-  createThirdPartySpecDrivenDevelopSkill(name),
-);
+export async function loadThirdPartySpecDrivenDevelopSkills(
+  requestedNames: readonly string[],
+): Promise<Skill[]> {
+  const requested = new Set(requestedNames);
+  const knownNames = new Set<string>(SKILL_ORDER);
+  for (const name of requested) {
+    if (!knownNames.has(name)) {
+      throw new Error(`Unknown bundled Spec-Driven Develop Skill: ${name}`);
+    }
+  }
+  return Promise.all(
+    SKILL_ORDER
+      .filter((name) => requested.has(name))
+      .map((name) => createThirdPartySpecDrivenDevelopSkill(name)),
+  );
+}
 
-function createThirdPartySpecDrivenDevelopSkill(name: string): Skill {
-  const doc = getOfficialSkillDoc(name);
+async function createThirdPartySpecDrivenDevelopSkill(name: string): Promise<Skill> {
+  const doc = await getOfficialSkillDoc(name);
   return {
     name: doc.name,
     description: doc.description,
-    instructions: buildOfficialSkillInstructions(name),
+    instructions: await buildOfficialSkillInstructions(name, doc),
     source: 'third-party',
     memoryEnabled: false,
     enabled: DEFAULT_ENABLED_SKILLS.has(name),
@@ -64,10 +56,14 @@ function createThirdPartySpecDrivenDevelopSkill(name: string): Skill {
   };
 }
 
-function buildOfficialSkillInstructions(name: string): string {
-  const doc = getOfficialSkillDoc(name);
-  const referenceDocs = renderReferenceDocs(name);
-  const scriptDocs = renderScriptDocs(name);
+async function buildOfficialSkillInstructions(
+  name: string,
+  doc: OfficialSkillDoc,
+): Promise<string> {
+  const [referenceDocs, scriptDocs] = await Promise.all([
+    renderReferenceDocs(name),
+    renderScriptDocs(name),
+  ]);
   const officialDoc = renderOfficialDoc(doc.name, doc.body);
 
   const parts = [
@@ -83,28 +79,30 @@ function buildOfficialSkillInstructions(name: string): string {
   return parts.filter(Boolean).join('\n\n---\n\n');
 }
 
-function renderReferenceDocs(skillName: string): string[] {
-  const skillPrefix = `./spec-driven-develop-official/${skillName}/`;
-  const entries = Object.entries(ALL_MARKDOWN_MODULES)
-    .filter(([path]) => path.startsWith(skillPrefix) && !path.endsWith('/SKILL.md'))
-    .sort(([a], [b]) => a.localeCompare(b));
+async function renderReferenceDocs(skillName: string): Promise<string[]> {
+  const skillPrefix = `${skillName}/`;
+  const paths = (await bundledSkillAssets.list('spec-driven-develop', skillPrefix))
+    .filter((path) => path.endsWith('.md') && !path.endsWith('/SKILL.md'))
+    .sort((a, b) => a.localeCompare(b));
 
-  return entries.map(([path, body]) => {
+  return Promise.all(paths.map(async (path) => {
     const relativePath = path.slice(skillPrefix.length);
+    const body = await bundledSkillAssets.read('spec-driven-develop', path);
     return renderReferenceDoc(relativePath, body);
-  });
+  }));
 }
 
-function renderScriptDocs(skillName: string): string[] {
-  const skillPrefix = `./spec-driven-develop-official/${skillName}/`;
-  const entries = Object.entries(ALL_SCRIPT_MODULES)
-    .filter(([path]) => path.startsWith(skillPrefix))
-    .sort(([a], [b]) => a.localeCompare(b));
+async function renderScriptDocs(skillName: string): Promise<string[]> {
+  const skillPrefix = `${skillName}/`;
+  const paths = (await bundledSkillAssets.list('spec-driven-develop', skillPrefix))
+    .filter((path) => /\.(?:py|sh|js)$/.test(path))
+    .sort((a, b) => a.localeCompare(b));
 
-  return entries.map(([path, body]) => {
+  return Promise.all(paths.map(async (path) => {
     const relativePath = path.slice(skillPrefix.length);
+    const body = await bundledSkillAssets.read('spec-driven-develop', path);
     return renderScriptDoc(skillName, relativePath, body);
-  });
+  }));
 }
 
 function renderOfficialDoc(title: string, body: string): string {
@@ -198,12 +196,17 @@ function readFoldedScalar(meta: string, key: string): string {
   return collected.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-function getOfficialSkillDoc(name: string): OfficialSkillDoc {
-  const doc = officialSkillDocs.get(name);
-  if (!doc) {
-    throw new Error(`Missing Spec-Driven Develop skill: ${name}`);
-  }
-  return doc;
+function getOfficialSkillDoc(name: string): Promise<OfficialSkillDoc> {
+  const existing = officialSkillDocPromises.get(name);
+  if (existing) return existing;
+  const promise = bundledSkillAssets
+    .read('spec-driven-develop', `${name}/SKILL.md`)
+    .then(parseOfficialSkill);
+  officialSkillDocPromises.set(name, promise);
+  void promise.catch(() => {
+    if (officialSkillDocPromises.get(name) === promise) officialSkillDocPromises.delete(name);
+  });
+  return promise;
 }
 
 function renderDeepSeekExecutionGuardrails(): string {

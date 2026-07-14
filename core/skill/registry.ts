@@ -7,6 +7,11 @@ import {
 } from '../persistence/versioned-repository';
 import { BUILTIN_SKILLS, getLocalizedBuiltinSkills } from './builtin';
 import {
+  BUNDLED_SKILL_REGISTRATIONS,
+  loadBundledSkills,
+  resolveBundledSkillNames,
+} from './bundled-loader';
+import {
   decodeGitHubSkillSource,
   decodeSkillImportSource,
   decodeSkillSourceCollection,
@@ -41,6 +46,8 @@ export interface ImportedSkillMutationResult {
   renamed: number;
 }
 
+export type SkillCollisionCandidate = Pick<Skill, 'name' | 'source' | 'enabled' | 'remote'>;
+
 export async function getAllSkills(
   options: { includeDisabled?: boolean; locale?: SupportedLocale } = {},
 ): Promise<Skill[]> {
@@ -48,11 +55,15 @@ export async function getAllSkills(
     getUserSkills(),
     getBundledSkillEnabledOverrides(),
   ]);
+  const bundledSkills = await loadBundledSkills(
+    resolveBundledSkillNames(bundledEnabled, options.includeDisabled === true),
+  );
   const skills = [
     ...applyBundledSkillEnabledOverrides(
       getLocalizedBuiltinSkills(options.locale ?? DEFAULT_LOCALE),
       bundledEnabled,
     ),
+    ...applyBundledSkillEnabledOverrides(bundledSkills, bundledEnabled),
     ...userSkills,
   ];
   if (options.includeDisabled) return skills;
@@ -61,6 +72,15 @@ export async function getAllSkills(
 
 export async function getSkillLibrary(locale: SupportedLocale = DEFAULT_LOCALE): Promise<Skill[]> {
   return getAllSkills({ includeDisabled: true, locale });
+}
+
+export async function getSkillCollisionCandidates(): Promise<SkillCollisionCandidate[]> {
+  const userSkills = await getUserSkills();
+  return [
+    ...BUILTIN_SKILLS.map(({ name, source }) => ({ name, source })),
+    ...BUNDLED_SKILL_REGISTRATIONS.map(({ name }) => ({ name, source: 'third-party' as const })),
+    ...userSkills.map(({ name, source, enabled, remote }) => ({ name, source, enabled, remote })),
+  ];
 }
 
 export async function getUserSkills(): Promise<Skill[]> {
@@ -178,10 +198,7 @@ async function setSkillsEnabledUnlocked(updates: Array<{ name: string; enabled: 
 
   const bundledUpdates: Record<string, boolean> = {};
   for (const [name, enabled] of updateByName) {
-    const bundledSkill = BUILTIN_SKILLS.find((skill) => (
-      skill.name === name &&
-      TOGGLEABLE_BUNDLED_SKILL_SOURCES.has(skill.source)
-    ));
+    const bundledSkill = BUNDLED_SKILL_REGISTRATIONS.find((skill) => skill.name === name);
     if (!bundledSkill) throw new Error(`Skill cannot be enabled or disabled because it was not found: ${name}`);
     bundledUpdates[name] = enabled;
   }
@@ -296,6 +313,7 @@ async function stageUpsertImportedSkillSourceAlreadyLocked(
 
   const occupiedNames = new Set([
     ...BUILTIN_SKILLS.map((skill) => skill.name),
+    ...BUNDLED_SKILL_REGISTRATIONS.map((skill) => skill.name),
     ...existingUserSkills
       .filter((skill) => skill.remote?.sourceId !== decodedSource.id)
       .map((skill) => skill.name),

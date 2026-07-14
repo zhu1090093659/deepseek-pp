@@ -15,12 +15,20 @@ import {
   decodeSkillImportSource as validateSkillImportSource,
 } from '../core/skill/codec';
 import type { GitHubSkillSource, LocalSkillSource, Memory, Skill, SystemPromptPreset } from '../core/types';
+import {
+  fetchBundledSkillAsset,
+  getBundledSkillAssetUrl,
+} from './helpers/bundled-skill-assets';
 
 let storage: Record<string, unknown>;
 
 beforeEach(() => {
   storage = {};
+  vi.stubGlobal('fetch', fetchBundledSkillAsset);
   vi.stubGlobal('chrome', {
+    runtime: {
+      getURL: getBundledSkillAssetUrl,
+    },
     storage: {
       local: {
         get: vi.fn(async (key: string | string[] | null | undefined) => {
