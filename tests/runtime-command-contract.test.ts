@@ -10,7 +10,6 @@ import {
 } from '../core/messaging/runtime-command-contracts';
 import {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
-  LEGACY_RUNTIME_COMMAND_TYPES,
   TYPED_RUNTIME_COMMAND_TYPES,
   createUnknownRuntimeCommandResponse,
   getRuntimeCommandOwner,
@@ -41,7 +40,6 @@ const CUTOVER_LEDGER_SECTIONS = [
 
 describe('runtime command compatibility contract', () => {
   it('matches the live router, MessageAction union, and checked-in human inventory', () => {
-    const legacyContracts: RuntimeCaseContract[] = [];
     const typedContracts: RuntimeCaseContract[] = TYPED_RUNTIME_COMMAND_TYPES.map((type) => {
       const registered = RUNTIME_COMMAND_CONTRACTS[
         type as keyof typeof RUNTIME_COMMAND_CONTRACTS
@@ -54,7 +52,7 @@ describe('runtime command compatibility contract', () => {
         error: registered.error,
       };
     });
-    const liveContracts = [...legacyContracts, ...typedContracts];
+    const liveContracts = typedContracts;
     const live = liveContracts.map((contract) => contract.type);
     const declaredContracts = extractMessageActionContracts(typesSource);
     const declared = declaredContracts.map((contract) => contract.type);
@@ -75,7 +73,6 @@ describe('runtime command compatibility contract', () => {
     expectSortedEqual(declaredOnly, readInventoryList('Declared Only'));
     expectSortedEqual(registryLive, live);
     expectSortedEqual(registryDeclared, declared);
-    expectSortedEqual(legacyContracts.map((contract) => contract.type), LEGACY_RUNTIME_COMMAND_TYPES);
     expectSortedEqual(typedContracts.map((contract) => contract.type), TYPED_RUNTIME_COMMAND_TYPES);
     expectSortedEqual(declaredOnly, CLIENT_ONLY_RUNTIME_COMMAND_TYPES);
     const cutoverLedger = CUTOVER_LEDGER_SECTIONS.flatMap(([heading, count]) => {

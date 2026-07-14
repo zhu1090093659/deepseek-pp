@@ -4,7 +4,6 @@ import type {
 } from './runtime-boundary';
 import {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
-  LEGACY_RUNTIME_COMMAND_TYPES,
   TYPED_RUNTIME_COMMAND_TYPES,
   getRuntimeCommandOwner,
 } from './runtime-command-contracts';
@@ -15,7 +14,6 @@ import type { BackgroundRuntimeCommandContracts } from './background-runtime-con
 
 export {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
-  LEGACY_RUNTIME_COMMAND_TYPES,
   RUNTIME_COMMAND_CONTRACTS,
   TYPED_RUNTIME_COMMAND_TYPES,
   getRuntimeCommandOwner,
@@ -110,9 +108,6 @@ export function definePayloadlessRuntimeCommandHandler<
 export function createRuntimeCommandRegistry(options: {
   typedHandlers: readonly RuntimeCommandHandler[];
 }): RuntimeCommandRegistry {
-  if (LEGACY_RUNTIME_COMMAND_TYPES.length > 0) {
-    throw new Error('Legacy runtime command owners remain after registry closure.');
-  }
   const handlersByType = new Map<string, RuntimeCommandHandler>();
   for (const handler of options.typedHandlers) {
     if (handlersByType.has(handler.type)) {

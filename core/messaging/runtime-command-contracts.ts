@@ -17,7 +17,7 @@ export type RuntimeResponseFamily =
 export type RuntimeErrorFamily = 'background-error' | 'tool-error' | 'none';
 export type RuntimeCommandSurface = 'live-and-declared' | 'live-only' | 'declared-only';
 export type RuntimePayloadPresence = 'none' | 'required' | 'optional';
-export type RuntimeCommandOwner = 'typed-handler' | 'legacy-switch' | 'client-only';
+export type RuntimeCommandOwner = 'typed-handler' | 'client-only';
 
 export interface RuntimeCommandContract {
   owner: RuntimeCommandOwner;
@@ -31,12 +31,12 @@ export interface RuntimeCommandContract {
 }
 
 function command(
+  owner: RuntimeCommandOwner,
   request: RuntimeRequestBoundary,
   response: RuntimeResponseFamily,
   error: RuntimeErrorFamily = 'background-error',
   surface: RuntimeCommandSurface = 'live-and-declared',
   presence: RuntimePayloadPresence = request === 'none' ? 'none' : 'required',
-  owner: RuntimeCommandOwner = 'legacy-switch',
 ): RuntimeCommandContract {
   return { owner, surface, request: { access: request, presence }, response, error };
 }
@@ -48,7 +48,7 @@ function typedCommand(
   surface: RuntimeCommandSurface = 'live-and-declared',
   presence: RuntimePayloadPresence = request === 'none' ? 'none' : 'required',
 ): RuntimeCommandContract {
-  return command(request, response, error, surface, presence, 'typed-handler');
+  return command('typed-handler', request, response, error, surface, presence);
 }
 
 export const RUNTIME_COMMAND_CONTRACTS = {
@@ -131,8 +131,8 @@ export const RUNTIME_COMMAND_CONTRACTS = {
   GET_CURRENT_DEEPSEEK_CONVERSATION: typedCommand('none', 'status-or-domain-error'),
   GET_PROJECT_CONTEXT_FOR_CONVERSATION: typedCommand('payload-decoded', 'nullable-value'),
   GET_ARTIFACT: typedCommand('payload-decoded', 'status-or-domain-error'),
-  GET_CONFIG: command('none', 'value', 'background-error', 'live-and-declared', 'none', 'typed-handler'),
-  WHATS_NEW_DISMISSED: command('none', 'ack', 'background-error', 'live-only', 'none', 'typed-handler'),
+  GET_CONFIG: typedCommand('none', 'value'),
+  WHATS_NEW_DISMISSED: typedCommand('none', 'ack', 'background-error', 'live-only'),
   GET_DEEPSEEK_API_KEY_STATUS: typedCommand('none', 'status', 'background-error', 'live-only'),
   SAVE_DEEPSEEK_API_KEY: typedCommand('payload-decoded', 'status', 'background-error', 'live-only'),
   CLEAR_DEEPSEEK_API_KEY: typedCommand('none', 'status', 'background-error', 'live-only'),
@@ -176,12 +176,11 @@ export const RUNTIME_COMMAND_CONTRACTS = {
   DELETE_AUTOMATION: typedCommand('payload-decoded', 'ack', 'background-error', 'live-only'),
   RUN_AUTOMATION_NOW: typedCommand('payload-decoded', 'value', 'background-error', 'live-only'),
   SCENARIOS_UPDATED: typedCommand('payload-decoded', 'value', 'background-error', 'live-only', 'optional'),
-  TOOL_CALL_EXECUTED: command('payload-cast', 'unrouted', 'none', 'declared-only', 'required', 'client-only'),
-  MEMORIES_UPDATED: command('none', 'unrouted', 'none', 'declared-only', 'none', 'client-only'),
+  TOOL_CALL_EXECUTED: command('client-only', 'payload-cast', 'unrouted', 'none', 'declared-only'),
+  MEMORIES_UPDATED: command('client-only', 'none', 'unrouted', 'none', 'declared-only', 'none'),
 } as const satisfies Record<string, RuntimeCommandContract>;
 
 export const TYPED_RUNTIME_COMMAND_TYPES = commandTypesOwnedBy('typed-handler');
-export const LEGACY_RUNTIME_COMMAND_TYPES = commandTypesOwnedBy('legacy-switch');
 export const CLIENT_ONLY_RUNTIME_COMMAND_TYPES = commandTypesOwnedBy('client-only');
 
 export function getRuntimeCommandOwner(type: string): RuntimeCommandOwner | undefined {

@@ -3,7 +3,6 @@ import { createBootstrapRuntimeClient } from '../core/messaging/bootstrap-client
 import { createBackgroundErrorResponse } from '../core/messaging/background-error';
 import {
   CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
-  LEGACY_RUNTIME_COMMAND_TYPES,
   TYPED_RUNTIME_COMMAND_TYPES,
   createRuntimeCommandRegistry,
   createUnknownRuntimeCommandResponse,
@@ -27,7 +26,6 @@ describe('runtime command registry', () => {
   it('owns every known runtime command exactly once', () => {
     const allTypes = [
       ...TYPED_RUNTIME_COMMAND_TYPES,
-      ...LEGACY_RUNTIME_COMMAND_TYPES,
       ...CLIENT_ONLY_RUNTIME_COMMAND_TYPES,
     ];
 
@@ -44,7 +42,6 @@ describe('runtime command registry', () => {
       'GET_DEEPSEEK_API_KEY_STATUS',
       'EXPORT_DEEPSEEK_CONVERSATIONS',
     ]));
-    expect(LEGACY_RUNTIME_COMMAND_TYPES).toHaveLength(0);
     expect(CLIENT_ONLY_RUNTIME_COMMAND_TYPES).toEqual(['TOOL_CALL_EXECUTED', 'MEMORIES_UPDATED']);
     expect(new Set(allTypes).size).toBe(123);
     for (const type of TYPED_RUNTIME_COMMAND_TYPES) {
