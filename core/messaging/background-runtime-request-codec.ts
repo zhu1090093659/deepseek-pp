@@ -10,6 +10,10 @@ import {
   type AutomationUpdateRequest,
 } from '../automation/runtime-request-codec';
 import type { AutomationCreateInput } from '../automation/types';
+import {
+  decodeScenarioRuntimeRequest,
+  type ScenarioRuntimeRequest,
+} from '../scenario/runtime-request-codec';
 import { decodeSyncCommandTarget } from '../sync/config';
 import type { SyncCommandTarget } from '../types';
 import { normalizeUsageRangeDays } from '../usage/stats';
@@ -33,6 +37,7 @@ interface DecodedBackgroundRuntimePayloads {
   SET_AUTOMATION_STATUS: AutomationStatusRequest;
   DELETE_AUTOMATION: AutomationIdRequest;
   RUN_AUTOMATION_NOW: AutomationIdRequest;
+  SCENARIOS_UPDATED: ScenarioRuntimeRequest;
 }
 
 export type BackgroundRuntimePayloadCommandType = keyof DecodedBackgroundRuntimePayloads;
@@ -68,6 +73,7 @@ export const BACKGROUND_RUNTIME_PAYLOAD_DECODERS: BackgroundRuntimePayloadDecode
   RUN_AUTOMATION_NOW(value) {
     return decodeAutomationIdRequest(value, 'RUN_AUTOMATION_NOW');
   },
+  SCENARIOS_UPDATED: decodeScenarioRuntimeRequest,
 };
 
 export function decodeBackgroundRuntimePayload<

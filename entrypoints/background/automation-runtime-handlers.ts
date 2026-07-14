@@ -51,10 +51,11 @@ export function createAutomationRuntimeHandlers(
       await dependencies.broadcastAutomationUpdate(context.tabId);
       return refreshed ?? automation;
     }),
-    defineBackgroundPayloadRuntimeCommandHandler('SET_AUTOMATION_STATUS', async ({ id, status }, context) => {
-      const automation = await dependencies.setAutomationStatus(id, status);
+    defineBackgroundPayloadRuntimeCommandHandler('SET_AUTOMATION_STATUS', async (request, context) => {
+      if (!request.ok) return request;
+      const automation = await dependencies.setAutomationStatus(request.id, request.status);
       if (!automation) return { ok: false as const, error: 'automation_not_found' };
-      const refreshed = await dependencies.refreshAutomationNextRunAt(id);
+      const refreshed = await dependencies.refreshAutomationNextRunAt(request.id);
       await dependencies.broadcastAutomationUpdate(context.tabId);
       return refreshed ?? automation;
     }),

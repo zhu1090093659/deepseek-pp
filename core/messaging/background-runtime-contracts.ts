@@ -14,6 +14,8 @@ import type {
   UsageSummary,
   UsageTurnRecord,
 } from '../usage/types';
+import type { ScenarioRuntimeRequest } from '../scenario/runtime-request-codec';
+import type { ScenarioConfig } from '../types';
 
 type DeclaredRuntimeRequest<TType extends MessageAction['type']> = Extract<
   MessageAction,
@@ -123,7 +125,7 @@ export interface BackgroundRuntimeCommandContracts {
     response: AutomationRun | DomainFailure;
   };
   SCENARIOS_UPDATED: {
-    request: { type: 'SCENARIOS_UPDATED' };
-    response: Ack;
+    request: { type: 'SCENARIOS_UPDATED'; payload?: ScenarioRuntimeRequest };
+    response: Ack | { ok: true; scenarios: ScenarioConfig[] };
   };
 }

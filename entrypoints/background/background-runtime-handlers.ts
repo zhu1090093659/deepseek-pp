@@ -1,7 +1,4 @@
-import {
-  definePayloadlessRuntimeCommandHandler,
-  type RuntimeCommandHandler,
-} from '../../core/messaging/runtime-command-registry';
+import type { RuntimeCommandHandler } from '../../core/messaging/runtime-command-registry';
 import {
   createAutomationRuntimeHandlers,
   type AutomationRuntimeHandlerDependencies,
@@ -14,12 +11,16 @@ import {
   createUsageRuntimeHandlers,
   type UsageRuntimeHandlerDependencies,
 } from './usage-runtime-handlers';
+import {
+  createScenarioRuntimeHandlers,
+  type ScenarioRuntimeHandlerDependencies,
+} from './scenario-runtime-handlers';
 
 export interface BackgroundRuntimeHandlerDependencies {
   usage: UsageRuntimeHandlerDependencies;
   sync: SyncRuntimeHandlerDependencies;
   automation: AutomationRuntimeHandlerDependencies;
-  refreshScenarioMenus(): Promise<void>;
+  scenario: ScenarioRuntimeHandlerDependencies;
 }
 
 export function createBackgroundRuntimeHandlers(
@@ -29,9 +30,6 @@ export function createBackgroundRuntimeHandlers(
     ...createUsageRuntimeHandlers(dependencies.usage),
     ...createSyncRuntimeHandlers(dependencies.sync),
     ...createAutomationRuntimeHandlers(dependencies.automation),
-    definePayloadlessRuntimeCommandHandler('SCENARIOS_UPDATED', async () => {
-      await dependencies.refreshScenarioMenus();
-      return { ok: true as const };
-    }),
+    ...createScenarioRuntimeHandlers(dependencies.scenario),
   ]);
 }

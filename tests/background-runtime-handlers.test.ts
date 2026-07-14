@@ -47,6 +47,7 @@ const R44_PAYLOAD_COMMANDS = [
   'SET_AUTOMATION_STATUS',
   'DELETE_AUTOMATION',
   'RUN_AUTOMATION_NOW',
+  'SCENARIOS_UPDATED',
 ] as const;
 
 const context: RuntimeMessageContext = {
@@ -170,6 +171,12 @@ describe('R4.4 background runtime closure', () => {
     })).rejects.toThrow('Automation patch contains an unsupported field: id');
     expect(dependencies.automation.updateAutomation).not.toHaveBeenCalled();
 
+    await expect(dispatch(handlers, {
+      type: 'SET_AUTOMATION_STATUS',
+      payload: { id: 'automation-1', status: 'unknown' },
+    })).resolves.toEqual({ ok: false, error: 'invalid_automation_status' });
+    expect(dependencies.automation.setAutomationStatus).not.toHaveBeenCalled();
+
     const events: string[] = [];
     vi.mocked(dependencies.automation.cancelActiveAutomationRun).mockImplementation(() => {
       events.push('cancel');
@@ -192,9 +199,23 @@ describe('R4.4 background runtime closure', () => {
     const handlers = createBackgroundRuntimeHandlers(dependencies);
     await expect(dispatch(handlers, { type: 'SCENARIOS_UPDATED' }))
       .resolves.toEqual({ ok: true });
-    vi.mocked(dependencies.refreshScenarioMenus).mockRejectedValueOnce(new Error('menu failed'));
+    vi.mocked(dependencies.scenario.refreshScenarioMenus)
+      .mockRejectedValueOnce(new Error('menu failed'));
     await expect(dispatch(handlers, { type: 'SCENARIOS_UPDATED' }))
       .rejects.toThrow('menu failed');
+
+    await expect(dispatch(handlers, {
+      type: 'SCENARIOS_UPDATED',
+      payload: { operation: 'add', label: 'Custom', template: 'Use {text}' },
+    })).resolves.toEqual({ ok: true, scenarios: [] });
+    expect(dependencies.scenario.addCustomScenario)
+      .toHaveBeenCalledWith('Custom', 'Use {text}');
+
+    await expect(dispatch(handlers, {
+      type: 'SCENARIOS_UPDATED',
+      payload: { operation: 'delete', id: 'custom-1', unsupported: true },
+    })).rejects.toThrow('contains an unsupported field: unsupported');
+    expect(dependencies.scenario.deleteScenario).not.toHaveBeenCalled();
   });
 });
 
@@ -244,7 +265,19 @@ function createDependencies(): BackgroundRuntimeHandlerDependencies {
       broadcastAutomationUpdate: vi.fn(async () => undefined),
       broadcastAutomationRunsUpdate: vi.fn(async () => undefined),
     },
-    refreshScenarioMenus: vi.fn(async () => undefined),
+    scenario: {
+      getAllScenarios: vi.fn(async () => []),
+      saveScenario: vi.fn(async () => undefined),
+      addCustomScenario: vi.fn(async () => ({
+        id: 'custom-1',
+        label: 'Custom',
+        template: 'Use {text}',
+        builtIn: false,
+        enabled: true,
+      })),
+      deleteScenario: vi.fn(async () => undefined),
+      refreshScenarioMenus: vi.fn(async () => undefined),
+    },
   };
 }
 

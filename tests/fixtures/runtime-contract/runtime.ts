@@ -4,10 +4,10 @@ export const RUNTIME_TOPOLOGY = {
   shared: 89,
   liveOnly: 32,
   declaredOnly: 2,
-  readsPayload: 79,
-  ignoresPayload: 42,
+  readsPayload: 80,
+  ignoresPayload: 41,
   directPayloadCasts: 0,
-  decodedPayloads: 79,
+  decodedPayloads: 80,
   delegatedPayloads: 0,
 } as const;
 

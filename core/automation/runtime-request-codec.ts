@@ -17,10 +17,9 @@ export interface AutomationUpdateRequest {
   patch: AutomationUpdateInput;
 }
 
-export interface AutomationStatusRequest {
-  id: string;
-  status: AutomationStatus;
-}
+export type AutomationStatusRequest =
+  | { ok: true; id: string; status: AutomationStatus }
+  | { ok: false; error: 'invalid_automation_status' };
 
 export interface AutomationIdRequest {
   id: string;
@@ -83,11 +82,14 @@ export function decodeAutomationUpdateRequest(value: unknown): AutomationUpdateR
 export function decodeAutomationStatusRequest(value: unknown): AutomationStatusRequest {
   const payload = recordValue(value, 'SET_AUTOMATION_STATUS.payload');
   assertOnlyKeys(payload, ['id', 'status'], 'SET_AUTOMATION_STATUS.payload');
-  const id = nonEmptyString(payload.id, 'Automation id');
   if (!isAutomationStatus(payload.status)) {
-    throw new Error('Invalid automation status');
+    return { ok: false, error: 'invalid_automation_status' };
   }
-  return { id, status: payload.status };
+  return {
+    ok: true,
+    id: nonEmptyString(payload.id, 'Automation id'),
+    status: payload.status,
+  };
 }
 
 export function decodeAutomationIdRequest(value: unknown, command: string): AutomationIdRequest {

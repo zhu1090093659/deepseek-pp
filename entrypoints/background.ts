@@ -196,7 +196,13 @@ import {
   saveMultimodalSettings,
 } from '../core/multimodal/settings';
 import { getWebToolSettings, setWebToolEnabled } from '../core/tool/web-settings';
-import { getAllScenarios, applyScenarioTemplate } from '../core/scenario/store';
+import {
+  addCustomScenario,
+  applyScenarioTemplate,
+  deleteScenario,
+  getAllScenarios,
+  saveScenario,
+} from '../core/scenario/store';
 import { getChatEnabled } from '../core/chat/store';
 import {
   markChatLoopFinished,
@@ -623,7 +629,13 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         broadcastAutomationUpdate,
         broadcastAutomationRunsUpdate,
       },
-      refreshScenarioMenus: createContextMenus,
+      scenario: {
+        getAllScenarios,
+        saveScenario,
+        addCustomScenario,
+        deleteScenario,
+        refreshScenarioMenus: createContextMenus,
+      },
     }),
   ],
 });
