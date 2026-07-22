@@ -7,8 +7,9 @@ import type { PlatformEnvironment } from '../../core/platform/capabilities';
 import type { SandboxRunRequest } from '../../core/sandbox/types';
 import type {
   CreateToolAuthorizationInput,
+  StoredToolAuthorizationGrant,
 } from '../../core/tool/authorization';
-import { ToolAuthorizationError } from '../../core/tool/authorization';
+import { ToolAuthorizationError, normalizeChatSessionId } from '../../core/tool/authorization';
 import type {
   RuntimeToolAuthorizationContext,
   ToolAuthorizationGrantSummary,
@@ -48,6 +49,7 @@ export interface ToolExecutionRuntimeHandlerDependencies {
     authorizationId: string,
     subject: ToolAuthorizationSubject,
   ): Promise<void>;
+  getToolAuthorization(grantId: string): Promise<StoredToolAuthorizationGrant | null>;
   authorizeExternalToolPayloadChunk(input: ExternalPayloadAuthorizationBinding & {
     currentDescriptors: readonly ToolDescriptor[];
   }): Promise<{ namespace: string; expiresAt: number }>;
@@ -119,7 +121,7 @@ export function createToolExecutionRuntimeHandlers(
         trigger: payload.trigger,
         chatSessionId: payload.chatSessionId,
         runId: payload.runId,
-        subject: createToolAuthorizationSubject(context),
+        subject: createToolAuthorizationSubject(context, { fallbackChatSessionId: payload.chatSessionId }),
         descriptors,
       });
     }),
@@ -184,11 +186,18 @@ export function createToolExecutionRuntimeHandlers(
       if (authorizationId && call.id) {
         dependencies.externalPayloadAuthorizationCache.deleteCall(authorizationId, call.id);
       }
+      let fallbackChatSessionId: string | undefined;
+      if (context.surface === 'deepseek_content' && !context.chatSessionId && authorizationId) {
+        const grant = await dependencies.getToolAuthorization(authorizationId);
+        if (grant?.subject.chatSessionId) {
+          fallbackChatSessionId = grant.subject.chatSessionId;
+        }
+      }
       const authorization: RuntimeToolAuthorizationContext = context.surface === 'deepseek_content'
         ? {
           kind: 'grant',
           grantId: authorizationId ?? '',
-          subject: createToolAuthorizationSubject(context),
+          subject: createToolAuthorizationSubject(context, { fallbackChatSessionId }),
         }
         : createTrustedToolExecutionContext(
           call,
@@ -237,6 +246,7 @@ export function createToolExecutionRuntimeHandlers(
 
 export function createToolAuthorizationSubject(
   context: RuntimeMessageContext,
+  options?: { fallbackChatSessionId?: string | null },
 ): ToolAuthorizationSubject {
   // Firefox may omit MessageSender.documentId. Keep the receiver-owned
   // tab/frame identity stable across DeepSeek SPA route changes; a full
@@ -244,12 +254,17 @@ export function createToolAuthorizationSubject(
   const documentSessionId = context.documentId
     ? context.documentSessionId
     : `${context.surface}:${context.tabId ?? 'extension'}:${context.frameId ?? 'extension'}`;
+  const base = context.chatSessionId ?? null;
+  const fallback =
+    context.surface === 'deepseek_content'
+      ? normalizeChatSessionId(options?.fallbackChatSessionId) ?? null
+      : null;
   return {
     surface: context.surface,
     documentSessionId,
     tabId: context.tabId,
     frameId: context.frameId,
-    chatSessionId: context.chatSessionId ?? null,
+    chatSessionId: base ?? fallback ?? null,
   };
 }
 

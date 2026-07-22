@@ -106,6 +106,7 @@ describe('R4.2 real tool authorization handler composition', () => {
       refreshToolDescriptors: runtime.refreshToolDescriptors,
       createToolAuthorization,
       closeToolAuthorization,
+      getToolAuthorization: vi.fn(async () => null),
       authorizeExternalToolPayloadChunk,
       createToolAuthorizationResult,
       createInvalidToolCallResult,

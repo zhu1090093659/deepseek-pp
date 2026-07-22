@@ -33,7 +33,7 @@ interface StoredCallAuthorization {
   retryUsed: boolean;
 }
 
-interface StoredToolAuthorizationGrant {
+export interface StoredToolAuthorizationGrant {
   id: string;
   requestId: string;
   trigger: ToolExecutionTrigger;
@@ -641,7 +641,7 @@ function optionalIdentityMismatch(claimed: string | undefined, expected: string 
   return claimed !== expected;
 }
 
-function normalizeChatSessionId(value: string | null | undefined): string | null {
+export function normalizeChatSessionId(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
@@ -713,6 +713,19 @@ async function readState(): Promise<ToolAuthorizationState> {
     throw new Error('Stored tool authorization state is invalid.');
   }
   return structuredClone(value);
+}
+
+/**
+ * 按 grantId 读取已落盘的授权凭证。复用私有 readState 的统一校验路径
+ * （isStoredAuthorizationState / isStoredGrant），与 createToolAuthorization 的持久化读一致。
+ */
+export async function getToolAuthorizationGrant(
+  grantId: string,
+): Promise<StoredToolAuthorizationGrant | null> {
+  if (!grantId) return null;
+  const state = await readState();
+  const grant = state.grants[grantId];
+  return grant ?? null;
 }
 
 function isStoredAuthorizationState(value: unknown): value is ToolAuthorizationState {
