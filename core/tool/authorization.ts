@@ -575,6 +575,10 @@ function assertSubjectMatches(
   const currentChatSessionId = normalizeChatSessionId(current.chatSessionId);
   if (expectedChatSessionId === null) {
     if (currentChatSessionId === null) {
+      // Only deepseek_content binds to a browser-owned chat session. Side-panel
+      // (extension_context) and background/workflow tools have no such session,
+      // so a null-null pair is a legitimate match rather than a mismatch.
+      if (grant.subject.surface !== 'deepseek_content') return false;
       throw new ToolAuthorizationError(
         'tool_session_mismatch',
         'Tool authorization has not been bound to a browser-owned chat session.',
