@@ -74,6 +74,34 @@ export async function ensureMcpServerDiscovery(
   return refreshMcpServerDiscovery(serverId, options);
 }
 
+/**
+ * Reads a server's tool cache and, when it is missing or stale, best-effort
+ * rediscovers the server so the UI shows real tools without a manual refresh.
+ *
+ * This is the self-healing counterpart to `getMcpToolCache`. The in-memory
+ * mirror (see `tool-cache-memory`) covers the common case where the service
+ * worker survives a discovery; this covers the restart case where both the
+ * mirror and the durable storage write were lost (observed on 360Chrome MV3).
+ * Discovery is only attempted for enabled servers and failures are swallowed.
+ */
+export async function getMcpToolCacheWithHeal(
+  serverId: McpServerId,
+  options?: { maxAgeMs?: number; cacheTtlMs?: number; signal?: AbortSignal },
+): Promise<McpToolCacheEntry | null> {
+  const cache = await getMcpToolCache(serverId);
+  const now = Date.now();
+  const fresh = cache && cache.expiresAt > now &&
+    (options?.maxAgeMs == null || now - cache.refreshedAt <= options.maxAgeMs);
+  if (fresh) return cache;
+  const server = await getMcpServerById(serverId, { includeSecrets: false });
+  if (!server || !server.enabled) return cache;
+  try {
+    return await ensureMcpServerDiscovery(serverId, options);
+  } catch {
+    return cache;
+  }
+}
+
 export interface McpToolExecutionOptions {
   timeoutMs?: number;
   maxResultBytes?: number;

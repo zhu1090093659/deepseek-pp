@@ -575,6 +575,12 @@ function assertSubjectMatches(
   const currentChatSessionId = normalizeChatSessionId(current.chatSessionId);
   if (expectedChatSessionId === null) {
     if (currentChatSessionId === null) {
+      // Surfaces without a browser-owned chat session (e.g. the side panel's
+      // extension_context, or background_workflow automation) never bind a
+      // chat session. A null session on both sides is expected and valid, so
+      // treat it as a match rather than a mismatch. Only deepseek_content
+      // requires a chat-session binding.
+      if (grant.subject.surface !== 'deepseek_content') return false;
       throw new ToolAuthorizationError(
         'tool_session_mismatch',
         'Tool authorization has not been bound to a browser-owned chat session.',
@@ -716,8 +722,9 @@ async function readState(): Promise<ToolAuthorizationState> {
 }
 
 /**
- * 按 grantId 读取已落盘的授权凭证。复用私有 readState 的统一校验路径
- * （isStoredAuthorizationState / isStoredGrant），与 createToolAuthorization 的持久化读一致。
+ * Reads a persisted tool authorization grant by grantId. Reuses the private
+ * readState validation path (isStoredAuthorizationState / isStoredGrant),
+ * consistent with createToolAuthorization's persistence read.
  */
 export async function getToolAuthorizationGrant(
   grantId: string,

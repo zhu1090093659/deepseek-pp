@@ -13,6 +13,13 @@ import type {
 import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS } from './constants';
 import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 import {
+  clearMemoryToolCache,
+  getAllMemoryToolCaches,
+  getMemoryToolCache,
+  pruneMemoryToolCache,
+  setMemoryToolCache,
+} from './tool-cache-memory';
+import {
   decodeMcpStorageState,
   encodeMcpStorageState,
   MCP_SERVER_CONFIG_VERSION,
@@ -172,6 +179,11 @@ export async function deleteMcpServer(id: McpServerId): Promise<void> {
 }
 
 export async function getMcpToolCache(serverId: McpServerId): Promise<McpToolCacheEntry | null> {
+  // Serve the in-memory mirror first so the UI shows real tools even within a
+  // service-worker lifetime where the cross-restart storage write may be lost.
+  const memory = getMemoryToolCache(serverId);
+  const now = Date.now();
+  if (memory && memory.expiresAt > now) return memory;
   return mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
     return state.toolCaches.find((cache) => cache.serverId === serverId) ?? null;
@@ -179,9 +191,19 @@ export async function getMcpToolCache(serverId: McpServerId): Promise<McpToolCac
 }
 
 export async function getAllMcpToolCaches(): Promise<McpToolCacheEntry[]> {
+  const now = Date.now();
+  pruneMemoryToolCache(now);
+  const memoryByServer = new Map(getAllMemoryToolCaches().map((cache) => [cache.serverId, cache]));
   return mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
-    return [...state.toolCaches].sort((a, b) => b.refreshedAt - a.refreshedAt);
+    // Merge persisted caches with the in-memory mirror, preferring a fresh
+    // in-memory entry when both exist.
+    const merged = new Map<McpServerId, McpToolCacheEntry>();
+    for (const cache of state.toolCaches) merged.set(cache.serverId, cache);
+    for (const [serverId, cache] of memoryByServer) {
+      if (cache.expiresAt > now) merged.set(serverId, cache);
+    }
+    return [...merged.values()].sort((a, b) => b.refreshedAt - a.refreshedAt);
   });
 }
 
@@ -193,16 +215,22 @@ export async function saveMcpToolCache(entry: McpToolCacheEntry): Promise<void> 
       toolCaches: [entry, ...state.toolCaches.filter((cache) => cache.serverId !== entry.serverId)],
     };
     await writeStateAlreadyOwned(nextState);
-    // 写后校验：确认本次写入已 durable 提交，防御 MV3 SW 回收打断未提交
+    // Mirror the cache in memory so reads serve real tools even if the durable
+    // storage write is lost before the service worker is evicted (observed on
+    // 360Chrome MV3). The storage write remains the durable copy.
+    setMemoryToolCache(entry);
+    // Post-write verification: confirm the write was durably committed, guarding
+    // against MV3 service-worker eviction interrupting before the commit lands.
     const verify = await readStateAlreadyOwned();
     const persisted = verify.toolCaches.some((cache) => cache.serverId === entry.serverId);
     if (!persisted) {
-      await writeStateAlreadyOwned(nextState); // 重试一次
+      await writeStateAlreadyOwned(nextState); // retry once
     }
   });
 }
 
 export async function clearMcpToolCache(serverId: McpServerId): Promise<void> {
+  clearMemoryToolCache(serverId);
   await mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
     await writeStateAlreadyOwned({
