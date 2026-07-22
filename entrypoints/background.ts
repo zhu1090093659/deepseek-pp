@@ -714,10 +714,11 @@ export default defineBackground(() => {
         return refreshed;
       })
       .catch((error) => {
-        // 覆盖 F1（刷新抛错）；注意 F2 静默失败不进此分支。
-        // 回退到原始 context（chatSessionId 为 null）：grant 将以 null 会话创建，
-        // 后续 EXECUTE 仍可能抛 tool_session_mismatch；此时依赖 CREATE/EXECUTE 回退机制尝试恢复。
-        // 若连回退也失败，则确属刷新本身异常。
+        // Covers F1 (refresh throws); note F2 silent failure does not enter this branch.
+        // Falls back to the original context (chatSessionId null): the grant is created
+        // with a null session, so a later EXECUTE may still throw tool_session_mismatch;
+        // the CREATE/EXECUTE fallback mechanism then attempts recovery.
+        // If even the fallback fails, the refresh itself is genuinely broken.
         console.error(
           '[DeepSeek++] context refresh failed for',
           envelope.type,
