@@ -193,11 +193,12 @@ export async function saveMcpToolCache(entry: McpToolCacheEntry): Promise<void> 
       toolCaches: [entry, ...state.toolCaches.filter((cache) => cache.serverId !== entry.serverId)],
     };
     await writeStateAlreadyOwned(nextState);
-    // 写后校验：确认本次写入已 durable 提交，防御 MV3 SW 回收打断未提交
+    // Post-write verification: confirm the write was durably committed, guarding
+    // against MV3 service-worker eviction interrupting before the commit lands.
     const verify = await readStateAlreadyOwned();
     const persisted = verify.toolCaches.some((cache) => cache.serverId === entry.serverId);
     if (!persisted) {
-      await writeStateAlreadyOwned(nextState); // 重试一次
+      await writeStateAlreadyOwned(nextState); // retry once
     }
   });
 }
