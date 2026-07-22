@@ -716,8 +716,9 @@ async function readState(): Promise<ToolAuthorizationState> {
 }
 
 /**
- * 按 grantId 读取已落盘的授权凭证。复用私有 readState 的统一校验路径
- * （isStoredAuthorizationState / isStoredGrant），与 createToolAuthorization 的持久化读一致。
+ * Reads a persisted tool authorization grant by grantId. Reuses the private
+ * readState validation path (isStoredAuthorizationState / isStoredGrant),
+ * consistent with createToolAuthorization's persistence read.
  */
 export async function getToolAuthorizationGrant(
   grantId: string,
