@@ -660,7 +660,7 @@ describe('tool execution runtime handlers', () => {
     vi.mocked(dependencies.executeToolCall).mockResolvedValue({ ok: true, summary: 'done' });
 
     // 模拟 F2：context 刷新成功但 chatSessionId 为 null（tab URL 缺会话段）
-    const fallbackContext: RuntimeMessageContext = { ...deepSeekContext, chatSessionId: null };
+    const fallbackContext: RuntimeMessageContext = { ...deepSeekContext, chatSessionId: undefined };
     const storedGrant: StoredToolAuthorizationGrant = {
       id: 'grant-1',
       requestId: 'request-1',
