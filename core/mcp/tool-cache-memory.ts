@@ -2,7 +2,7 @@ import type { McpServerId, McpToolCacheEntry } from './types';
 
 // In-process mirror of MCP tool caches. On MV3 the durable chrome.storage.local
 // write can be silently dropped when the service worker is evicted before the
-// LevelDB flush lands, which left the "发现工具" panel stuck at zero even after
+// LevelDB flush lands, which left the MCP tool discovery panel stuck at zero even after
 // a successful discovery. The mirror keeps real tools visible for the SW
 // lifetime and is intentionally dependency-free so it can be imported by both
 // store.ts and discovery.ts without creating a circular import.

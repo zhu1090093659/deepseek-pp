@@ -78,7 +78,7 @@ export async function ensureMcpServerDiscovery(
  * Reads a server's tool cache, rediscovering on demand when the cache is
  * missing or stale. On MV3 a durable `chrome.storage.local` write can be lost
  * when the service worker is evicted before the flush lands, leaving the UI
- * "发现工具" panel stuck at zero. Re-discovering here (best effort) lets the
+ * "tool discovery" panel stuck at zero. Re-discovering here (best effort) lets the
  * panel recover without a manual refresh. Discovery failures are swallowed so
  * the call still returns whatever cache (if any) survives.
  */
