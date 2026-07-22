@@ -80,6 +80,7 @@ import {
   closeToolAuthorization,
   createToolAuthorization,
   createToolAuthorizationResult,
+  getToolAuthorizationGrant,
 } from '../core/tool/authorization';
 import { ExternalPayloadAuthorizationCache } from '../core/tool/external-payload-authorization-cache';
 import {
@@ -526,6 +527,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         refreshToolDescriptors: refreshRuntimeToolDescriptors,
         createToolAuthorization,
         closeToolAuthorization,
+        getToolAuthorization: getToolAuthorizationGrant,
         authorizeExternalToolPayloadChunk,
         createToolAuthorizationResult,
         createInvalidToolCallResult,
@@ -697,6 +699,32 @@ export default defineBackground(() => {
       ? refreshRuntimeMessageContextFromBrowserTab(context, {
         tabs: chrome.tabs,
         deepSeekOrigin: new URL(DEEPSEEK_HOME_URL).origin,
+      })
+      .then((refreshed) => {
+        if (refreshed.surface === 'deepseek_content' && !refreshed.chatSessionId) {
+          console.warn(
+            '[DeepSeek++] context refresh produced null chatSessionId',
+            envelope.type,
+            'tabUrl=',
+            refreshed.tabUrl,
+            'chatSessionId=',
+            refreshed.chatSessionId,
+          );
+        }
+        return refreshed;
+      })
+      .catch((error) => {
+        // 覆盖 F1（刷新抛错）；注意 F2 静默失败不进此分支。
+        // 回退到原始 context（chatSessionId 为 null）：grant 将以 null 会话创建，
+        // 后续 EXECUTE 仍可能抛 tool_session_mismatch；此时依赖 CREATE/EXECUTE 回退机制尝试恢复。
+        // 若连回退也失败，则确属刷新本身异常。
+        console.error(
+          '[DeepSeek++] context refresh failed for',
+          envelope.type,
+          error,
+          'grant will have null chatSessionId; fallback mechanism in CREATE/EXECUTE will attempt recovery',
+        );
+        return context;
       })
       : Promise.resolve(context);
 

@@ -39,6 +39,7 @@ import {
   createToolExecutionRuntimeHandlers,
   type ToolExecutionRuntimeHandlerDependencies,
 } from '../entrypoints/background/tool-execution-handlers';
+import type { StoredToolAuthorizationGrant } from '../core/tool/authorization';
 import { createToolRuntimeHandlers } from '../entrypoints/background/tool-runtime-handlers';
 
 const extensionContext: RuntimeMessageContext = {
@@ -653,6 +654,49 @@ describe('tool execution runtime handlers', () => {
     );
   });
 
+  it('recovers EXECUTE chatSessionId from stored grant subject when context chatSessionId is null (F2 fallback)', async () => {
+    const dependencies = createExecutionDependencies();
+    const handlers = createToolExecutionRuntimeHandlers(dependencies);
+    vi.mocked(dependencies.executeToolCall).mockResolvedValue({ ok: true, summary: 'done' });
+
+    // 模拟 F2：context 刷新成功但 chatSessionId 为 null（tab URL 缺会话段）
+    const fallbackContext: RuntimeMessageContext = { ...deepSeekContext, chatSessionId: null };
+    const storedGrant: StoredToolAuthorizationGrant = {
+      id: 'grant-1',
+      requestId: 'request-1',
+      trigger: 'manual_chat',
+      chatSessionId: 'chat-fallback',
+      subject: {
+        surface: 'deepseek_content',
+        documentSessionId: 'document-1',
+        tabId: 7,
+        frameId: 0,
+        chatSessionId: 'chat-fallback',
+      },
+      descriptors: [],
+      calls: {},
+      issuedAt: 1_000,
+      expiresAt: 2_000,
+    };
+    vi.mocked(dependencies.getToolAuthorization).mockResolvedValue(storedGrant);
+
+    await dispatch(handlers, {
+      type: 'EXECUTE_TOOL_CALL',
+      payload: { ...call, authorizationId: 'grant-1' },
+    }, fallbackContext);
+
+    expect(dependencies.getToolAuthorization).toHaveBeenCalledWith('grant-1');
+    expect(dependencies.executeToolCall).toHaveBeenCalledWith(
+      call,
+      expect.objectContaining({
+        kind: 'grant',
+        grantId: 'grant-1',
+        subject: expect.objectContaining({ chatSessionId: 'chat-fallback' }),
+      }),
+      'en',
+    );
+  });
+
   it.each([
     ['missing payload', undefined],
     ['null payload', null],
@@ -836,6 +880,7 @@ function createExecutionDependencies(): ToolExecutionRuntimeHandlerDependencies 
     refreshToolDescriptors: vi.fn(async () => [descriptor]),
     createToolAuthorization: vi.fn(async () => grant),
     closeToolAuthorization: vi.fn(async () => undefined),
+    getToolAuthorization: vi.fn(async () => null),
     authorizeExternalToolPayloadChunk: vi.fn(async () => ({
       namespace: 'grant-1',
       expiresAt: 2_000,
