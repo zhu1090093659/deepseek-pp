@@ -188,10 +188,17 @@ export async function getAllMcpToolCaches(): Promise<McpToolCacheEntry[]> {
 export async function saveMcpToolCache(entry: McpToolCacheEntry): Promise<void> {
   await mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
-    await writeStateAlreadyOwned({
+    const nextState = {
       ...state,
       toolCaches: [entry, ...state.toolCaches.filter((cache) => cache.serverId !== entry.serverId)],
-    });
+    };
+    await writeStateAlreadyOwned(nextState);
+    // 写后校验：确认本次写入已 durable 提交，防御 MV3 SW 回收打断未提交
+    const verify = await readStateAlreadyOwned();
+    const persisted = verify.toolCaches.some((cache) => cache.serverId === entry.serverId);
+    if (!persisted) {
+      await writeStateAlreadyOwned(nextState); // 重试一次
+    }
   });
 }
 
