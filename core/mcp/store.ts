@@ -13,6 +13,12 @@ import type {
 import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS } from './constants';
 import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 import {
+  clearMemoryToolCache,
+  getAllMemoryToolCaches,
+  getMemoryToolCache,
+  setMemoryToolCache,
+} from './tool-cache-memory';
+import {
   decodeMcpStorageState,
   encodeMcpStorageState,
   MCP_SERVER_CONFIG_VERSION,
@@ -172,6 +178,11 @@ export async function deleteMcpServer(id: McpServerId): Promise<void> {
 }
 
 export async function getMcpToolCache(serverId: McpServerId): Promise<McpToolCacheEntry | null> {
+  // Prefer the in-process memory mirror. On MV3 the durable chrome.storage.local
+  // write can be lost when the service worker is evicted before the LevelDB
+  // flush lands, so the mirror keeps real tools visible for the SW lifetime.
+  const memoryCache = getMemoryToolCache(serverId);
+  if (memoryCache) return memoryCache;
   return mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
     return state.toolCaches.find((cache) => cache.serverId === serverId) ?? null;
@@ -179,9 +190,14 @@ export async function getMcpToolCache(serverId: McpServerId): Promise<McpToolCac
 }
 
 export async function getAllMcpToolCaches(): Promise<McpToolCacheEntry[]> {
+  const memoryCaches = getAllMemoryToolCaches();
   return mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
-    return [...state.toolCaches].sort((a, b) => b.refreshedAt - a.refreshedAt);
+    // Memory mirror wins; fill any gaps from durable storage.
+    const byServer = new Map<McpServerId, McpToolCacheEntry>();
+    for (const cache of state.toolCaches) byServer.set(cache.serverId, cache);
+    for (const cache of memoryCaches) byServer.set(cache.serverId, cache);
+    return [...byServer.values()].sort((a, b) => b.refreshedAt - a.refreshedAt);
   });
 }
 
@@ -193,9 +209,13 @@ export async function saveMcpToolCache(entry: McpToolCacheEntry): Promise<void> 
       toolCaches: [entry, ...state.toolCaches.filter((cache) => cache.serverId !== entry.serverId)],
     });
   });
+  // Mirror to process memory so the UI keeps showing real tools even if the
+  // durable write is dropped on MV3 service-worker eviction.
+  setMemoryToolCache(entry);
 }
 
 export async function clearMcpToolCache(serverId: McpServerId): Promise<void> {
+  clearMemoryToolCache(serverId);
   await mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
     await writeStateAlreadyOwned({

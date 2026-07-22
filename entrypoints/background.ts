@@ -146,7 +146,7 @@ import {
   getMcpServerById,
   updateMcpServer,
 } from '../core/mcp/store';
-import { refreshMcpServerDiscovery } from '../core/mcp/discovery';
+import { getMcpToolCacheWithHeal, refreshMcpServerDiscovery } from '../core/mcp/discovery';
 import { getMcpOriginPattern, requestMcpServerOriginPermission } from '../core/mcp/transports';
 import {
   buildShellAllowlistUpgrade,
@@ -497,7 +497,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         createMcpServer,
         updateMcpServer,
         deleteMcpServer,
-        getMcpToolCache,
+        getMcpToolCache: getMcpToolCacheWithHeal,
         refreshMcpServerDiscovery,
         getMcpOriginPattern,
         requestMcpServerOriginPermission,

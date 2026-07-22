@@ -74,6 +74,29 @@ export async function ensureMcpServerDiscovery(
   return refreshMcpServerDiscovery(serverId, options);
 }
 
+/**
+ * Reads a server's tool cache, rediscovering on demand when the cache is
+ * missing or stale. On MV3 a durable `chrome.storage.local` write can be lost
+ * when the service worker is evicted before the flush lands, leaving the UI
+ * "发现工具" panel stuck at zero. Re-discovering here (best effort) lets the
+ * panel recover without a manual refresh. Discovery failures are swallowed so
+ * the call still returns whatever cache (if any) survives.
+ */
+export async function getMcpToolCacheWithHeal(
+  serverId: McpServerId,
+): Promise<McpToolCacheEntry | null> {
+  const cache = await getMcpToolCache(serverId);
+  const now = Date.now();
+  if (cache && cache.expiresAt > now) return cache;
+  try {
+    const server = await getMcpServerById(serverId, { includeSecrets: false });
+    if (server?.enabled) return await refreshMcpServerDiscovery(serverId);
+  } catch {
+    // Swallow: return the surviving (possibly stale) cache below.
+  }
+  return cache;
+}
+
 export interface McpToolExecutionOptions {
   timeoutMs?: number;
   maxResultBytes?: number;
