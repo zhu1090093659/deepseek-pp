@@ -72,7 +72,7 @@ jobs:
         run: npm run ci:quality
 
       - name: Publish Shell Host npm package
-        if: false
+        if: github.repository == 'zhu1090093659/deepseek-pp'
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
