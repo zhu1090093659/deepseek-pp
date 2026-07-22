@@ -251,11 +251,21 @@ async function discoverServerTools(
       health,
     };
     await saveMcpToolCache(entry);
-    await updateMcpServerHealth(server.id, {
-      status: 'ready',
-      lastConnectedAt: completedAt,
-      lastError: null,
-    });
+    // 防御：确认缓存已持久化，否则记录明确错误而非静默返回空缓存
+    const caches = await getAllMcpToolCaches();
+    const persisted = caches.some((cache) => cache.serverId === entry.serverId);
+    if (persisted) {
+      await updateMcpServerHealth(server.id, {
+        status: 'ready',
+        lastConnectedAt: completedAt,
+        lastError: null,
+      });
+    } else {
+      // 持久化未落盘：仅写 lastError，不覆盖为 ready（避免 UI 静默误显成功）
+      await updateMcpServerHealth(server.id, {
+        lastError: 'tool cache failed to persist (storage write not durable)',
+      });
+    }
     return entry;
   } catch (err) {
     throwIfMcpExecutionAborted(options?.signal);
