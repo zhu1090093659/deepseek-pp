@@ -66,12 +66,14 @@ export async function initializeMcpServer(
   transport: McpProtocolTransport,
   options?: { signal?: AbortSignal },
 ): Promise<McpInitializeResult> {
-    const response = await transport.request<Record<string, unknown>, McpInitializeResult>(
+  const response = await transport.request<Record<string, unknown>, McpInitializeResult>(
     createMcpRequest('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {
-        tools: {},
-      },
+      // Client capabilities are not the server's advertised tool capabilities.
+      // Keep this empty until DeepSeek++ implements a client-side MCP capability
+      // such as roots, sampling, or elicitation. Strict servers reject unknown
+      // client capability keys during initialize.
+      capabilities: {},
       clientInfo: {
         name: CLIENT_NAME,
         version: getExtensionVersion(),

@@ -15,6 +15,7 @@ import {
 } from '../core/mcp';
 import { parseJsonRpcSseMessage } from '../core/mcp/transports/common';
 import type {
+  McpJsonRpcRequest,
   McpJsonRpcResponse,
   McpProtocolTransport,
   McpServerConfig,
@@ -47,6 +48,46 @@ describe('MCP and Native external contract', () => {
       'stdio_bridge',
       'native_messaging',
     ]);
+  });
+
+  it('advertises only implemented client capabilities during initialize', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: { getManifest: () => ({ version: '1.11.9' }) },
+    });
+
+    const initializeRequests: Array<McpJsonRpcRequest<Record<string, unknown>>> = [];
+    const transport: McpProtocolTransport = {
+      async request(request) {
+        initializeRequests.push(
+          request as McpJsonRpcRequest<Record<string, unknown>>,
+        );
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          result: {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: 'strict-server', version: '1.0.0' },
+          },
+        } as McpJsonRpcResponse<any>;
+      },
+      async notify() {},
+    };
+
+    await initializeMcpServer(mcpServer(), transport);
+
+    expect(initializeRequests[0]).toMatchObject({
+      method: 'initialize',
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'DeepSeek++', version: '1.11.9' },
+      },
+    });
+    expect(
+      (initializeRequests[0]?.params as { capabilities?: Record<string, unknown> } | undefined)
+        ?.capabilities,
+    ).not.toHaveProperty('tools');
   });
 
   it('preserves known/missing negotiation and rejects unsupported versions before notification', async () => {
