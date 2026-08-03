@@ -80,7 +80,7 @@ describe('MCP and Native external contract', () => {
       method: 'initialize',
       params: {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
+        capabilities: MCP_PROTOCOL_CONTRACT.clientCapabilities,
         clientInfo: { name: 'DeepSeek++', version: '1.11.9' },
       },
     });

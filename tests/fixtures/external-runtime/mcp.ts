@@ -1,6 +1,7 @@
 export const MCP_PROTOCOL_CONTRACT = {
   requestVersion: '2025-06-18',
   supportedVersions: ['2024-11-05', '2025-03-26', '2025-06-18'],
+  clientCapabilities: {},
   nativeEnvelopeProtocol: 'deepseek-pp-mcp-native',
   nativeEnvelopeVersion: 1,
   transportKinds: ['http', 'sse', 'streamable_http', 'stdio_bridge', 'native_messaging'],
