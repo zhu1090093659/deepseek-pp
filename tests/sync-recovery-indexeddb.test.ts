@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSha256Checksum } from '../core/sync/checksum';
@@ -8,14 +7,11 @@ import {
   type SyncLocalApplyJournalV1,
   type SyncUndoPreimageV1,
 } from '../core/sync/local-apply';
+import { deleteIndexedDb } from './helpers/indexeddb';
 
 const indexedDbFactory = new IDBFactory();
-const originalIndexedDb = Dexie.dependencies.indexedDB;
-const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
 
 beforeAll(() => {
-  Dexie.dependencies.indexedDB = indexedDbFactory;
-  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   vi.stubGlobal('indexedDB', indexedDbFactory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
 });
@@ -23,9 +19,7 @@ beforeAll(() => {
 afterAll(async () => {
   const { syncRecoveryDb, SYNC_RECOVERY_DATABASE_NAME } = await import('../core/sync/apply-journal');
   syncRecoveryDb.close();
-  await Dexie.delete(SYNC_RECOVERY_DATABASE_NAME);
-  Dexie.dependencies.indexedDB = originalIndexedDb;
-  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
+  await deleteIndexedDb(SYNC_RECOVERY_DATABASE_NAME);
   vi.unstubAllGlobals();
 });
 
@@ -41,6 +35,7 @@ describe('sync recovery IndexedDB contract', () => {
       SYNC_RECOVERY_JOURNAL_TABLE_NAME,
       SYNC_RECOVERY_JOURNAL_TABLE_SCHEMA,
     } = journalModule;
+    const journal = syncRecoveryDb.table(SYNC_RECOVERY_JOURNAL_TABLE_NAME);
 
     expect(SYNC_RECOVERY_DATABASE_NAME).toBe('DeepSeekPPSyncRecovery');
     expect(SYNC_RECOVERY_DATABASE_VERSION).toBe(1);
@@ -54,7 +49,7 @@ describe('sync recovery IndexedDB contract', () => {
       id: 'current',
       ...record,
     });
-    expect(syncRecoveryDb.journal.schema.primKey).toMatchObject({ name: 'id', unique: true });
+    expect(journal.schema.primKey).toMatchObject({ name: 'id', unique: true });
 
     syncRecoveryDb.close();
     await syncRecoveryDb.open();
@@ -72,9 +67,10 @@ describe('sync recovery IndexedDB contract', () => {
       indexedDbSyncLocalApplyJournal,
       syncRecoveryDb,
       SYNC_RECOVERY_JOURNAL_ID,
+      SYNC_RECOVERY_JOURNAL_TABLE_NAME,
     } = await import('../core/sync/apply-journal');
     const future = { id: SYNC_RECOVERY_JOURNAL_ID, kind: 'future', schemaVersion: 99 };
-    await syncRecoveryDb.journal.put(future);
+    await syncRecoveryDb.table(SYNC_RECOVERY_JOURNAL_TABLE_NAME).put(future);
     await expect(indexedDbSyncLocalApplyJournal.readCurrent()).resolves.toEqual(future);
     await indexedDbSyncLocalApplyJournal.clearCurrent();
   });

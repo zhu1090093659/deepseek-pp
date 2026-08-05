@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -15,14 +14,17 @@ import {
   MEMORY_V3_PROJECT_RECORD,
   MEMORY_V3_RECORD,
 } from './fixtures/persistence-contract/memory';
+import {
+  addIndexedDbRecords,
+  createIndexedDbAtVersion,
+  createStore,
+  deleteIndexedDb,
+  readIndexedDbRecords,
+} from './helpers/indexeddb';
 
 const indexedDbFactory = new IDBFactory();
-const originalIndexedDb = Dexie.dependencies.indexedDB;
-const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
 
 beforeAll(() => {
-  Dexie.dependencies.indexedDB = indexedDbFactory;
-  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   vi.stubGlobal('indexedDB', indexedDbFactory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
   vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(MEMORY_V2_RECORD.syncId);
@@ -31,12 +33,10 @@ beforeAll(() => {
 afterEach(async () => {
   const { db } = await import('../core/memory/store');
   db.close();
-  await Dexie.delete(MEMORY_DATABASE_NAME);
+  await deleteIndexedDb(MEMORY_DATABASE_NAME);
 });
 
 afterAll(() => {
-  Dexie.dependencies.indexedDB = originalIndexedDb;
-  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -50,36 +50,37 @@ describe('Memory historical IndexedDB compatibility', () => {
       replaceAllMemories,
       restoreRawMemoryRecordsForSyncRecovery,
     } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
 
     await db.open();
-    expect(await db.memories.toArray()).toEqual([{
+    expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
     }]);
     db.close();
     await db.open();
-    expect(await db.memories.toArray()).toEqual([{
+    expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
     }]);
 
     db.close();
-    await Dexie.delete(MEMORY_DATABASE_NAME);
+    await deleteIndexedDb(MEMORY_DATABASE_NAME);
     await seedMemoryDatabase(2, MEMORY_V2_ADDITIVE_RECORD);
 
     await db.open();
-    expect(await db.memories.toArray()).toEqual([{
+    expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
       futureRecordField: MEMORY_V2_ADDITIVE_RECORD.futureRecordField,
     }]);
-    await db.memories.add({
+    await memories.add({
       ...MEMORY_V3_PROJECT_ADDITIVE_RECORD,
       tags: [...MEMORY_V3_PROJECT_ADDITIVE_RECORD.tags],
     });
     db.close();
 
     await db.open();
-    expect(await db.memories.orderBy('id').toArray()).toEqual([
+    expect(await memories.orderBy('id').toArray()).toEqual([
       {
         ...MEMORY_V3_RECORD,
         futureRecordField: MEMORY_V2_ADDITIVE_RECORD.futureRecordField,
@@ -87,15 +88,15 @@ describe('Memory historical IndexedDB compatibility', () => {
       MEMORY_V3_PROJECT_ADDITIVE_RECORD,
     ]);
     expect(db.name).toBe(MEMORY_DATABASE_NAME);
-    expect(db.memories.schema.primKey).toMatchObject({ name: 'id', auto: true });
+    expect(memories.schema.primKey).toMatchObject({ name: 'id', auto: true });
 
-    await db.memories.update(MEMORY_V3_RECORD.id, { recoveryFutureField: { preserve: true } } as never);
+    await memories.update(MEMORY_V3_RECORD.id, { recoveryFutureField: { preserve: true } } as never);
     const rawBefore = await captureRawMemoryRecordsForSyncRecovery();
     await replaceAllMemories([{ ...MEMORY_V3_RECORD, id: 99, tags: [...MEMORY_V3_RECORD.tags] }]);
     await restoreRawMemoryRecordsForSyncRecovery(rawBefore);
-    expect(await db.memories.orderBy('id').toArray()).toEqual(rawBefore);
+    expect(await memories.orderBy('id').toArray()).toEqual(rawBefore);
     const { id: _id, ...newMemory } = MEMORY_V3_PROJECT_RECORD;
-    const nextIdAfterRollback = await db.memories.add({
+    const nextIdAfterRollback = await memories.add({
       ...newMemory,
       syncId: '00000000-0000-4000-8000-000000000009',
       tags: [...newMemory.tags],
@@ -108,11 +109,10 @@ describe('Memory historical IndexedDB compatibility', () => {
       ...MEMORY_V3_RECORD,
       futureDatabaseField: { preserve: true },
     };
-    const future = new Dexie(MEMORY_DATABASE_NAME);
-    future.version(4).stores({ [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3] });
-    await future.open();
-    await future.table(MEMORY_TABLE_NAME).add(futureRecord);
-    future.close();
+    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 40, (db) => {
+      createStore(db, MEMORY_TABLE_NAME, memorySeedSpec(3));
+    });
+    await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [futureRecord]);
 
     const {
       db,
@@ -126,21 +126,31 @@ describe('Memory historical IndexedDB compatibility', () => {
     }])).rejects.toBeInstanceOf(Error);
     db.close();
 
-    const inspector = new Dexie(MEMORY_DATABASE_NAME);
-    inspector.version(4).stores({ [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3] });
-    await inspector.open();
-    expect(await inspector.table(MEMORY_TABLE_NAME).toArray()).toEqual([futureRecord]);
-    inspector.close();
+    expect(await readIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME))
+      .toEqual([futureRecord]);
   });
 });
 
 async function seedMemoryDatabase(version: 1 | 2, record: Record<string, unknown>): Promise<void> {
-  const historical = new Dexie(MEMORY_DATABASE_NAME);
-  historical.version(1).stores({ [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[1] });
-  if (version === 2) {
-    historical.version(2).stores({ [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[2] });
+  await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, version * 10, (db) => {
+    createStore(db, MEMORY_TABLE_NAME, memorySeedSpec(version));
+  });
+  await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [{ ...record }]);
+}
+
+function memorySeedSpec(version: 1 | 2 | 3): {
+  keyPath: string;
+  autoIncrement: boolean;
+  indexes: readonly string[];
+} {
+  const schema = MEMORY_TABLE_SCHEMAS[version];
+  const [primaryKey, ...indexes] = schema.split(',').map((token) => token.trim());
+  if (!primaryKey?.startsWith('++')) {
+    throw new Error(`Memory seed schema must declare an auto-increment key: ${schema}`);
   }
-  await historical.open();
-  await historical.table(MEMORY_TABLE_NAME).add({ ...record });
-  historical.close();
+  return {
+    keyPath: primaryKey.slice(2),
+    autoIncrement: true,
+    indexes,
+  };
 }

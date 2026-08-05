@@ -1,18 +1,27 @@
-import Dexie, { type EntityTable } from 'dexie';
 import type { ArtifactFile, ArtifactRecord, ArtifactView } from './types';
 import {
   ARTIFACT_PERSISTENCE_CONTRACT,
   decodeArtifactRecord,
   decodeArtifactRecords,
 } from './schema';
+import {
+  IndexedDb,
+  type IndexedDbTransaction,
+} from '../persistence/indexeddb';
 
-const db = new Dexie(ARTIFACT_PERSISTENCE_CONTRACT.databaseName) as Dexie & {
-  artifacts: EntityTable<ArtifactRecord, 'id'>;
-};
+// The IndexedDB version is the logical schema version x10 (the convention
+// dexie established internally); released artifact databases live at 10 and
+// `assertCurrentArtifactDatabaseVersion` checks `backendDB().version === 10`.
+const db = new IndexedDb(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, [
+  {
+    version: ARTIFACT_PERSISTENCE_CONTRACT.databaseVersion * 10,
+    stores: {
+      [ARTIFACT_PERSISTENCE_CONTRACT.tableName]: ARTIFACT_PERSISTENCE_CONTRACT.tableSchema,
+    },
+  },
+]);
 
-db.version(ARTIFACT_PERSISTENCE_CONTRACT.databaseVersion).stores({
-  [ARTIFACT_PERSISTENCE_CONTRACT.tableName]: ARTIFACT_PERSISTENCE_CONTRACT.tableSchema,
-});
+const artifacts = db.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName);
 
 type LegacyArtifactSlot =
   | { present: false }
@@ -31,11 +40,12 @@ export async function saveArtifact(input: {
   const record = decodeArtifactRecord(buildArtifactRecord(input), 'artifactInput');
   await ensureLegacyArtifactsMigrated();
 
-  await db.transaction('rw', db.artifacts, async () => {
-    await readValidatedArtifactRecords();
-    await db.artifacts.put(record);
-    await pruneArtifactDb(record.id);
-    if (!await db.artifacts.get(record.id)) {
+  await db.transaction('rw', artifacts, async (tx) => {
+    const table = tx.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName);
+    await readValidatedArtifactRecords(tx);
+    await table.put(record);
+    await pruneArtifactDb(tx, record.id);
+    if (!await table.get(record.id)) {
       throw new Error(`Artifact save did not retain record: ${record.id}`);
     }
   });
@@ -96,8 +106,9 @@ async function migrateLegacyArtifacts(): Promise<void> {
   }
 
   const legacy = decodeArtifactRecords(slot.value, 'legacyArtifacts');
-  await db.transaction('rw', db.artifacts, async () => {
-    const current = await readValidatedArtifactRecords();
+  await db.transaction('rw', artifacts, async (tx) => {
+    const table = tx.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName);
+    const current = await readValidatedArtifactRecords(tx);
     const currentById = new Map(current.map((record) => [record.id, record]));
 
     for (const record of legacy) {
@@ -108,23 +119,25 @@ async function migrateLegacyArtifacts(): Promise<void> {
         }
         continue;
       }
-      await db.artifacts.add(record);
+      await table.add(record);
     }
 
-    await readValidatedArtifactRecords();
+    await readValidatedArtifactRecords(tx);
   });
   await removeLegacyArtifactSlotWithVerification();
 }
 
-async function readValidatedArtifactRecords(): Promise<ArtifactRecord[]> {
+async function readValidatedArtifactRecords(tx?: IndexedDbTransaction): Promise<ArtifactRecord[]> {
+  const table = tx ? tx.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName) : artifacts;
   return decodeArtifactRecords(
-    await db.artifacts.toArray() as unknown[],
+    await table.toArray() as unknown[],
     'artifactDatabase',
   );
 }
 
-async function pruneArtifactDb(preserveId: string): Promise<void> {
-  const orderedIds = await db.artifacts
+async function pruneArtifactDb(tx: IndexedDbTransaction, preserveId: string): Promise<void> {
+  const table = tx.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName);
+  const orderedIds = await table
     .orderBy('createdAt')
     .reverse()
     .primaryKeys() as string[];
@@ -134,7 +147,7 @@ async function pruneArtifactDb(preserveId: string): Promise<void> {
     retainedIds.add(id);
   }
   const staleIds = orderedIds.filter((id) => !retainedIds.has(id));
-  if (staleIds.length > 0) await db.artifacts.bulkDelete(staleIds);
+  if (staleIds.length > 0) await table.bulkDelete(staleIds);
 }
 
 async function readLegacyArtifactSlot(): Promise<LegacyArtifactSlot> {

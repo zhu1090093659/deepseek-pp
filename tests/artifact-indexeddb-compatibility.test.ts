@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PERSISTENCE_CONTRACT } from '../core/artifact/schema';
@@ -9,10 +8,16 @@ import {
   LEGAL_LEGACY_ARTIFACT_STORAGE,
   REJECTED_LEGACY_ARTIFACT_STATES,
 } from './fixtures/persistence-contract/artifact';
+import {
+  addIndexedDbRecords,
+  createIndexedDbAtVersion,
+  createStore,
+  deleteIndexedDb,
+  readIndexedDbRecords,
+} from './helpers/indexeddb';
 
 const LEGACY_KEY = ARTIFACT_PERSISTENCE_CONTRACT.legacyStorageKey;
-const originalIndexedDb = Dexie.dependencies.indexedDB;
-const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
+const ARTIFACT_TABLE_NAME = ARTIFACT_PERSISTENCE_CONTRACT.tableName;
 
 let indexedDbFactory: IDBFactory;
 let storage: Record<string, unknown>;
@@ -50,9 +55,7 @@ beforeEach(() => {
 afterEach(async () => {
   loadedStore?.db.close();
   installIndexedDb(indexedDbFactory);
-  await Dexie.delete(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
-  Dexie.dependencies.indexedDB = originalIndexedDb;
-  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
+  await deleteIndexedDb(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
   vi.unstubAllGlobals();
 });
 
@@ -60,6 +63,7 @@ describe('Artifact historical IndexedDB compatibility', () => {
   it('migrates legal additive rows exactly and preserves database identity on reopen', async () => {
     storage[LEGACY_KEY] = LEGAL_LEGACY_ARTIFACT_STORAGE;
     const store = await loadStore();
+    const artifacts = store.db.table(ARTIFACT_TABLE_NAME);
 
     await expect(store.getArtifacts()).resolves.toEqual([
       ADDITIVE_LEGACY_ARTIFACT_RECORD,
@@ -68,12 +72,12 @@ describe('Artifact historical IndexedDB compatibility', () => {
     expect(storageRemove).toHaveBeenCalledWith(LEGACY_KEY);
     expect(storage).not.toHaveProperty(LEGACY_KEY);
     expect(store.db.name).toBe(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
-    expect(store.db.artifacts.schema.primKey.name).toBe('id');
-    expect(store.db.artifacts.schema.indexes.map((index) => index.name)).toContain('createdAt');
+    expect(artifacts.schema.primKey.name).toBe('id');
+    expect(artifacts.schema.indexes.map((index) => index.name)).toContain('createdAt');
 
-    const rawRows = await store.db.artifacts.toArray();
+    const rawRows = await artifacts.toArray();
     expect(rawRows).toHaveLength(2);
-    expect(rawRows.find((row) => row.id === ADDITIVE_LEGACY_ARTIFACT_RECORD.id))
+    expect(rawRows.find((row) => (row as { id: string }).id === ADDITIVE_LEGACY_ARTIFACT_RECORD.id))
       .toEqual(ADDITIVE_LEGACY_ARTIFACT_RECORD);
 
     store.db.close();
@@ -93,7 +97,7 @@ describe('Artifact historical IndexedDB compatibility', () => {
       await expect(store.getArtifacts()).rejects.toThrow();
       expect(storage[LEGACY_KEY]).toBe(raw);
       expect(storageRemove).not.toHaveBeenCalled();
-      await expect(store.db.artifacts.count()).resolves.toBe(0);
+      await expect(store.db.table(ARTIFACT_TABLE_NAME).count()).resolves.toBe(0);
     },
   );
 
@@ -104,18 +108,18 @@ describe('Artifact historical IndexedDB compatibility', () => {
 
     await expect(store.getArtifacts()).rejects.toThrow('Artifact legacy migration cleanup failed');
     expect(storage[LEGACY_KEY]).toBe(LEGAL_LEGACY_ARTIFACT_STORAGE);
-    await expect(store.db.artifacts.count()).resolves.toBe(2);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).count()).resolves.toBe(2);
 
     removeMode = 'success';
     await expect(store.getArtifacts()).resolves.toHaveLength(2);
     expect(storage).not.toHaveProperty(LEGACY_KEY);
-    await expect(store.db.artifacts.count()).resolves.toBe(2);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).count()).resolves.toBe(2);
 
     store.db.close();
     vi.resetModules();
     store = await loadStore();
     await expect(store.getArtifacts()).resolves.toHaveLength(2);
-    await expect(store.db.artifacts.count()).resolves.toBe(2);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).count()).resolves.toBe(2);
   });
 
   it('treats a lost cleanup response as committed when readback proves the key is absent', async () => {
@@ -125,7 +129,7 @@ describe('Artifact historical IndexedDB compatibility', () => {
 
     await expect(store.getArtifacts()).resolves.toHaveLength(2);
     expect(storage).not.toHaveProperty(LEGACY_KEY);
-    await expect(store.db.artifacts.count()).resolves.toBe(2);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).count()).resolves.toBe(2);
   });
 
   it('migrates more than the runtime retention limit without deleting legal raw rows', async () => {
@@ -133,9 +137,9 @@ describe('Artifact historical IndexedDB compatibility', () => {
     const store = await loadStore();
 
     await expect(store.getArtifacts()).resolves.toHaveLength(ARTIFACT_PERSISTENCE_CONTRACT.maxRecords);
-    const rawRows = await store.db.artifacts.toArray();
+    const rawRows = await store.db.table(ARTIFACT_TABLE_NAME).toArray();
     expect(rawRows).toHaveLength(LEGACY_ARTIFACTS_OVER_RETENTION_LIMIT.length);
-    expect(rawRows.map((row) => row.id).sort()).toEqual(
+    expect(rawRows.map((row) => (row as { id: string }).id).sort()).toEqual(
       LEGACY_ARTIFACTS_OVER_RETENTION_LIMIT.map((row) => row.id).sort(),
     );
     expect(storage).not.toHaveProperty(LEGACY_KEY);
@@ -143,10 +147,8 @@ describe('Artifact historical IndexedDB compatibility', () => {
 
   it('preserves a future database and legacy input when the released version cannot open it', async () => {
     const futureRow = ADDITIVE_LEGACY_ARTIFACT_RECORD;
-    const futureDb = createArtifactDatabase(2);
-    await futureDb.open();
-    await futureDb.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).add(futureRow);
-    futureDb.close();
+    await createArtifactDatabase(2);
+    await addIndexedDbRecords(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, ARTIFACT_TABLE_NAME, [futureRow]);
     storage[LEGACY_KEY] = LEGAL_LEGACY_ARTIFACT_STORAGE;
     const store = await loadStore();
 
@@ -163,11 +165,8 @@ describe('Artifact historical IndexedDB compatibility', () => {
     expect(storageRemove).not.toHaveBeenCalled();
     store.db.close();
 
-    const inspector = createArtifactDatabase(2);
-    await inspector.open();
-    await expect(inspector.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).toArray())
-      .resolves.toEqual([futureRow]);
-    inspector.close();
+    expect(await readIndexedDbRecords(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, ARTIFACT_TABLE_NAME))
+      .toEqual([futureRow]);
   });
 
   it('rejects corrupt IndexedDB rows without filtering or overwriting them', async () => {
@@ -178,10 +177,10 @@ describe('Artifact historical IndexedDB compatibility', () => {
       content: undefined,
       additiveRawEvidence: { preserve: true },
     };
-    await store.db.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).add(corruptRow as never);
+    await store.db.table(ARTIFACT_TABLE_NAME).add(corruptRow as never);
 
     await expect(store.getArtifacts()).rejects.toThrow('artifactDatabase[0].content must be a string');
-    await expect(store.db.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).toArray())
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).toArray())
       .resolves.toEqual([corruptRow]);
   });
 
@@ -190,10 +189,8 @@ describe('Artifact historical IndexedDB compatibility', () => {
       ...LEGACY_ARTIFACT_RECORD,
       content: '# IndexedDB remains authoritative',
     };
-    const seeded = createArtifactDatabase(1);
-    await seeded.open();
-    await seeded.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).add(currentRow);
-    seeded.close();
+    await createArtifactDatabase(1);
+    await addIndexedDbRecords(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, ARTIFACT_TABLE_NAME, [currentRow]);
     storage[LEGACY_KEY] = [LEGACY_ARTIFACT_RECORD];
     const store = await loadStore();
 
@@ -201,7 +198,7 @@ describe('Artifact historical IndexedDB compatibility', () => {
       `Legacy artifact conflicts with IndexedDB id: ${LEGACY_ARTIFACT_RECORD.id}`,
     );
     expect(storage[LEGACY_KEY]).toEqual([LEGACY_ARTIFACT_RECORD]);
-    await expect(store.db.artifacts.toArray()).resolves.toEqual([currentRow]);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).toArray()).resolves.toEqual([currentRow]);
   });
 
   it('converges released dual writes when Chrome storage omitted undefined optional fields', async () => {
@@ -211,16 +208,14 @@ describe('Artifact historical IndexedDB compatibility', () => {
       view: undefined,
     };
     const legacyRow = JSON.parse(JSON.stringify(indexedDbRow));
-    const seeded = createArtifactDatabase(1);
-    await seeded.open();
-    await seeded.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).add(indexedDbRow);
-    seeded.close();
+    await createArtifactDatabase(1);
+    await addIndexedDbRecords(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, ARTIFACT_TABLE_NAME, [indexedDbRow]);
     storage[LEGACY_KEY] = [legacyRow];
     const store = await loadStore();
 
     await expect(store.getArtifacts()).resolves.toEqual([indexedDbRow]);
     expect(storage).not.toHaveProperty(LEGACY_KEY);
-    await expect(store.db.artifacts.toArray()).resolves.toEqual([indexedDbRow]);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).toArray()).resolves.toEqual([indexedDbRow]);
   });
 
   it('rejects an invalid repository input before it can poison the authoritative database', async () => {
@@ -233,7 +228,7 @@ describe('Artifact historical IndexedDB compatibility', () => {
       content: 'invalid',
       view: { previewMode: 'broken', language: 'text' } as never,
     })).rejects.toThrow('artifactInput.filename must be a non-empty string');
-    await expect(store.db.artifacts.toArray()).resolves.toEqual([]);
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).toArray()).resolves.toEqual([]);
     await expect(store.getArtifacts()).resolves.toEqual([]);
   });
 
@@ -246,10 +241,8 @@ describe('Artifact historical IndexedDB compatibility', () => {
         createdAt: 10_000 + index,
       }),
     );
-    const seeded = createArtifactDatabase(1);
-    await seeded.open();
-    await seeded.table(ARTIFACT_PERSISTENCE_CONTRACT.tableName).bulkAdd(futureRows);
-    seeded.close();
+    await createArtifactDatabase(1);
+    await addIndexedDbRecords(ARTIFACT_PERSISTENCE_CONTRACT.databaseName, ARTIFACT_TABLE_NAME, futureRows);
     vi.spyOn(Date, 'now').mockReturnValue(1);
     const store = await loadStore();
 
@@ -260,15 +253,13 @@ describe('Artifact historical IndexedDB compatibility', () => {
       content: 'must remain readable',
     });
 
-    await expect(store.db.artifacts.count())
+    await expect(store.db.table(ARTIFACT_TABLE_NAME).count())
       .resolves.toBe(ARTIFACT_PERSISTENCE_CONTRACT.maxRecords);
     await expect(store.getArtifact(saved.id)).resolves.toEqual(saved);
   });
 
   it('fails explicitly when IndexedDB is unavailable and leaves legacy input untouched', async () => {
     storage[LEGACY_KEY] = LEGAL_LEGACY_ARTIFACT_STORAGE;
-    Dexie.dependencies.indexedDB = undefined as unknown as IDBFactory;
-    Dexie.dependencies.IDBKeyRange = undefined as unknown as typeof IDBKeyRange;
     vi.stubGlobal('indexedDB', undefined);
     vi.stubGlobal('IDBKeyRange', undefined);
     vi.resetModules();
@@ -286,21 +277,22 @@ async function loadStore(): Promise<typeof import('../core/artifact/store')> {
 }
 
 function installIndexedDb(factory: IDBFactory): void {
-  Dexie.dependencies.indexedDB = factory;
-  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   vi.stubGlobal('indexedDB', factory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
 }
 
-function createArtifactDatabase(version: 1 | 2): Dexie {
-  const database = new Dexie(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
-  database.version(1).stores({
-    [ARTIFACT_PERSISTENCE_CONTRACT.tableName]: ARTIFACT_PERSISTENCE_CONTRACT.tableSchema,
-  });
-  if (version === 2) {
-    database.version(2).stores({
-      [ARTIFACT_PERSISTENCE_CONTRACT.tableName]: ARTIFACT_PERSISTENCE_CONTRACT.tableSchema,
-    });
-  }
-  return database;
+async function createArtifactDatabase(version: 1 | 2): Promise<void> {
+  await createIndexedDbAtVersion(
+    ARTIFACT_PERSISTENCE_CONTRACT.databaseName,
+    version * 10,
+    (db) => {
+      createStore(db, ARTIFACT_TABLE_NAME, {
+        keyPath: 'id',
+        autoIncrement: false,
+        indexes: ['createdAt'],
+      });
+    },
+  );
 }
+
+

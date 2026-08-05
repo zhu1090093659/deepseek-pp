@@ -1,6 +1,9 @@
-import Dexie, { type EntityTable } from 'dexie';
 import type { Memory, NewMemory } from '../types';
 import { withSyncLocalStateLock } from '../persistence/local-state-lock';
+import {
+  IndexedDb,
+  type IndexedDbTransaction,
+} from '../persistence/indexeddb';
 import {
   MEMORY_DATABASE_NAME,
   MEMORY_DATABASE_VERSION,
@@ -14,40 +17,36 @@ import {
   decodePersistedMemoryRecord,
 } from './codec';
 
-const db = new Dexie(MEMORY_DATABASE_NAME) as Dexie & {
-  memories: EntityTable<Memory, 'id'>;
-};
-
-db.version(1).stores({
-  [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[1],
-});
-
-db.version(2)
-  .stores({
-    [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[2],
-  })
-  .upgrade((tx) => {
-    return tx
-      .table(MEMORY_TABLE_NAME)
-      .toCollection()
-      .modify((memory: Record<string, unknown>) => {
+// The IndexedDB version is the logical schema version x10 (the convention
+// dexie established internally): released databases live at 10/20/30 and
+// `assertCurrentMemoryDatabaseVersion` checks `backendDB().version === 30`.
+const db = new IndexedDb(MEMORY_DATABASE_NAME, [
+  {
+    version: 10,
+    stores: { [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[1] },
+  },
+  {
+    version: 20,
+    stores: { [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[2] },
+    migrate: (tx) => {
+      return tx.table(MEMORY_TABLE_NAME).modifyAll((memory) => {
         Object.assign(memory, migrateMemoryV1RecordToV2(memory, crypto.randomUUID()));
       });
-  });
-
-db.version(3)
-  .stores({
-    [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
-  })
-  .upgrade((tx) => {
-    return tx
-      .table(MEMORY_TABLE_NAME)
-      .toCollection()
-      .modify((memory: Record<string, unknown>) => {
+    },
+  },
+  {
+    version: 30,
+    stores: { [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3] },
+    migrate: (tx) => {
+      return tx.table(MEMORY_TABLE_NAME).modifyAll((memory) => {
         Object.assign(memory, migrateMemoryV2RecordToV3(memory));
         delete memory.projectId;
       });
-  });
+    },
+  },
+]);
+
+const memories = db.table(MEMORY_TABLE_NAME);
 
 export async function getAllMemories(): Promise<Memory[]> {
   return getAllMemoriesAlreadyLocked();
@@ -70,15 +69,16 @@ export async function saveMemory(
 }
 
 export async function importMemoriesAtomically(
-  memories: readonly NewMemory[],
+  memoriesToImport: readonly NewMemory[],
 ): Promise<number[]> {
-  const validated = memories.map((memory, index) => (
+  const validated = memoriesToImport.map((memory, index) => (
     decodeImportedMemory(memory, `memories[${index}]`)
   ));
   await assertCurrentMemoryDatabaseVersion();
 
-  return withSyncLocalStateLock(() => db.transaction('rw', db.memories, async () => {
-    const current = await readValidatedMemoryRecords();
+  return withSyncLocalStateLock(() => db.transaction('rw', memories, async (tx) => {
+    const table = tx.table(MEMORY_TABLE_NAME);
+    const current = await readValidatedMemoryRecords(tx);
     const now = Date.now();
     const ids: number[] = [];
     // Rows this import already created, keyed by syncId, so a syncId repeated
@@ -101,7 +101,7 @@ export async function importMemoriesAtomically(
           syncId,
           updatedAt: now,
         };
-        await db.memories.put(merged);
+        await table.put(merged);
         ids.push(existing.id);
         continue;
       }
@@ -115,7 +115,7 @@ export async function importMemoriesAtomically(
             syncId,
             updatedAt: now,
           };
-          await db.memories.put(merged);
+          await table.put(merged);
           batchRows.set(memory.syncId, merged);
           ids.push(batchRow.id);
           continue;
@@ -129,7 +129,7 @@ export async function importMemoriesAtomically(
         accessCount: 0,
         lastAccessedAt: now,
       } as Memory;
-      const id = await db.memories.add(record);
+      const id = await table.add(record);
       const numericId = id as number;
       if (memory.syncId) batchRows.set(memory.syncId, { ...record, id: numericId });
       ids.push(numericId);
@@ -143,17 +143,17 @@ export async function updateMemory(mem: Memory): Promise<void> {
   const id = validated.id;
   if (id === undefined) throw new Error('Memory id is required');
   await assertCurrentMemoryDatabaseVersion();
-  await withSyncLocalStateLock(() => db.transaction('rw', db.memories, async () => {
-    await readValidatedMemoryRecords();
-    await db.memories.update(id, { ...validated, updatedAt: Date.now() });
+  await withSyncLocalStateLock(() => db.transaction('rw', memories, async (tx) => {
+    await readValidatedMemoryRecords(tx);
+    await tx.table(MEMORY_TABLE_NAME).update(id, { ...validated, updatedAt: Date.now() });
   }));
 }
 
 export async function deleteMemory(id: number): Promise<void> {
   await assertCurrentMemoryDatabaseVersion();
-  await withSyncLocalStateLock(() => db.transaction('rw', db.memories, async () => {
-    await readValidatedMemoryRecords();
-    await db.memories.delete(id);
+  await withSyncLocalStateLock(() => db.transaction('rw', memories, async (tx) => {
+    await readValidatedMemoryRecords(tx);
+    await tx.table(MEMORY_TABLE_NAME).delete(id);
   }));
 }
 
@@ -167,9 +167,9 @@ export async function deleteMemoriesForProjectAlreadyLocked(projectId: string): 
   const trimmedProjectId = projectId.trim();
   if (!trimmedProjectId) throw new Error('Project id is required.');
   await assertCurrentMemoryDatabaseVersion();
-  return db.transaction('rw', db.memories, async () => {
-    await readValidatedMemoryRecords();
-    return db.memories.where('projectId').equals(trimmedProjectId).delete();
+  return db.transaction('rw', memories, async (tx) => {
+    await readValidatedMemoryRecords(tx);
+    return tx.table(MEMORY_TABLE_NAME).where('projectId').equals(trimmedProjectId).delete();
   });
 }
 
@@ -180,8 +180,8 @@ export async function assertMemoryRecordsValidAlreadyLocked(): Promise<void> {
 export async function touchMemories(ids: number[]): Promise<void> {
   await assertCurrentMemoryDatabaseVersion();
   await withSyncLocalStateLock(async () => {
-    await db.transaction('rw', db.memories, async () => {
-      const current = await readValidatedMemoryRecords();
+    await db.transaction('rw', memories, async (tx) => {
+      const current = await readValidatedMemoryRecords(tx);
       const targetIds = new Set(ids);
       const now = Date.now();
       const touched = current
@@ -191,30 +191,31 @@ export async function touchMemories(ids: number[]): Promise<void> {
           accessCount: memory.accessCount + 1,
           lastAccessedAt: now,
         }));
-      if (touched.length > 0) await db.memories.bulkPut(touched);
+      if (touched.length > 0) await tx.table(MEMORY_TABLE_NAME).bulkPut(touched);
     });
   });
 }
 
-export async function replaceAllMemories(memories: readonly Memory[]): Promise<void> {
-  await withSyncLocalStateLock(() => replaceAllMemoriesForSyncApply(memories));
+export async function replaceAllMemories(memoriesToReplace: readonly Memory[]): Promise<void> {
+  await withSyncLocalStateLock(() => replaceAllMemoriesForSyncApply(memoriesToReplace));
 }
 
-export async function replaceAllMemoriesForSyncApply(memories: readonly Memory[]): Promise<void> {
-  const validated = memories.map((memory, index) => (
+export async function replaceAllMemoriesForSyncApply(memoriesToReplace: readonly Memory[]): Promise<void> {
+  const validated = memoriesToReplace.map((memory, index) => (
     decodePersistedMemoryRecord(memory, `memories[${index}]`)
   ));
   await assertCurrentMemoryDatabaseVersion();
-  await db.transaction('rw', db.memories, async () => {
-    await readValidatedMemoryRecords();
-    await db.memories.clear();
-    await db.memories.bulkAdd(validated);
+  await db.transaction('rw', memories, async (tx) => {
+    const table = tx.table(MEMORY_TABLE_NAME);
+    await readValidatedMemoryRecords(tx);
+    await table.clear();
+    await table.bulkAdd(validated);
   });
 }
 
 export async function captureRawMemoryRecordsForSyncRecovery(): Promise<Record<string, unknown>[]> {
   await assertCurrentMemoryDatabaseVersion();
-  return db.memories.toArray() as unknown as Record<string, unknown>[];
+  return memories.toArray() as unknown as Record<string, unknown>[];
 }
 
 export async function restoreRawMemoryRecordsForSyncRecovery(
@@ -223,9 +224,10 @@ export async function restoreRawMemoryRecordsForSyncRecovery(
   // Recovery must restore the opaque preimage byte-for-byte, including state
   // that a newer runtime cannot decode. Ordinary reads and writes validate it.
   await assertCurrentMemoryDatabaseVersion();
-  await db.transaction('rw', db.memories, async () => {
-    await db.memories.clear();
-    await db.memories.bulkAdd(records.map((record) => ({ ...record })) as unknown as Memory[]);
+  await db.transaction('rw', memories, async (tx) => {
+    const table = tx.table(MEMORY_TABLE_NAME);
+    await table.clear();
+    await table.bulkAdd(records.map((record) => ({ ...record })) as unknown as Memory[]);
   });
 }
 
@@ -235,9 +237,9 @@ const MIN_ACCESS_FOR_RETENTION = 3;
 export async function archiveStaleMemories(): Promise<number> {
   await assertCurrentMemoryDatabaseVersion();
   return withSyncLocalStateLock(async () => {
-    return db.transaction('rw', db.memories, async () => {
+    return db.transaction('rw', memories, async (tx) => {
       const threshold = Date.now() - STALE_THRESHOLD_DAYS * 86_400_000;
-      const current = await readValidatedMemoryRecords();
+      const current = await readValidatedMemoryRecords(tx);
       const ids = current
         .filter((memory) => (
           memory.lastAccessedAt < threshold
@@ -247,7 +249,7 @@ export async function archiveStaleMemories(): Promise<number> {
         .map((memory) => memory.id)
         .filter((id): id is number => id !== undefined);
 
-      if (ids.length > 0) await db.memories.bulkDelete(ids);
+      if (ids.length > 0) await tx.table(MEMORY_TABLE_NAME).bulkDelete(ids);
       return ids.length;
     });
   });
@@ -255,9 +257,10 @@ export async function archiveStaleMemories(): Promise<number> {
 
 export { db };
 
-async function readValidatedMemoryRecords(): Promise<Memory[]> {
+async function readValidatedMemoryRecords(tx?: IndexedDbTransaction): Promise<Memory[]> {
   await assertCurrentMemoryDatabaseVersion();
-  const records = await db.memories.toArray() as unknown[];
+  const table = tx ? tx.table(MEMORY_TABLE_NAME) : memories;
+  const records = await table.toArray() as unknown[];
   return records.map((record, index) => (
     decodePersistedMemoryRecord(record, `memories[${index}]`)
   ));

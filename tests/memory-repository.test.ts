@@ -1,22 +1,18 @@
-import Dexie from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Memory, NewMemory } from '../core/types';
-import { MEMORY_DATABASE_NAME } from '../core/memory/schema';
+import { MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME } from '../core/memory/schema';
 import {
   MEMORY_CORRUPT_RAW_RECORD,
   MEMORY_HISTORICAL_EXPORT_RECORD,
   MEMORY_IMPORT_PREVIEW_RECORD,
   MEMORY_V3_RECORD,
 } from './fixtures/persistence-contract/memory';
+import { deleteIndexedDb } from './helpers/indexeddb';
 
 const indexedDbFactory = new IDBFactory();
-const originalIndexedDb = Dexie.dependencies.indexedDB;
-const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
 
 beforeAll(() => {
-  Dexie.dependencies.indexedDB = indexedDbFactory;
-  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   vi.stubGlobal('indexedDB', indexedDbFactory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
 });
@@ -29,13 +25,11 @@ beforeEach(async () => {
 afterEach(async () => {
   const { db } = await import('../core/memory/store');
   db.close();
-  await Dexie.delete(MEMORY_DATABASE_NAME);
+  await deleteIndexedDb(MEMORY_DATABASE_NAME);
   vi.restoreAllMocks();
 });
 
 afterAll(() => {
-  Dexie.dependencies.indexedDB = originalIndexedDb;
-  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
   vi.unstubAllGlobals();
 });
 
@@ -45,6 +39,7 @@ describe('Memory repository transaction and codec boundaries', () => {
     vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(generatedSyncId);
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     const { db, importMemoriesAtomically } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
 
     const ids = await importMemoriesAtomically([
       cloneDraft(MEMORY_IMPORT_PREVIEW_RECORD),
@@ -52,7 +47,7 @@ describe('Memory repository transaction and codec boundaries', () => {
     ]);
 
     expect(ids).toEqual([1, 2]);
-    expect(await db.memories.orderBy('id').toArray()).toEqual([
+    expect(await memories.orderBy('id').toArray()).toEqual([
       {
         ...MEMORY_IMPORT_PREVIEW_RECORD,
         tags: [...MEMORY_IMPORT_PREVIEW_RECORD.tags],
@@ -86,12 +81,13 @@ describe('Memory repository transaction and codec boundaries', () => {
 
   it('rolls back the whole import batch when the Nth IndexedDB write fails', async () => {
     const { db, importMemoriesAtomically } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
     let writeCount = 0;
     const failOnSecondWrite = () => {
       writeCount += 1;
       if (writeCount === 2) throw new Error('injected second write failure');
     };
-    db.memories.hook('creating', failOnSecondWrite);
+    memories.hook('creating', failOnSecondWrite);
 
     try {
       await expect(importMemoriesAtomically([
@@ -100,15 +96,16 @@ describe('Memory repository transaction and codec boundaries', () => {
         draft('batch-3', 'sync-batch-3'),
       ])).rejects.toThrow('injected second write failure');
     } finally {
-      db.memories.hook('creating').unsubscribe(failOnSecondWrite);
+      memories.hook('creating').unsubscribe(failOnSecondWrite);
     }
 
     expect(writeCount).toBe(2);
-    await expect(db.memories.toArray()).resolves.toEqual([]);
+    await expect(memories.toArray()).resolves.toEqual([]);
   });
 
   it('serializes concurrent import batches without interleaving their rows', async () => {
     const { db, importMemoriesAtomically } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
     const [firstIds, secondIds] = await Promise.all([
       importMemoriesAtomically([
         draft('first-1', 'sync-first-1'),
@@ -122,7 +119,7 @@ describe('Memory repository transaction and codec boundaries', () => {
 
     expect(firstIds).toEqual([1, 2]);
     expect(secondIds).toEqual([3, 4]);
-    expect((await db.memories.orderBy('id').toArray()).map((memory) => memory.name)).toEqual([
+    expect((await memories.orderBy('id').toArray()).map((memory) => memory.name)).toEqual([
       'first-1',
       'first-2',
       'second-1',
@@ -138,8 +135,9 @@ describe('Memory repository transaction and codec boundaries', () => {
       saveMemory,
       updateMemory,
     } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
     const corrupt = cloneRaw(MEMORY_CORRUPT_RAW_RECORD);
-    await db.memories.add(corrupt as unknown as Memory);
+    await memories.add(corrupt as unknown as Memory);
 
     await expect(getAllMemories()).rejects.toThrow('memories[0].scope');
     await expect(saveMemory(draft('blocked-write', 'sync-blocked-write')))
@@ -154,11 +152,12 @@ describe('Memory repository transaction and codec boundaries', () => {
       tags: [...MEMORY_V3_RECORD.tags],
     })]))
       .rejects.toThrow('memories[0].scope');
-    await expect(db.memories.toArray()).resolves.toEqual([corrupt]);
+    await expect(memories.toArray()).resolves.toEqual([corrupt]);
   });
 
   it('rejects an update without a persisted id instead of reporting a no-op success', async () => {
     const { db, updateMemory } = await import('../core/memory/store');
+    const memories = db.table(MEMORY_TABLE_NAME);
     const withoutId = cloneMemory({
       ...MEMORY_V3_RECORD,
       tags: [...MEMORY_V3_RECORD.tags],
@@ -167,7 +166,7 @@ describe('Memory repository transaction and codec boundaries', () => {
 
     await expect(updateMemory(withoutId))
       .rejects.toThrow('memory.id must be a positive safe integer');
-    await expect(db.memories.toArray()).resolves.toEqual([]);
+    await expect(memories.toArray()).resolves.toEqual([]);
   });
 
   it('lets the raw recovery path restore opaque corrupt rows without codec downgrade', async () => {

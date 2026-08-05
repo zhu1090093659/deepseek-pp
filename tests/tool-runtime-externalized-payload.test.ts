@@ -1,8 +1,8 @@
-import Dexie from 'dexie';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PERSISTENCE_CONTRACT } from '../core/artifact/schema';
 import type { ToolCall } from '../core/tool/types';
+import { deleteIndexedDb } from './helpers/indexeddb';
 
 let storage: Record<string, unknown>;
 let artifact: typeof import('../core/artifact');
@@ -10,15 +10,11 @@ let artifactStore: typeof import('../core/artifact/store');
 let externalizedPayload: typeof import('../core/tool/externalized-payload');
 let executeRuntimeToolCall: typeof import('./helpers/production-tool-runtime')['executeRuntimeToolCall'];
 let indexedDbFactory: IDBFactory;
-const originalIndexedDb = Dexie.dependencies.indexedDB;
-const originalIdbKeyRange = Dexie.dependencies.IDBKeyRange;
 
 beforeEach(async () => {
   vi.resetModules();
   storage = {};
   indexedDbFactory = new IDBFactory();
-  Dexie.dependencies.indexedDB = indexedDbFactory;
-  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   vi.stubGlobal('indexedDB', indexedDbFactory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
   vi.stubGlobal('chrome', {
@@ -46,9 +42,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   artifactStore.db.close();
-  await Dexie.delete(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
-  Dexie.dependencies.indexedDB = originalIndexedDb;
-  Dexie.dependencies.IDBKeyRange = originalIdbKeyRange;
+  await deleteIndexedDb(ARTIFACT_PERSISTENCE_CONTRACT.databaseName);
   vi.unstubAllGlobals();
 });
 
