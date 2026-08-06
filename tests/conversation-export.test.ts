@@ -119,7 +119,7 @@ describe('DeepSeek conversation export adapter and service', () => {
     ]);
   });
 
-  it('applies input-output scope before returning stats and artifacts', async () => {
+  it('renders the input-output projection into HTML with nonzero message stats', async () => {
     const exportData = await runConversationExport({
       exportId: 'real-fragment-scope',
       extensionVersion: '0.0.0-test',
@@ -127,7 +127,7 @@ describe('DeepSeek conversation export adapter and service', () => {
       request: {
         mode: 'sanitized',
         contentScope: 'input-output',
-        formats: ['markdown'],
+        formats: ['html', 'markdown'],
         includeAttachmentMetadata: false,
         includeFileBodies: false,
         sessionIds: ['session-real'],
@@ -160,10 +160,18 @@ describe('DeepSeek conversation export adapter and service', () => {
 
     expect(exportData.stats.messageCount).toBe(2);
     expect(exportData.sessions[0].messages.map((message) => message.content)).toEqual(['初始输入', '最终产出']);
-    const markdown = buildConversationExportArtifacts(exportData)[0];
-    expect(markdown.content).toContain('Messages: 2');
-    expect(markdown.content).not.toContain('<tool_results>');
-    expect(markdown.content).not.toContain('思考');
+    const artifacts = buildConversationExportArtifacts(exportData);
+    const html = artifacts.find((artifact) => artifact.format === 'html');
+    const markdown = artifacts.find((artifact) => artifact.format === 'markdown');
+
+    expect(html?.content).toContain('<strong>2</strong>Messages');
+    expect(html?.content).toContain('初始输入');
+    expect(html?.content).toContain('最终产出');
+    expect(html?.content).not.toContain('&lt;tool_results&gt;');
+    expect(html?.content).not.toContain('思考');
+    expect(markdown?.content).toContain('Messages: 2');
+    expect(markdown?.content).not.toContain('<tool_results>');
+    expect(markdown?.content).not.toContain('思考');
   });
 
   it('paginates sessions and exports sanitized artifacts with attachment metadata', async () => {
