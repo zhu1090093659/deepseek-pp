@@ -495,7 +495,7 @@ function getMcpToolResultSummary(call: ToolCall, result: McpCallToolResult): str
   return result.isError ? 'MCP 工具返回错误' : 'MCP 工具已执行';
 }
 
-function normalizeMcpToolResult(
+export function normalizeMcpToolResult(
   server: McpServerConfig,
   call: ToolCall,
   result: McpCallToolResult,
@@ -590,7 +590,7 @@ function normalizeContentBlock(block: McpContentBlock): Record<string, JsonValue
   return normalized;
 }
 
-function getMcpToolName(call: ToolCall, descriptor?: ToolDescriptor): string {
+export function getMcpToolName(call: ToolCall, descriptor?: ToolDescriptor): string {
   const annotatedName = descriptor?.annotations?.mcpToolName;
   if (annotatedName) return annotatedName;
   if (call.provider?.kind === 'mcp') return call.name;

@@ -16,12 +16,22 @@ export interface ContentUxPolishLabels {
   messageCopyButton: string;
   messageCopyTitle: string;
   messageCopyFailed: string;
+  saveDirButton: string;
+  saveDirButtonTitle: string;
+  saveDirPlaceholder: string;
+  saveDirInputTitle: string;
+  saveDirMissingDir: string;
+  saveDirSaved: string;
+  saveDirDegraded: string;
 }
 
 const STYLE_ID = 'dpp-content-ux-polish-css';
 const CODE_BUTTON_CLASS = 'dpp-code-download';
 const MESSAGE_BUTTON_CLASS = 'dpp-message-download';
 const MESSAGE_COPY_CLASS = 'dpp-message-copy';
+const MESSAGE_SAVE_DIR_CLASS = 'dpp-message-save-dir';
+const MD_DIR_INPUT_CLASS = 'dpp-md-dir-input';
+const LAST_MD_DIR_STORAGE_KEY = 'lastMdDir';
 const PRIMARY_MESSAGE_SELECTOR = [
   '.ds-message',
   '[data-message-id][data-message-role]',
@@ -71,7 +81,7 @@ export function startContentUxPolish(
       window.removeEventListener('resize', syncCodeButtons);
       codeButtons.forEach((button) => button.remove());
       codeButtons.clear();
-      document.querySelectorAll(`.${MESSAGE_BUTTON_CLASS}, .${MESSAGE_COPY_CLASS}`).forEach((button) => button.remove());
+      document.querySelectorAll(`.${MESSAGE_BUTTON_CLASS}, .${MESSAGE_COPY_CLASS}, .${MESSAGE_SAVE_DIR_CLASS}, .${MD_DIR_INPUT_CLASS}`).forEach((node) => node.remove());
       document.getElementById(STYLE_ID)?.remove();
     },
   };
@@ -140,7 +150,7 @@ export function getCodeBlockText(pre: HTMLElement): string {
 function collectMessageNodes(root: ParentNode): HTMLElement[] {
   return queryIncludingRoot<HTMLElement>(root, MESSAGE_SELECTOR)
     .filter((node) => !node.matches(VIRTUAL_MESSAGE_SELECTOR) || !node.querySelector(PRIMARY_MESSAGE_SELECTOR))
-    .filter((node) => !node.querySelector(`:scope > .${MESSAGE_BUTTON_CLASS}, :scope > .${MESSAGE_COPY_CLASS}`))
+    .filter((node) => !node.querySelector(`:scope > .${MESSAGE_BUTTON_CLASS}, :scope > .${MESSAGE_COPY_CLASS}, :scope > .${MESSAGE_SAVE_DIR_CLASS}, :scope > .${MD_DIR_INPUT_CLASS}`))
     .filter((node) => node.textContent?.trim());
 }
 
@@ -167,6 +177,53 @@ function mountMessageActions(
     downloads.download(artifact.filename, new Blob([artifact.content], { type: artifact.mimeType }));
   });
   message.appendChild(markdownButton);
+
+  const dirInput = document.createElement('input');
+  dirInput.type = 'text';
+  dirInput.className = MD_DIR_INPUT_CLASS;
+  dirInput.placeholder = labels.saveDirPlaceholder;
+  dirInput.title = labels.saveDirInputTitle;
+  loadLastMdDir(dirInput);
+
+  const saveDirButton = document.createElement('button');
+  saveDirButton.type = 'button';
+  saveDirButton.className = MESSAGE_SAVE_DIR_CLASS;
+  saveDirButton.textContent = labels.saveDirButton;
+  saveDirButton.title = labels.saveDirButtonTitle;
+  saveDirButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const targetDir = dirInput.value.trim();
+    if (!targetDir) {
+      flashSaveDirStatus(saveDirButton, labels.saveDirMissingDir, true, labels.saveDirButton);
+      return;
+    }
+    const baseId = message.dataset.messageId || message.dataset.virtualListItemKey || `dom-${Date.now()}`;
+    const dir = targetDir.replace(/[\\/]+$/, '');
+    const fileName = `${safeMarkdownFileName(`deepseek-${baseId}`)}.md`;
+    const path = `${dir}/${fileName}`;
+    const markdownText = getMessageText(message);
+    saveDirButton.disabled = true;
+    void chrome.runtime.sendMessage({ type: 'WRITE_MARKDOWN_TO_DIR', markdown: markdownText, path })
+      .then((response: { ok?: boolean } | undefined) => {
+        if (response && response.ok) {
+          void chrome.storage.local.set({ [LAST_MD_DIR_STORAGE_KEY]: targetDir });
+          flashSaveDirStatus(saveDirButton, labels.saveDirSaved, false, labels.saveDirButton);
+        } else {
+          fallbackDownloadToBrowser(path, markdownText, downloads);
+          flashSaveDirStatus(saveDirButton, labels.saveDirDegraded, false, labels.saveDirButton);
+        }
+      })
+      .catch(() => {
+        fallbackDownloadToBrowser(path, markdownText, downloads);
+        flashSaveDirStatus(saveDirButton, labels.saveDirDegraded, false, labels.saveDirButton);
+      })
+      .finally(() => {
+        saveDirButton.disabled = false;
+      });
+  });
+  message.appendChild(dirInput);
+  message.appendChild(saveDirButton);
 
   const copyButton = document.createElement('button');
   copyButton.type = 'button';
@@ -198,6 +255,43 @@ function showCopyFailure(
     button.title = labels.messageCopyTitle;
   }, MESSAGE_COPY_STATUS_MS);
   timers.add(timer);
+}
+
+function flashSaveDirStatus(button: HTMLButtonElement, text: string, failed: boolean, resetText: string): void {
+  button.dataset.status = failed ? 'failed' : 'ok';
+  button.textContent = text;
+  const timer = setTimeout(() => {
+    delete button.dataset.status;
+    button.textContent = resetText;
+  }, MESSAGE_COPY_STATUS_MS);
+}
+
+function loadLastMdDir(input: HTMLInputElement): void {
+  try {
+    void chrome.storage.local.get(LAST_MD_DIR_STORAGE_KEY, (result: Record<string, unknown>) => {
+      const value = result?.[LAST_MD_DIR_STORAGE_KEY];
+      if (typeof value === 'string' && value) input.value = value;
+    });
+  } catch {
+    // Storage API unavailable: leave the input empty so the user types a dir.
+  }
+}
+
+// Final renderer-side fallback when the background cannot write via Native Host
+// and has no `downloads` permission. Mirrors the existing markdown download.
+function fallbackDownloadToBrowser(
+  path: string,
+  markdownText: string,
+  downloads: BrowserDownloadManager,
+): void {
+  const fileName = path.split(/[\\/]/).pop() || 'deepseek-message.md';
+  downloads.download(fileName, new Blob([markdownText], { type: 'text/markdown' }));
+}
+
+// Sanitize a base name into a filesystem-safe segment (mirrors
+// core/export/secondary-artifacts.ts `safeFilename` to avoid a cross-module dep).
+function safeMarkdownFileName(value: string): string {
+  return value.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'message';
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
@@ -241,7 +335,7 @@ function applyPolishLabels(root: ParentNode, labels: ContentUxPolishLabels): voi
 
 function getMessageText(message: HTMLElement): string {
   const clone = message.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll(`.${MESSAGE_BUTTON_CLASS}, .${MESSAGE_COPY_CLASS}`).forEach((node) => node.remove());
+  clone.querySelectorAll(`.${MESSAGE_BUTTON_CLASS}, .${MESSAGE_COPY_CLASS}, .${MESSAGE_SAVE_DIR_CLASS}, .${MD_DIR_INPUT_CLASS}`).forEach((node) => node.remove());
   return clone.textContent?.trim() ?? '';
 }
 
@@ -388,6 +482,32 @@ function injectStyles(): void {
       float: right;
       margin: 0 0 6px 8px;
       padding: 3px 6px;
+    }
+    .${MD_DIR_INPUT_CLASS} {
+      float: right;
+      margin: 0 0 6px 8px;
+      padding: 3px 6px;
+      width: 150px;
+      font: 11px/1.2 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #334155;
+    }
+    .${MESSAGE_SAVE_DIR_CLASS} {
+      float: right;
+      margin: 0 0 6px 8px;
+      padding: 3px 6px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #334155;
+      font: 11px/1.2 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      cursor: pointer;
+    }
+    .${MESSAGE_SAVE_DIR_CLASS}[data-status="failed"] {
+      border-color: rgba(220, 38, 38, 0.55);
+      color: #b91c1c;
     }
     .${MESSAGE_COPY_CLASS}[data-status="failed"] {
       border-color: rgba(220, 38, 38, 0.55);

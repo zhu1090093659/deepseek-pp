@@ -182,7 +182,7 @@ describe('runtime sender and envelope boundary', () => {
   it('authorizes only the frozen content command surface before routing', () => {
     const extensionContext = createRuntimeMessageContext(EXTENSION_SENDER, POLICY);
     const contentContext = createRuntimeMessageContext(DEEPSEEK_SENDER, POLICY);
-    expect(DEEPSEEK_CONTENT_RUNTIME_COMMANDS.size).toBe(32);
+    expect(DEEPSEEK_CONTENT_RUNTIME_COMMANDS.size).toBe(33);
     expect(() => authorizeRuntimeMessage({ type: 'GET_MEMORIES' }, contentContext)).not.toThrow();
     expect(() => authorizeRuntimeMessage({ type: 'GET_SYNC_CONFIG' }, contentContext))
       .toThrow('not authorized for DeepSeek content');
@@ -193,6 +193,7 @@ describe('runtime sender and envelope boundary', () => {
     const producerFiles = [
       'entrypoints/content.ts',
       'entrypoints/content/adapters/project-sidebar-organizer.ts',
+      'entrypoints/content/adapters/ux-polish.ts',
       'core/ui/tool-result-renderer.ts',
     ];
     const produced = new Set(producerFiles.flatMap(extractContentRuntimeCommands));

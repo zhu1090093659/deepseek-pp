@@ -67,6 +67,13 @@ export const content = {
     copyMessageButton: 'Copy',
     copyMessageTitle: 'Copy full message output',
     copyMessageFailed: 'Copy failed',
+    saveDirButton: 'Save to folder',
+    saveDirButtonTitle: 'Send to background to write via Native Host',
+    saveDirPlaceholder: 'Target folder',
+    saveDirInputTitle: 'Markdown will be written to a .md file in this folder',
+    saveDirMissingDir: 'Enter a folder',
+    saveDirSaved: 'Saved',
+    saveDirDegraded: 'Downloaded (fallback)',
   },
   toolBlock: {
     title: 'Executed tools ({count})',

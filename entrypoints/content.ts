@@ -604,6 +604,13 @@ function getContentUxPolishLabels() {
     messageCopyButton: contentT('content.uxPolish.copyMessageButton'),
     messageCopyTitle: contentT('content.uxPolish.copyMessageTitle'),
     messageCopyFailed: contentT('content.uxPolish.copyMessageFailed'),
+    saveDirButton: contentT('content.uxPolish.saveDirButton'),
+    saveDirButtonTitle: contentT('content.uxPolish.saveDirButtonTitle'),
+    saveDirPlaceholder: contentT('content.uxPolish.saveDirPlaceholder'),
+    saveDirInputTitle: contentT('content.uxPolish.saveDirInputTitle'),
+    saveDirMissingDir: contentT('content.uxPolish.saveDirMissingDir'),
+    saveDirSaved: contentT('content.uxPolish.saveDirSaved'),
+    saveDirDegraded: contentT('content.uxPolish.saveDirDegraded'),
   };
 }
 

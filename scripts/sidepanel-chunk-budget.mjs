@@ -66,9 +66,16 @@ if (requestedBrowsers.some((browser) => !browser)) {
 // 376486 raw (+119) / 114604 gzip; raw baseline updated again, gzip stays under
 // the CI-derived baseline. firstChatScreen raw cap raised 406623 -> 406742 by
 // the same +119.
+// Refreshed for feat/local-md-direct-write (local markdown direct-write to a
+// user-specified directory): seven content.uxPolish i18n keys (zh-CN/en) were
+// added to the shared resource tree and the runtime command surface gained one
+// entry (WRITE_MARKDOWN_TO_DIR). Chrome Node-22/24 measurement: initial shell
+// 377236 raw (+750) / 115133 gzip; first chat screen 407492 raw (+750) / 125174
+// gzip. Both baselines raised by the measured deltas plus 256-byte headroom
+// (firstChatScreen gzip adds extra headroom for encoder variance).
 // The initial shell is sidepanel.html's entry script plus every static modulepreload.
 const BASELINE = Object.freeze({
-  initialShell: { raw: 376_486, gzip: 114_659 },
+  initialShell: { raw: 377_492, gzip: 115_133 },
   routeChunks: {
     ChatPage: { raw: 134_938, gzip: 40_056 },
     CapabilitiesPage: { raw: 160_137, gzip: 35_259 },
@@ -123,7 +130,7 @@ const BUDGET = Object.freeze({
     raw: BASELINE.initialShell.raw,
     gzip: BASELINE.initialShell.gzip + GZIP_ENCODER_VARIANCE_BYTES,
   },
-  firstChatScreen: { raw: 406_742, gzip: 125_000 },
+  firstChatScreen: { raw: 407_748, gzip: 125_686 },
   richRendererIncrement: { raw: 120_000, gzip: 36_000 },
   routeChunks: {
     ChatPage: { raw: 25_000, gzip: 8_000 },

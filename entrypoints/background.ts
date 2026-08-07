@@ -249,6 +249,8 @@ import { createRuntimeCommandRegistry } from '../core/messaging/runtime-command-
 import { createBootstrapRuntimeHandlers } from './background/bootstrap-handlers';
 import { createDiagnosticsRuntimeHandlers } from './background/diagnostics-handlers';
 import { createArtifactRuntimeHandlers } from './background/artifact-handlers';
+import { handleWriteMarkdownToDir } from './background/local-file-write-handlers';
+import { WRITE_MARKDOWN_TO_DIR } from '../core/export/markdown-direct-save';
 import { createTrackedLocalStateMutationRunner } from './background/local-state-mutation-runner';
 import { createPersistenceMutationBindings } from './background/persistence-mutation-bindings';
 import { createPersistenceRuntimeHandlers } from './background/persistence-handlers';
@@ -741,6 +743,25 @@ export default defineBackground(() => {
     } catch (error) {
       sendResponse(createRuntimeBoundaryErrorResponse(error, envelope));
       return false;
+    }
+
+    // Route "save markdown to local directory" to the Native Host bridge.
+    // Handled directly (not via the typed registry) so the content script can
+    // request an arbitrary user directory without a typed command contract.
+    if (envelope.type === WRITE_MARKDOWN_TO_DIR) {
+      void handleWriteMarkdownToDir(
+        envelope.payload as { markdown?: unknown; path?: unknown },
+        sender,
+      )
+        .then(sendResponse)
+        .catch((error) => sendResponse(
+          createBackgroundErrorResponse(
+            envelope,
+            error,
+            backgroundT('content.toolBlock.summaries.backgroundFailed'),
+          ),
+        ));
+      return true;
     }
 
     const contextForDispatch = requiresCurrentToolAuthorizationSubject(envelope.type)

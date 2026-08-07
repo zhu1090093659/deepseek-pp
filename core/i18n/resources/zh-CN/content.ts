@@ -67,6 +67,13 @@ export const content = {
     copyMessageButton: '复制',
     copyMessageTitle: '复制完整对话输出',
     copyMessageFailed: '复制失败',
+    saveDirButton: '保存到本地目录',
+    saveDirButtonTitle: '发送到后台经 Native Host 直写该目录',
+    saveDirPlaceholder: '目标目录',
+    saveDirInputTitle: 'Markdown 将写入此目录下的一个 .md 文件',
+    saveDirMissingDir: '请填写目录',
+    saveDirSaved: '已保存',
+    saveDirDegraded: '已下载(降级)',
   },
   toolBlock: {
     title: '已执行工具（{count}次）',
