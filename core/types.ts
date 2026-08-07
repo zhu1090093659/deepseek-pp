@@ -369,6 +369,10 @@ export interface LocalSkillSource {
   rootPath: string;
   displayName: string;
   directoryName: string;
+  // Legacy records store only `skillPaths` (all SKILL.md directory-type). The `kind`
+  // discriminator for 'file' | 'dir' is NOT persisted here; it is inferred at restore
+  // time by Agent-R: a path ending in 'SKILL.md' => 'dir', otherwise 'file'. This keeps
+  // old serializations backward compatible without adding a required field.
   skillPaths: string[];
   importedSkillNames: string[];
   importedAt: number;
@@ -444,6 +448,10 @@ export interface LocalSkillPreviewItem {
   nameChanged: boolean;
   existingSkillName?: string;
   existingSourceId?: string;
+  /** UI label hint: 'dir' = directory-type skill (SKILL.md root), 'file' = single-file skill. Optional for backward compatibility; inferred from path on restore if absent. */
+  kind?: 'file' | 'dir';
+  /** Import-failure reasons rendered as red text in the UI, one entry per violated rule. */
+  violations?: Array<{ ruleId: string; message: string }>;
 }
 
 export interface LocalSkillPreview {

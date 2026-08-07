@@ -16,6 +16,7 @@ import type { McpServerConfig } from '../mcp/types';
 import type { LocalStateMutationRunner } from '../persistence/local-state-mutation';
 import type { JsonValue, ToolResult } from '../tool/types';
 import type { ToolCall } from '../tool/types';
+import { basename } from 'node:path';
 import {
   getAllSkillSources,
   getSkillCollisionCandidates,
@@ -61,13 +62,31 @@ class LocalSkillImportBlockedError extends Error {
   }
 }
 
+// Per-skill frontmatter validation failure. Distinct from
+// LocalSkillImportBlockedError (an environment gate): this is thrown when a
+// single local Skill's SKILL.md fails the strict frontmatter contract, carrying
+// the rule IDs and messages so the UI can render them as red text.
+class LocalSkillParseError extends Error {
+  fileName: string;
+  ruleIds: string[];
+  messages: string[];
+  constructor(fileName: string, violations: Array<{ ruleId: string; message: string }>) {
+    super(`Local Skill ${fileName} failed frontmatter validation: ${violations.map((v) => v.ruleId).join(', ')}`);
+    this.name = 'LocalSkillParseError';
+    this.fileName = fileName;
+    this.ruleIds = violations.map((v) => v.ruleId);
+    this.messages = violations.map((v) => v.message);
+  }
+}
+
 interface LocalSkillHostItem {
   path: string;
   directory: string;
   directoryPath: string;
   content: string;
   bodyBytes: number;
-  includedFiles: Array<RemoteSkillFile & { content: string }>;
+  kind: 'file' | 'dir';
+  includedFiles: RemoteSkillFile[];
   omittedFiles: RemoteSkillFile[];
   scriptFiles: RemoteSkillFile[];
   warnings: string[];
@@ -91,6 +110,17 @@ export interface ParsedSkillDoc {
   version?: string;
   lastUpdated?: string;
 }
+
+/**
+ * Result of the strict local-import frontmatter parser. On success it returns
+ * ParsedSkillDoc; on failure it returns the offending file name plus a list of
+ * violated rule IDs/messages (no silent fallback). The lenient `parseSkillDoc`
+ * (shared by github/pi import) is kept separate to preserve their fallback
+ * semantics. See LocalSkillParseError for how failures surface to the UI.
+ */
+export type ParseSkillDocResult =
+  | ParsedSkillDoc
+  | { ok: false; fileName: string; violations: Array<{ ruleId: string; message: string }> };
 
 interface ExistingSkillContext {
   occupiedNames: Set<string>;
@@ -348,14 +378,44 @@ async function loadLocalSkillSource(
   };
 
   const existingContext = await createExistingSkillContext(source.id);
-  const loadedSkills = bundle.skills.map((skill) => loadLocalSkill(
-    source,
-    skill,
-    existingContext,
-    skill.omittedFiles.length > 0 ? onDemandResourceBlock : undefined,
-    selectedImportNames?.get(skill.path),
-  ));
-  const previewSkills = loadedSkills.map((skill) => skill.item);
+  const loadedSkills: LoadedLocalSkill[] = [];
+  const previewSkills: LocalSkillPreviewItem[] = [];
+  for (const skill of bundle.skills) {
+    try {
+      const loaded = loadLocalSkill(
+        source,
+        skill,
+        existingContext,
+        skill.omittedFiles.length > 0 ? onDemandResourceBlock : undefined,
+        selectedImportNames?.get(skill.path),
+      );
+      loadedSkills.push(loaded);
+      previewSkills.push(loaded.item);
+    } catch (error) {
+      // Step 2.x: a single Skill failing frontmatter validation must not abort
+      // discovery of the other (valid) Skills. Surface it in the preview with
+      // its violations so the UI can render the failure reason in red.
+      if (error instanceof LocalSkillParseError) {
+        previewSkills.push({
+          path: skill.path,
+          name: basename(skill.path),
+          importName: basename(skill.path),
+          description: error.messages.join(' '),
+          bytes: skill.content.length,
+          bodyBytes: skill.content.length,
+          includedFiles: [],
+          omittedFiles: [],
+          scriptFiles: [],
+          warnings: [],
+          nameChanged: false,
+          kind: skill.kind,
+          violations: error.ruleIds.map((ruleId, index) => ({ ruleId, message: error.messages[index] })),
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
 
   return {
     preview: {
@@ -384,22 +444,31 @@ function loadLocalSkill(
     throw new Error(`${hostSkill.path} is too large to import (${hostSkill.content.length} bytes).`);
   }
 
-  const parsed = parseSkillDoc(hostSkill.content, hostSkill.path);
+  const parsedResult = parseLocalSkillDoc(hostSkill.content, hostSkill.path);
+  // Narrowing: the success branch is a bare ParsedSkillDoc (no `ok` field), so
+  // `'ok' in parsedResult` is the only type-safe discriminator. Using
+  // `!parsedResult.ok` would mis-narrow and crash on valid Skills at runtime.
+  if ('ok' in parsedResult) {
+    throw new LocalSkillParseError(parsedResult.fileName, parsedResult.violations);
+  }
+  const parsed = parsedResult;
   const existingRemoteSkill = existingContext.bySourcePath.get(`${source.id}:${hostSkill.path}`);
   const baseImportName = existingRemoteSkill?.name ?? selectedImportName ?? parsed.name;
   const importName = existingRemoteSkill?.name ?? createUniqueSkillName(baseImportName, existingContext.occupiedNames);
   existingContext.occupiedNames.add(importName);
 
   const now = Date.now();
+  const isSingleFile = hostSkill.kind === 'file';
   const instructions = buildLocalImportedInstructions({
     source,
     skillPath: hostSkill.path,
     directory: hostSkill.directory,
     directoryPath: hostSkill.directoryPath,
     parsed,
-    resources: hostSkill.includedFiles,
+    // Step 3.2: single-file Skills have no bundled resources to register.
+    resources: isSingleFile ? [] : hostSkill.includedFiles,
     omittedFiles: hostSkill.omittedFiles,
-    scriptFiles: hostSkill.scriptFiles,
+    scriptFiles: isSingleFile ? [] : hostSkill.scriptFiles,
   });
   // Bring the SKILL.md applicable / not-applicable scenario text into the index card
   // (instructions) so the implicit scorer's scenarioAdjustment can match it.
@@ -426,7 +495,7 @@ function loadLocalSkill(
     localDisplayName: source.displayName,
     upstreamVersion: parsed.version,
     upstreamUpdatedAt: parsed.lastUpdated,
-    includedFiles: hostSkill.includedFiles.map(({ content: _content, ...file }) => file),
+    includedFiles: hostSkill.includedFiles,
     omittedFiles: hostSkill.omittedFiles,
     scriptFiles: hostSkill.scriptFiles,
     warnings,
@@ -454,6 +523,7 @@ function loadLocalSkill(
   const includedFiles = remote.includedFiles;
   const item: LocalSkillPreviewItem = {
     path: hostSkill.path,
+    kind: hostSkill.kind,
     name: parsed.name,
     importName,
     description: parsed.description,
@@ -669,26 +739,22 @@ function parseHostSkill(value: unknown): LocalSkillHostItem {
   const data = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+  const rawKind = readString(data, 'kind');
   return {
     path: readRequiredString(data, 'path'),
     directory: readRequiredString(data, 'directory'),
     directoryPath: readRequiredString(data, 'directoryPath'),
     content: readRequiredString(data, 'content'),
     bodyBytes: readNumber(data.bodyBytes),
-    includedFiles: readArray(data.includedFiles).map(parseContentFile),
+    // kind is required on LocalSkillHostItem (Phase 4). Legacy host items may omit it;
+    // fall back to the same path-based inference used by registry.inferLocalSkillKind.
+    kind: rawKind === 'file' || rawKind === 'dir'
+      ? rawKind
+      : (readRequiredString(data, 'path').endsWith('SKILL.md') ? 'dir' : 'file'),
+    includedFiles: readArray(data.includedFiles).map(parseFile),
     omittedFiles: readArray(data.omittedFiles).map(parseFile),
     scriptFiles: readArray(data.scriptFiles).map(parseFile),
     warnings: readStringArray(data.warnings),
-  };
-}
-
-function parseContentFile(value: unknown): RemoteSkillFile & { content: string } {
-  const data = value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  return {
-    ...parseFile(data),
-    content: readRequiredString(data, 'content'),
   };
 }
 
@@ -716,7 +782,7 @@ function buildLocalImportedInstructions(input: {
   directory: string;
   directoryPath: string;
   parsed: ParsedSkillDoc;
-  resources: Array<RemoteSkillFile & { content: string }>;
+  resources: RemoteSkillFile[];
   omittedFiles: RemoteSkillFile[];
   scriptFiles: RemoteSkillFile[];
 }): string {
@@ -744,7 +810,7 @@ function buildLocalImportedInstructions(input: {
     '',
     'This Skill was imported by reference from a local folder. Its full SKILL.md body and supporting file contents are NOT inlined here.',
     'When this Skill is activated (explicit `/' + parsed.name + '` or an implicit scoring match), you MUST read the local definition before doing any work:',
-    `- Read the Skill definition file with the local file tool: ${directoryPath}/SKILL.md`,
+    `- Read the Skill definition file with the local file tool: ${directoryPath}/${basename(skillPath)}`,
     '- Parse and follow it fully before starting the task.',
     '- Resolve every relative path inside it against the Skill directory path above (double-base rule).',
   ].filter(Boolean).join('\n');
@@ -765,7 +831,7 @@ function buildLocalImportedInstructions(input: {
     ...omittedFiles.map((file) => `- ${relativeToSkillDirectory(file.path, directory)} (${file.bytes} bytes)`),
   ].join('\n');
 
-  const executionBoundary = buildLocalExecutionBoundary(directoryPath);
+  const executionBoundary = buildLocalExecutionBoundary(directoryPath, basename(skillPath));
 
   return [header, scripts, omitted, executionBoundary].filter(Boolean).join('\n\n---\n\n');
 }
@@ -774,7 +840,7 @@ function buildLocalImportedInstructions(input: {
   // Both import and activation use this function, keeping path-resolution rules / initial cwd hint / escape prohibition consistent.
   // Note (Review #4 Route A): "cwd set to skillDir" means the initial hint that "session-start cwd is skillDir",
   // not a hard session-wide persistent binding; real-body relative references rely on the Agent following the "double-base rule" (Review #3 Route A).
-export function buildLocalExecutionBoundary(skillDir: string): string {
+export function buildLocalExecutionBoundary(skillDir: string, definitionFile = 'SKILL.md'): string {
   return [
     '## Local Execution Boundary',
     '',
@@ -785,7 +851,7 @@ export function buildLocalExecutionBoundary(skillDir: string): string {
     '- Use the double-base rule: first try relative to the referencing file, then relative to the Skill directory path.',
     '- Never use `..` to escape the Skill directory path.',
     '- Treat paths shown here as local user-machine paths. Do not expose or rewrite them unless the user asks.',
-    `- Before relying on this Skill, verify the definition file exists: run local_file_stat on \`${skillDir}/SKILL.md\`.`,
+    `- Before relying on this Skill, verify the definition file exists: run local_file_stat on \`${skillDir}/${definitionFile}\`.`,
     '- If the definition file is missing or moved, stop and tell the user the Skill definition file is unavailable; suggest using the Skill Update action to re-specify the path.',
   ].join('\n');
 }
@@ -824,6 +890,74 @@ export function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
   const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');
 
   return { name, description, body, version, lastUpdated };
+}
+
+/**
+ * Strict frontmatter parser for local-import: hard-rejects documents that do
+ * not satisfy the frontmatter contract (top-level fence, required name/description,
+ * ASCII-only name) by returning a `violations` result instead of falling back.
+ * This is the local-Skill-specific gate; `parseSkillDoc` remains the lenient
+ * shared parser used by github/pi import.
+ */
+export function parseLocalSkillDoc(raw: string, path: string): ParseSkillDocResult {
+  const bomStripped = raw.replace(/^\uFEFF/, '');
+  const lines = bomStripped.split(/\r?\n/);
+  const head = lines.slice(0, 25); // lenient window: allow the fence within the first 25 lines
+
+  // 2.2 Top-level, standalone fence: the whole line must be exactly '---'.
+  let fenceStart = -1;
+  for (let i = 0; i < head.length; i += 1) {
+    if (head[i] === '---') { fenceStart = i; break; }
+  }
+  if (fenceStart === -1) {
+    return fail(path, [{ ruleId: 'R-FENCE', message: 'The frontmatter fence --- must be on its own line and left-aligned, with no other characters before or after it.' }]);
+  }
+  // Find the closing fence (still a top-level standalone '---') from fenceStart+1.
+  let fenceEnd = -1;
+  for (let i = fenceStart + 1; i < lines.length; i += 1) {
+    if (lines[i] === '---') { fenceEnd = i; break; }
+  }
+  if (fenceEnd === -1) {
+    return fail(path, [{ ruleId: 'R-FENCE', message: 'The frontmatter fence --- must be on its own line and left-aligned, with no other characters before or after it.' }]);
+  }
+
+  const meta = parseYamlSubset(lines.slice(fenceStart + 1, fenceEnd).join('\n'));
+  const violations: Array<{ ruleId: string; message: string }> = [];
+
+  // 2.2 Indented-field detection: a leading-space key inside frontmatter means
+  // name/description is not left-aligned; report precisely instead of a vague REQUIRED.
+  const fmBodyLines = lines.slice(fenceStart + 1, fenceEnd);
+  for (const fmLine of fmBodyLines) {
+    if (/^\s+[A-Za-z0-9_-]+:/.test(fmLine)) {
+      violations.push({ ruleId: 'R-FIELD-INDENT', message: 'Fields name / description must be left-aligned inline, with no leading space or other characters.' });
+      break; // one occurrence is enough to flag; avoid duplicate noise
+    }
+  }
+
+  // 2.3 Required fields + 2.4 name charset.
+  const nameRaw = readString(meta, 'name');
+  const descRaw = readString(meta, 'description');
+  if (nameRaw === undefined) violations.push({ ruleId: 'R-NAME-REQUIRED', message: 'The name field is required.' });
+  if (descRaw === undefined) violations.push({ ruleId: 'R-DESC-REQUIRED', message: 'The description field is required.' });
+  // Trim before the charset gate so a name with only surrounding whitespace (e.g. `my-skill `)
+  // is normalized consistently with normalizeSkillName instead of being rejected by R-NAME-CHARSET.
+  const nameTrimmed = nameRaw?.trim();
+  if (nameTrimmed !== undefined && !/^[A-Za-z0-9_-]+$/.test(nameTrimmed)) {
+    violations.push({ ruleId: 'R-NAME-CHARSET', message: 'The name field may only contain ASCII letters, digits, hyphen, and underscore; Chinese or other non-ASCII characters are not allowed.' });
+  }
+  if (violations.length > 0) return fail(path, violations); // hard reject, no fallback
+
+  const body = lines.slice(fenceEnd + 1).join('\n').trim();
+  const name = normalizeSkillName(nameTrimmed!); // 2.4 normalize: _->-, lowercase, collapse, trim
+  const description = descRaw!;
+  const metadata = readObject(meta, 'metadata');
+  const version = readString(metadata, 'version') ?? readString(meta, 'version');
+  const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');
+  return { name, description, body, version, lastUpdated };
+}
+
+function fail(path: string, violations: Array<{ ruleId: string; message: string }>) {
+  return { ok: false as const, fileName: path, violations };
 }
 
 function extractH1Title(body: string): string | undefined {

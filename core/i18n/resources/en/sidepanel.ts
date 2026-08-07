@@ -145,6 +145,17 @@ export const sidepanel = {
       checkConnection: 'Check the Shell Local connection and preview again.',
     },
     renamedNotice: '{count} Skills were renamed automatically because of naming conflicts.',
+    kindFile: 'Single-file',
+    kindDir: 'Directory',
+    violationFailed: '{fileName} violated 「{clause}」, so the import failed.',
+    rule: {
+      'R-FENCE': 'The frontmatter fence --- must be on its own line and left-aligned, with no other characters before or after it.',
+      'R-FIELD-INDENT': 'Fields name / description must be left-aligned inline, with no leading space or other characters.',
+      'R-NAME-REQUIRED': 'The name field is required.',
+      'R-DESC-REQUIRED': 'The description field is required.',
+      'R-NAME-CHARSET': 'The name field may only contain ASCII letters, digits, hyphen, and underscore; Chinese or other non-ASCII characters are not allowed.',
+      'R-SIZE': 'The file size exceeds the limit.',
+    },
     meta: {
       skill: 'Skill',
       mode: 'Mode',

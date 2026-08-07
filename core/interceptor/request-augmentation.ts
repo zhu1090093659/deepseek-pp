@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { buildPromptAugmentation } from '../prompt';
 import {
@@ -198,11 +199,13 @@ export function augmentDecodedRequestBody(
   const invocation = parseSkillCommand(originalPrompt);
   let resolved: ResolvedSkills | null = null;
   let activeLocalSkillDir: string | undefined;
+  let activeLocalSkillDefFile: string | undefined;
 
   if (invocation) {
     const primarySkill = state.skills.find((s) => s.name === invocation.skillName);
     if (primarySkill && isLocalIndexSkill(primarySkill)) {
       activeLocalSkillDir = primarySkill.remote?.localDirectory || undefined;
+      activeLocalSkillDefFile = definitionFileOf(primarySkill.remote);
     }
     resolved = resolveSkills(state.skills, invocation.skillName, invocation.args, locale);
   } else {
@@ -216,6 +219,7 @@ export function augmentDecodedRequestBody(
       const picked = selectImplicitLocalSkill(state.skills, originalPrompt);
       if (picked) {
         activeLocalSkillDir = picked.remote?.localDirectory || undefined;
+        activeLocalSkillDefFile = definitionFileOf(picked.remote);
         resolved = {
           combinedPrompt: composeLocalSkillPrompt(picked),
           memoryEnabled: picked.memoryEnabled,
@@ -240,7 +244,7 @@ export function augmentDecodedRequestBody(
         memories: scopedMemories,
         thinkingEnabled,
         identityOnly: !resolved.memoryEnabled,
-        skillSystemContext: buildLocalSkillSystemContext(resolved, activeLocalSkillDir, locale),
+        skillSystemContext: buildLocalSkillSystemContext(resolved, activeLocalSkillDir, activeLocalSkillDefFile, locale),
         presetContent,
         projectContext: state.projectContext,
         toolDescriptors: modelFacingToolDescriptors,
@@ -312,12 +316,24 @@ function isLocalIndexSkill(skill: AugmentationSkill): boolean {
   return skill.remote?.provider === 'local' && isLocalIndexInstructions(skill.instructions);
 }
 
+// Derive the actual definition file name from a local skill's remote.path.
+// Directory-type skills store `SKILL.md` (e.g. `sub/SKILL.md` -> `SKILL.md`); single-file-type skills
+// store the real `.md` file name (e.g. `Skill-review.md`). The basename is what the activation directive
+// must point the Agent at, so it reads the correct definition file on disk.
+function definitionFileOf(remote: AugmentationSkill['remote']): string | undefined {
+  const p = remote?.path;
+  if (!p) return undefined;
+  const normalized = p.replace(/\\/g, '/');
+  const idx = normalized.lastIndexOf('/');
+  return idx === -1 ? normalized : normalized.slice(idx + 1);
+}
+
 // Build the local indexed skill's activation prompt: index instructions + D4 boundary (dynamically
 // generated from skillDir) + D1 defensive rewrite. The real disk read is done by the Agent at activation
 // via local_file_read (the extension runs in a browser sandbox with no local synchronous file channel).
 //
 // Declaration narrowing (Review #3 Route A): the D1 rewrite here applies ONLY to the injected index-instruction
-// text (see the local-path-rewriter.ts file header); it does NOT cover the local skill's real SKILL.md body and
+// text (see the local-path-rewriter.ts file header); it does NOT cover the local skill's real definition file body and
 // its reference file contents. Real-body relative references rely on the Agent following the D4 soft hint's
 // "double-base rule" to resolve themselves. Hence this function does not constitute "full real-file relative-
 // reference coverage", but a declaration-consistent "index-instruction-layer defensive normalization + Agent-
@@ -342,21 +358,27 @@ function composeLocalSkillPrompt(skill: AugmentationSkill): string {
       fileExists: (abs) => knownAbs.has(abs),
     });
     if (!prompt.includes('## Local Execution Boundary')) {
-      prompt = `${prompt}\n\n---\n\n${buildLocalExecutionBoundary(skillDir)}`;
+      prompt = `${prompt}\n\n---\n\n${buildLocalExecutionBoundary(skillDir, basename(skill.remote?.path ?? 'SKILL.md'))}`;
     }
   }
   return prompt;
 }
 
 // Build the local indexed skill's system context: activation instruction (anti-impatience, force-read
-// SKILL.md first) + index body. Injected as a system instruction (not visible user input), so the model
-// obeys its "read disk before executing" constraint (fixes Bug ② framing inversion).
+// the definition file first) + index body. Injected as a system instruction (not visible user input), so
+// the model obeys its "read disk before executing" constraint (fixes Bug ② framing inversion). The
+// definition file is derived from remote.path basename, so it resolves to `SKILL.md` for directory-type
+// skills and to the real `.md` file name for single-file-type skills.
 function buildLocalSkillSystemContext(
   resolved: ResolvedSkills,
   skillDir: string | undefined,
+  definitionFile: string | undefined,
   locale: SupportedLocale,
 ): string {
-  const skillMdPath = skillDir ? `${skillDir}/SKILL.md` : 'SKILL.md';
+  // Directory-type skills use `SKILL.md`; single-file-type skills use the actual `.md` file name. Derive
+  // it from remote.path basename and fall back to `SKILL.md` for legacy records lacking path info.
+  const defFile = definitionFile && definitionFile.length > 0 ? definitionFile : 'SKILL.md';
+  const skillMdPath = skillDir ? `${skillDir}/${defFile}` : defFile;
   const directive = translate(locale, 'prompt.localSkillActivationDirective', {
     skillName: resolved.skillName,
     skillMdPath,

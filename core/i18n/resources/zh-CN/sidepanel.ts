@@ -145,6 +145,17 @@ export const sidepanel = {
       checkConnection: '请检查 Shell Local 连接后重新预览。',
     },
     renamedNotice: '有 {count} 个 Skill 因命名冲突自动加后缀。',
+    kindFile: '单文件型',
+    kindDir: '目录型',
+    violationFailed: '{fileName} 违反了「{clause}」，因此导入失败。',
+    rule: {
+      'R-FENCE': 'frontmatter 围栏 --- 必须独占一行且顶格，前后不得有其他字符',
+      'R-FIELD-INDENT': '字段 name / description 必须行内顶格，前方不得有空格或其他字符',
+      'R-NAME-REQUIRED': '必须包含 name 字段',
+      'R-DESC-REQUIRED': '必须包含 description 字段',
+      'R-NAME-CHARSET': 'name 字段仅允许英文字母、数字、-、_，不允许中文或其他非 ASCII 字符',
+      'R-SIZE': '文件大小超过限制',
+    },
     meta: {
       skill: 'Skill',
       mode: '模式',

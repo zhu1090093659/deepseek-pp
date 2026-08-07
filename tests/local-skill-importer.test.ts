@@ -18,12 +18,14 @@ import { getAllMcpServers, getMcpToolCache, updateMcpServer } from '../core/mcp/
 import type { McpServerConfig, McpToolCacheEntry } from '../core/mcp/types';
 import {
   importLocalSkillSource as importLocalSkillSourceWithRuntime,
+  parseLocalSkillDoc,
   pickLocalSkillFolder as pickLocalSkillFolderWithRuntime,
   previewLocalSkillSource as previewLocalSkillSourceWithRuntime,
   relocateLocalSkillSource as relocateLocalSkillSourceWithRuntime,
   updateLocalSkillSource as updateLocalSkillSourceWithRuntime,
 } from '../core/skill/local-importer';
 import type { LocalSkillImportResponse, LocalSkillImportResult } from '../core/types';
+import type { ParseSkillDocResult } from '../core/skill/local-importer';
 import type { LocalStateMutationStage } from '../core/persistence/local-state-mutation';
 import type { ToolCall, ToolResult } from '../core/types';
 
@@ -415,12 +417,14 @@ describe('local Skill importer', () => {
     expect(result.imported[0].name).toBe('ref-material-writing');
   });
 
-  it('falls back to a hash slug when only a non-ASCII name is available (issue #296)', async () => {
-    // No `name:` field, Chinese H1 title, Chinese directory — every source
-    // slug is non-ASCII. The importer must not throw; it derives a stable
-    // `skill-<hash>` slug so the user can rename it later.
+  it('rejects a local Skill with a missing ASCII name instead of silently slugifying (issue #296 / design S3 / R-NAME-REQUIRED)', async () => {
+    // Regression guard for issue #296: the OLD lenient parser derived a stable
+    // `skill-<hash>` slug when no ASCII `name` was available, silently importing
+    // the Skill. The Phase 4 strict frontmatter contract (skill-import-design-rules.md
+    // §四 / §八 Step 2.3, appendix A.2 default "报错阻断") REJECTS such documents and
+    // surfaces the violation in the preview — it must NOT import a slugified fallback.
     const content = ['---', 'description: 中文 only', '---', '', '# 参考材料写作', '', 'body'].join('\n');
-    vi.mocked(executeMcpToolCall).mockResolvedValueOnce({
+    vi.mocked(executeMcpToolCall).mockResolvedValue({
       ok: true,
       summary: 'MCP tool executed',
       output: {
@@ -448,14 +452,113 @@ describe('local Skill importer', () => {
       },
     });
 
-    const result = await importLocalSkillSource({
+    // The preview must surface the Skill as a validation failure (no silent slug import).
+    const preview = await previewLocalSkillSource('D:\\写作助手');
+    const skill = preview.skills.find((s: { path: string }) => s.path === 'SKILL.md');
+    expect(skill).toBeDefined();
+    expect(skill?.violations?.map((v: { ruleId: string }) => v.ruleId)).toContain('R-NAME-REQUIRED');
+
+    // Importing the rejected Skill must not silently slugify it into an import.
+    await expect(importLocalSkillSource({
       rootPath: 'D:\\写作助手',
       selectedPaths: ['SKILL.md'],
+    })).rejects.toThrow();
+  });
+
+  describe('strict frontmatter contract (parseLocalSkillDoc)', () => {
+    // Pure-logic coverage for the six hard-reject rules + boundary cases.
+    // Every rule (R-FENCE / R-FIELD-INDENT / R-NAME-REQUIRED / R-DESC-REQUIRED /
+    // R-NAME-CHARSET) must be asserted directly; the lenient shared parser is NOT used.
+    const fm = (frontmatter: string, body = '# Body\n\nbody text'): string =>
+      [`---`, frontmatter, `---`, ``, body].join('\n');
+
+    const expectViolations = (result: ParseSkillDocResult, expected: string[]): void => {
+      expect('ok' in result).toBe(true);
+      if ('ok' in result) {
+        const ruleIds = result.violations.map((v) => v.ruleId);
+        for (const ruleId of expected) expect(ruleIds).toContain(ruleId);
+      }
+    };
+
+    const expectSuccess = (result: ParseSkillDocResult, name: string, description?: string): void => {
+      expect('ok' in result).toBe(false);
+      if (!('ok' in result)) {
+        expect(result.name).toBe(name);
+        if (description !== undefined) expect(result.description).toBe(description);
+      }
+    };
+
+    it('R-FENCE: rejects when the opening fence is missing', () => {
+      expectViolations(parseLocalSkillDoc('name: x\ndescription: y\n\n# Body', 'SKILL.md'), ['R-FENCE']);
+    });
+
+    it('R-FENCE: rejects when the closing fence is missing', () => {
+      expectViolations(parseLocalSkillDoc(['---', 'name: x', 'description: y'].join('\n'), 'SKILL.md'), ['R-FENCE']);
+    });
+
+    it('R-FENCE: rejects an indented (non-standalone) opening fence', () => {
+      expectViolations(
+        parseLocalSkillDoc(['  ---', 'name: x', 'description: y', '---'].join('\n'), 'SKILL.md'),
+        ['R-FENCE'],
+      );
+    });
+
+    it('R-FIELD-INDENT: rejects a leading-space field inside frontmatter', () => {
+      expectViolations(parseLocalSkillDoc(fm('  name: my-skill\ndescription: test'), 'SKILL.md'), ['R-FIELD-INDENT']);
+    });
+
+    it('R-NAME-REQUIRED: rejects a document without a name field', () => {
+      expectViolations(parseLocalSkillDoc(fm('description: test'), 'SKILL.md'), ['R-NAME-REQUIRED']);
+    });
+
+    it('R-DESC-REQUIRED: rejects a document without a description field', () => {
+      expectViolations(parseLocalSkillDoc(fm('name: my-skill'), 'SKILL.md'), ['R-DESC-REQUIRED']);
+    });
+
+    it('R-NAME-CHARSET: rejects a non-ASCII (Chinese) name', () => {
+      expectViolations(parseLocalSkillDoc(fm('name: 参考材料\ndescription: test'), 'SKILL.md'), ['R-NAME-CHARSET']);
+    });
+
+    it('R-NAME-REQUIRED: rejects an empty name value', () => {
+      expectViolations(parseLocalSkillDoc(fm('name:\ndescription: test'), 'SKILL.md'), ['R-NAME-REQUIRED']);
+    });
+
+    it('accepts a valid directory-type document and normalizes the name', () => {
+      expectSuccess(parseLocalSkillDoc(fm('name: My_Skill\ndescription: test'), 'SKILL.md'), 'my-skill', 'test');
+    });
+
+    it('L2 regression: trims surrounding whitespace before the charset gate (no false R-NAME-CHARSET)', () => {
+      expectSuccess(parseLocalSkillDoc(fm('name: my-skill \ndescription: test'), 'SKILL.md'), 'my-skill');
+    });
+
+    it('tolerates a leading UTF-8 BOM on the frontmatter fence', () => {
+      expectSuccess(parseLocalSkillDoc('\uFEFF' + fm('name: my-skill\ndescription: test'), 'SKILL.md'), 'my-skill');
+    });
+  });
+
+  it('imports a single-file Skill (kind: file) with empty resources and a basename instruction', async () => {
+    // Single-file-type Skill: discovered as a bare .md (not SKILL.md), carries no
+    // bundled resources, and the import instructions reference the real file name.
+    vi.mocked(executeMcpToolCall).mockResolvedValue(createStandaloneLocalSkillToolResult());
+
+    const preview = await previewLocalSkillSource('D:\\standalone');
+    const skill = preview.skills.find((s: { path: string }) => s.path === 'Standalone.md');
+    expect(skill).toBeDefined();
+    expect(skill?.kind).toBe('file');
+    expect(skill?.includedFiles).toEqual([]);
+    expect(skill?.violations).toBeUndefined();
+
+    const result = await importLocalSkillSource({
+      rootPath: 'D:\\standalone',
+      selectedPaths: ['Standalone.md'],
     });
     expectImportSuccess(result);
-
     expect(result.imported).toHaveLength(1);
-    expect(result.imported[0].name).toMatch(/^skill-[a-z0-9]{2,8}$/);
+    const imported = result.imported[0]!;
+    expect(imported.name).toBe('standalone');
+    expect(imported.remote!.includedFiles).toEqual([]);
+    expect(imported.instructions).toContain('standalone/Standalone.md');
+    expect(imported.instructions).not.toContain('standalone/SKILL.md');
   });
 
   describe('relocateLocalSkillSource', () => {
@@ -553,6 +656,30 @@ describe('local Skill importer', () => {
     it('throws on a non-existent source id (unchanged contract)', async () => {
       await expect(updateLocalSkillSource('local:does-not-exist'))
         .rejects.toThrow('Local Skill source was not found');
+    });
+
+    it('re-imports a single-file Skill (kind: file) on update and references the real definition file name', async () => {
+      // 更新路径复用 importLocalSkillSource，因此同样受益 PR #550 的 basename 去硬编码修复：
+      // 单文件型 Skill 在「更新」重扫后，指令应引用真实定义文件名 standalone/Standalone.md，
+      // 而非硬编码 SKILL.md。
+      vi.mocked(executeMcpToolCall).mockResolvedValue(createStandaloneLocalSkillToolResult());
+
+      const imported = await importLocalSkillSource({
+        rootPath: 'D:\\standalone',
+        selectedPaths: ['Standalone.md'],
+      });
+      expectImportSuccess(imported);
+      const originalId = imported.source.id;
+      expect(originalId).toBe('local:D:\\standalone');
+
+      // 更新路径：复用 importLocalSkillSource 重新扫描原 rootPath + skillPaths。
+      const updated = await updateLocalSkillSource(originalId);
+      expectImportSuccess(updated);
+      const updatedSkill = updated.imported[0]!;
+      expect(updatedSkill.name).toBe('standalone');
+      expect(updatedSkill.remote!.includedFiles).toEqual([]);
+      expect(updatedSkill.instructions).toContain('standalone/Standalone.md');
+      expect(updatedSkill.instructions).not.toContain('standalone/SKILL.md');
     });
   });
 });
@@ -664,6 +791,37 @@ function createLocalSkillToolResultAt(rootPath: string) {
           directoryPath: rootPath,
           content: skill.content,
         }],
+      },
+    },
+  };
+}
+
+function createStandaloneLocalSkillToolResult() {
+  const content = ['---', 'name: standalone', 'description: A standalone skill', '---', '', '# Standalone', '', 'body'].join('\n');
+  return {
+    ok: true,
+    summary: 'MCP tool executed',
+    output: {
+      ok: true,
+      data: {
+        rootPath: 'D:\\standalone',
+        displayName: 'standalone',
+        directoryName: 'standalone',
+        warnings: [],
+        truncated: false,
+        skills: [
+          {
+            path: 'Standalone.md',
+            directory: '',
+            directoryPath: 'D:\\standalone',
+            content,
+            bodyBytes: content.length,
+            includedFiles: [],
+            omittedFiles: [],
+            scriptFiles: [],
+            warnings: [],
+          },
+        ],
       },
     },
   };

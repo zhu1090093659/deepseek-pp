@@ -24,7 +24,7 @@ describe('shell native host local_skill_preview', () => {
 
     expect(response.error).toBeUndefined();
     const data = response.result?.structuredContent?.data;
-    expect(data?.skills).toHaveLength(2);
+    expect(data?.skills.filter((s: { kind: string }) => s.kind === 'dir')).toHaveLength(2);
 
     const rootSkill = data.skills.find((skill: { path: string }) => skill.path === 'SKILL.md');
     const nestedSkill = data.skills.find((skill: { path: string }) => skill.path === 'nested/SKILL.md');
@@ -43,12 +43,44 @@ describe('shell native host local_skill_preview', () => {
 
     expect(response.error).toBeUndefined();
     const data = response.result?.structuredContent?.data;
-    const skill = data.skills[0];
+    const skill = data.skills.find((s: { path: string }) => s.path === 'SKILL.md');
     expect(skill.includedFiles).toHaveLength(16);
     expect(skill.omittedFiles).toHaveLength(13);
     expect(skill.omittedFiles[0]).toMatchObject({ path: 'references/17.md' });
     expect(data.warnings).not.toContain('13 local supporting file(s) were omitted.');
     expect(existsSync(join(root, 'references/29.md'))).toBe(true);
+  });
+
+  it('discovers a single-file Skill (.md) as kind: file with no bundled resources', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'deepseek-pp-local-skill-single-'));
+    tempRoots.push(root);
+    writeFileSync(join(root, 'Standalone.md'), [
+      '---',
+      'name: standalone',
+      'description: A standalone skill',
+      '---',
+      '',
+      'body',
+    ].join('\n'));
+
+    const response = await callNativeHost('local_skill_preview', { rootPath: root });
+    expect(response.error).toBeUndefined();
+    const data = response.result?.structuredContent?.data;
+    const single = data?.skills.find((s: { path: string }) => s.path === 'Standalone.md');
+    expect(single).toBeDefined();
+    expect(single?.kind).toBe('file');
+    expect(single?.includedFiles).toEqual([]);
+  });
+
+  it('R-SIZE: rejects a Skill file exceeding MAX_LOCAL_SKILL_BYTES', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'deepseek-pp-local-skill-oversize-'));
+    tempRoots.push(root);
+    const oversized = ['---', 'name: big', 'description: big', '---', '', 'x'.repeat(120_001)].join('\n');
+    writeFileSync(join(root, 'SKILL.md'), oversized);
+
+    const response = await callNativeHost('local_skill_preview', { rootPath: root });
+    expect(response.result.isError).toBe(true);
+    expect(response.result.content[0].text).toContain('exceeds the SKILL.md size limit');
   });
 });
 

@@ -57,17 +57,17 @@ function scanLocalSkillFolder(rootInput, selectedPaths) {
   }
 
   const warnings = [];
-  const allSkillPaths = findLocalSkillPaths(rootPath);
-  if (allSkillPaths.length === 0) {
-    throw new Error(`No SKILL.md found under ${rootPath}`);
+  const candidates = findLocalSkillCandidates(rootPath);
+  if (candidates.length === 0) {
+    throw new Error(`No valid Skill files (.md with required frontmatter, or SKILL.md) were found under ${rootPath}`);
   }
-  if (allSkillPaths.length > MAX_LOCAL_SKILLS) {
-    warnings.push(`Found ${allSkillPaths.length} Skills; preview is limited to ${MAX_LOCAL_SKILLS}.`);
+  if (candidates.length > MAX_LOCAL_SKILLS) {
+    warnings.push(`Found ${candidates.length} Skills; preview is limited to ${MAX_LOCAL_SKILLS}.`);
   }
 
-  const limitedPaths = allSkillPaths.slice(0, MAX_LOCAL_SKILLS);
+  const limitedPaths = candidates.slice(0, MAX_LOCAL_SKILLS);
   const selected = selectedPaths
-    ? limitedPaths.filter(path => selectedPaths.has(path))
+    ? limitedPaths.filter(candidate => selectedPaths.has(candidate.path))
     : limitedPaths;
   if (selectedPaths && selected.length === 0) {
     throw new Error('Selected local Skill paths were not found under the root path.');
@@ -75,8 +75,8 @@ function scanLocalSkillFolder(rootInput, selectedPaths) {
 
   let totalContentBytes = 0;
   const skills = [];
-  for (const skillPath of selected) {
-    const item = readLocalSkill(rootPath, skillPath, totalContentBytes);
+  for (const candidate of selected) {
+    const item = readLocalSkill(rootPath, candidate, totalContentBytes);
     totalContentBytes += item.contentBytes;
     skills.push(item.skill);
     warnings.push(...item.warnings);
@@ -88,20 +88,31 @@ function scanLocalSkillFolder(rootInput, selectedPaths) {
     directoryName: basename(rootPath) || rootPath,
     skills,
     warnings: dedupeStrings(warnings),
-    truncated: allSkillPaths.length > MAX_LOCAL_SKILLS || warnings.some(warning => warning.includes('content budget')),
+    truncated: candidates.length > MAX_LOCAL_SKILLS || warnings.some(warning => warning.includes('content budget')),
   };
 }
 
-function findLocalSkillPaths(rootPath) {
+function findLocalSkillCandidates(rootPath) {
   const result = [];
-  walkLocalDirectory(rootPath, '', (relativePath, absolutePath, entry) => {
+  // Wide-net discovery within root + one level of subdirs:
+  // - a SKILL.md marks a directory-style Skill (kind: 'dir');
+  // - any other .md file is a candidate single-file Skill (kind: 'file').
+  // Broad inclusion here; later vetting (frontmatter checks) filters out
+  // mismatches such as README.md.
+  walkLocalDirectory(rootPath, '', (relativePath, _absolutePath, entry) => {
     if (!entry.isFile()) return;
-    if (entry.name === 'SKILL.md') result.push(normalizeRelativePath(relativePath));
-  });
-  return result.sort((a, b) => a.localeCompare(b));
+    const rel = normalizeRelativePath(relativePath);
+    if (entry.name === 'SKILL.md') {
+      result.push({ path: rel, kind: 'dir' });
+    } else if (entry.name.toLowerCase().endsWith('.md')) {
+      result.push({ path: rel, kind: 'file' });
+    }
+  }, { maxDepth: 1 });
+  return result.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function readLocalSkill(rootPath, skillPath, usedContentBytes) {
+function readLocalSkill(rootPath, candidate, usedContentBytes) {
+  const skillPath = candidate.path;
   const absoluteSkillPath = resolveUnderRoot(rootPath, skillPath);
   const skillStat = safeStat(absoluteSkillPath);
   if (!skillStat || !skillStat.isFile()) {
@@ -114,11 +125,21 @@ function readLocalSkill(rootPath, skillPath, usedContentBytes) {
   const content = readTextFile(absoluteSkillPath);
   const directory = normalizeRelativePath(dirname(skillPath));
   const directoryPath = dirname(absoluteSkillPath);
-  const bundle = collectLocalSkillResources(rootPath, directory, content, usedContentBytes + Buffer.byteLength(content, 'utf8'));
+
+  let bundle;
+  if (candidate.kind === 'file') {
+    // Single-file Skills carry no nested resources; the file itself is the
+    // only content. Bundle stays empty (no resource discovery).
+    bundle = { includedFiles: [], omittedFiles: [], scriptFiles: [], warnings: [] };
+  } else {
+    bundle = collectLocalSkillResources(rootPath, directory, content, usedContentBytes + Buffer.byteLength(content, 'utf8'));
+  }
+
   const skill = {
     path: skillPath,
     directory,
     directoryPath,
+    kind: candidate.kind,
     content,
     bodyBytes: Buffer.byteLength(content, 'utf8'),
     includedFiles: bundle.includedFiles,
@@ -126,7 +147,10 @@ function readLocalSkill(rootPath, skillPath, usedContentBytes) {
     scriptFiles: bundle.scriptFiles,
     warnings: bundle.warnings,
   };
-  const contentBytes = skill.bodyBytes + bundle.includedFiles.reduce((sum, file) => sum + file.bytes, 0);
+  // includedFiles no longer carry content; contentBytes reflects only the
+  // Skill body itself. The budget is enforced by file-size accounting inside
+  // collectLocalSkillResources.
+  const contentBytes = skill.bodyBytes;
   return {
     skill,
     contentBytes,
@@ -183,29 +207,36 @@ function collectLocalSkillResources(rootPath, directory, skillBody, startingCont
       continue;
     }
 
-    const content = readTextFile(candidate.absolutePath);
-    const bytes = Buffer.byteLength(content, 'utf8');
-    resourceBytes += bytes;
-    totalBytes += bytes;
-    includedFiles.push({ path: candidate.path, bytes, content });
+    // Index-only import (Plan 2): record the resource path and size, never
+    // read its content. The agent pulls content on demand via local_file_read
+    // after activation (see design rules 6.3).
+    resourceBytes += candidate.bytes;
+    totalBytes += candidate.bytes;
+    includedFiles.push({ path: candidate.path, bytes: candidate.bytes });
   }
 
   return { includedFiles, omittedFiles, scriptFiles, warnings: dedupeStrings(warnings) };
 }
 
+const SYS_DIRS = new Set(['node_modules', '.git', '.svn', '.hg']);
+
 function walkLocalDirectory(rootPath, prefix, visit, options = {}) {
-  const stack = [{ absolutePath: rootPath, relativePrefix: prefix }];
+  // Depth-bound traversal: root is depth 0, first-level subdirs depth 1.
+  // Default maxDepth is Infinity to preserve existing callers that need full
+  // recursion (e.g. resource scanning); callers pass an explicit cap.
+  const maxDepth = typeof options.maxDepth === 'number' ? options.maxDepth : Infinity;
+  const stack = [{ absolutePath: rootPath, relativePrefix: prefix, depth: 0 }];
   while (stack.length > 0) {
     const current = stack.pop();
     const entries = safeReadDirectory(current.absolutePath);
     for (const entry of entries) {
-      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '.svn' || entry.name === '.hg') continue;
+      if (SYS_DIRS.has(entry.name)) continue;
       const absolutePath = join(current.absolutePath, entry.name);
       const relativePath = normalizeRelativePath(join(current.relativePrefix, entry.name));
-      visit(relativePath, absolutePath, entry);
-      if (entry.isDirectory()) {
+      visit(relativePath, absolutePath, entry, current.depth);
+      if (entry.isDirectory() && current.depth < maxDepth) {
         if (options.stopAtNestedSkillRoots && hasLocalSkillFile(absolutePath)) continue;
-        stack.push({ absolutePath, relativePrefix: relativePath });
+        stack.push({ absolutePath, relativePrefix: relativePath, depth: current.depth + 1 });
       }
     }
   }

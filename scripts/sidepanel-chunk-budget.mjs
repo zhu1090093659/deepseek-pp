@@ -66,9 +66,21 @@ if (requestedBrowsers.some((browser) => !browser)) {
 // 376486 raw (+119) / 114604 gzip; raw baseline updated again, gzip stays under
 // the CI-derived baseline. firstChatScreen raw cap raised 406623 -> 406742 by
 // the same +119.
+// Refreshed for the local-skill import strict-frontmatter / real-definition-file
+// PR (#550, head 1e5ea88): the LocalSkillImportPanel now renders local Skill
+// kind labels and contract violations, adding zh-CN/en i18n keys (sidepanel.*
+// kind labels + violation messages) and the rendering code into the shared
+// resource tree / entry chunk that already lives in the initial shell. CI
+// Node-22 measurement matches the local Node-24 measurement exactly: initial
+// shell 378053 raw / 115502 gzip (+1567 raw / +843 gzip over the #544
+// follow-up baseline of 376486 / 114659); first chat screen 408309 raw /
+// 125542 gzip (+1567 raw / +920 gzip). The initialShell baseline below is set
+// to the measured values; firstChatScreen raw cap is raised 406742 -> 408309
+// by the same +1567, and its gzip cap is raised 125000 -> 125800 to keep the
+// +256 encoder-variance allowance that the initialShell budget already grants.
 // The initial shell is sidepanel.html's entry script plus every static modulepreload.
 const BASELINE = Object.freeze({
-  initialShell: { raw: 376_486, gzip: 114_659 },
+  initialShell: { raw: 378_053, gzip: 115_502 },
   routeChunks: {
     ChatPage: { raw: 134_938, gzip: 40_056 },
     CapabilitiesPage: { raw: 160_137, gzip: 35_259 },
@@ -123,7 +135,7 @@ const BUDGET = Object.freeze({
     raw: BASELINE.initialShell.raw,
     gzip: BASELINE.initialShell.gzip + GZIP_ENCODER_VARIANCE_BYTES,
   },
-  firstChatScreen: { raw: 406_742, gzip: 125_000 },
+  firstChatScreen: { raw: 408_309, gzip: 125_800 },
   richRendererIncrement: { raw: 120_000, gzip: 36_000 },
   routeChunks: {
     ChatPage: { raw: 25_000, gzip: 8_000 },

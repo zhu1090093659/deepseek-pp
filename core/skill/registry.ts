@@ -308,6 +308,12 @@ async function stageUpsertImportedSkillSourceAlreadyLocked(
   const decodedIncoming = incomingSkills.map((skill, index) => (
     decodeUserSkill(skill, `skills[${index}]`)
   ));
+  // Consistency assertion: every imported skill must belong to this Skill source.
+  // A single-file local skill stores `remote.path` as e.g. 'Skill-x.md' with an EMPTY
+  // `remote.localDirectory` (the directory of a root-level file is ''). This is
+  // intentionally legal: the assertion below only checks sourceId/provider identity and
+  // never requires a non-empty directory, so both directory-type and single-file-type
+  // skills pass without special-casing.
   for (const [index, skill] of decodedIncoming.entries()) {
     if (skill.source !== 'remote' || !skill.remote) {
       throw new Error(`skills[${index}] must be a remote Skill`);
@@ -350,12 +356,21 @@ async function stageUpsertImportedSkillSourceAlreadyLocked(
     const name = existing ? preferredName : createUniqueSkillName(preferredName, occupiedNames);
     if (!existing && name !== preferredName) renamed += 1;
     occupiedNames.add(name);
+    // Defensive kind default: legacy/local records may omit `kind`, so infer it from the
+    // definition-file path to keep consumers (UI label, index-card path derivation) free of
+    // `undefined`. Rule matches the C1 data contract: path ending in 'SKILL.md' => 'dir',
+    // otherwise 'file'. Only meaningful for local Skills — github/pi Skills have no SKILL.md
+    // on disk, so skip the inference to avoid polluting their metadata with a misleading `kind`.
+    const kind = skill.remote?.provider === 'local'
+      ? inferLocalSkillKind(skill.remote?.path ?? '')
+      : undefined;
     return {
       ...existing,
       ...skill,
       name,
       source: 'remote' as const,
       enabled: existing?.enabled ?? skill.enabled ?? true,
+      metadata: { ...skill.metadata, ...(kind ? { kind } : {}) },
       ...(skill.remote
         ? { remote: { ...existing?.remote, ...skill.remote } }
         : {}),
@@ -466,6 +481,14 @@ function removeSkillFromSources(
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+// Infer a local Skill's kind ('dir' | 'file') from its definition-file path.
+// Directory-type skills are rooted at SKILL.md; single-file skills use any other
+// .md file. Used as a defensive default so legacy records that omit `kind` stay
+// backward compatible with the C1 data contract.
+export function inferLocalSkillKind(path: string): 'file' | 'dir' {
+  return path.endsWith('SKILL.md') ? 'dir' : 'file';
 }
 
 function requireNonEmptyString(value: unknown, label: string): asserts value is string {

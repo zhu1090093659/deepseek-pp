@@ -5,6 +5,7 @@ import type {
   LocalSkillPreview,
   LocalSkillPreviewItem,
 } from '../../../core/types';
+import type { LocaleMessageKey } from '../../../core/i18n';
 import { useI18n } from '../i18n';
 import { sidepanelRuntimeClient } from '../runtime-client';
 
@@ -13,6 +14,32 @@ type ImportState = 'idle' | 'previewing' | 'ready' | 'importing' | 'success' | '
 interface Props {
   onImported: () => Promise<void> | void;
   onCancel: () => void;
+}
+
+// Phase 4 contract augmentation (C7: LocalSkillPreviewItem.kind? / violations?).
+// Agent-T defines these as optional fields in core/types.ts; we cast at read sites
+// so this UI file stays the only one edited while remaining type-safe.
+type SkillPreviewKind = 'file' | 'dir';
+type SkillPreviewViolation = { ruleId: string; message: string; fileName?: string };
+// Omit the base kind/violations so the augmented (fileName-bearing) shapes win,
+// instead of TypeScript intersecting the two incompatible array element types
+// (which silently drops `fileName` from the narrowed element type).
+type SkillPreviewWithMeta = Omit<LocalSkillPreviewItem, 'kind' | 'violations'> & {
+  kind?: SkillPreviewKind;
+  violations?: SkillPreviewViolation[];
+};
+
+function isPreviewSkillSelectable(skill: LocalSkillPreviewItem): boolean {
+  const item = skill as SkillPreviewWithMeta;
+  if (item.importBlock) return false;
+  if (item.violations && item.violations.length > 0) return false;
+  return true;
+}
+
+function basenameOf(filePath: string): string {
+  const segments = filePath.split('/');
+  const last = segments[segments.length - 1];
+  return last || filePath;
 }
 
 export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
@@ -30,7 +57,7 @@ export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
   const selectedCount = selectedPaths.size;
   const selectablePaths = useMemo(() => new Set(
     preview?.skills
-      .filter((skill) => !skill.importBlock)
+      .filter((skill) => isPreviewSkillSelectable(skill))
       .map((skill) => skill.path) ?? [],
   ), [preview]);
   const allSelected = selectablePaths.size > 0 &&
@@ -70,7 +97,7 @@ export default function LocalSkillImportPanel({ onImported, onCancel }: Props) {
       setPreview(nextPreview);
       setSelectedPaths(new Set(
         nextPreview.skills
-          .filter((skill) => !skill.importBlock)
+          .filter((skill) => isPreviewSkillSelectable(skill))
           .map((skill) => skill.path),
       ));
       setState('ready');
@@ -348,7 +375,9 @@ function PreviewSkillRow({ skill, checked, onToggle }: {
   onToggle: () => void;
 }) {
   const { t } = useI18n();
-  const blocked = Boolean(skill.importBlock);
+  const item = skill as SkillPreviewWithMeta;
+  const violations = item.violations;
+  const blocked = Boolean(skill.importBlock) || Boolean(violations && violations.length > 0);
   const blockInstructions = skill.importBlock
     ? getImportBlockInstructions(skill.importBlock, t)
     : '';
@@ -376,6 +405,11 @@ function PreviewSkillRow({ skill, checked, onToggle }: {
             {skill.version && (
               <span className="ds-badge-info inline-flex text-[10px] px-1.5 py-0.5 rounded-full font-medium">
                 v{skill.version}
+              </span>
+            )}
+            {item.kind && (
+              <span className="ds-badge-info inline-flex text-[10px] px-1.5 py-0.5 rounded-full font-medium">
+                {item.kind === 'file' ? t('sidepanel.localSkillImport.kindFile') : t('sidepanel.localSkillImport.kindDir')}
               </span>
             )}
           </div>
@@ -417,6 +451,19 @@ function PreviewSkillRow({ skill, checked, onToggle }: {
                   {t('sidepanel.localSkillImport.readerTechnicalDetail', { detail: skill.importBlock.detail })}
                 </div>
               )}
+            </div>
+          )}
+          {violations && violations.length > 0 && (
+            <div className="mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed" style={{ color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)' }}>
+              {violations.map((violation, index) => {
+                const fileName = violation.fileName ?? basenameOf(skill.path);
+                const clause = t(`sidepanel.localSkillImport.rule.${violation.ruleId}` as LocaleMessageKey);
+                return (
+                  <div key={`${violation.ruleId}-${index}`}>
+                    {t('sidepanel.localSkillImport.violationFailed', { fileName, clause })}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
