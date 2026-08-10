@@ -152,7 +152,14 @@ export interface RequestContext {
   parentMessageId: number | null;
   promptOptions: ResponseCompletePayload["promptOptions"];
   suppressPageEvents: boolean;
+  // Descriptors that were actually authorized for this request. They drive parser
+  // notifications and may lead to execution only through the background grant path.
   toolDescriptors: ToolDescriptor[];
+  // Presentation-only snapshot used by the SSE/XML filter. If request augmentation
+  // fails open, historical prompt context can still make the model emit a known
+  // tag. Preserve the native request and do not execute it, but keep that raw XML
+  // out of the page response.
+  filterToolDescriptors: ToolDescriptor[];
   // The active local skill's skillDir for the current request (isolated by requestId);
   // computed at augment time and passed via RequestBodyModification, pinning cwd during response parsing.
   // Request-scoped data; never use global mutable state (Review #1 concurrency isolation requirement).
@@ -164,6 +171,7 @@ interface RequestContextOverrides {
   originalPrompt?: string;
   agentTaskPrompt?: string;
   toolDescriptors?: ToolDescriptor[];
+  filterToolDescriptors?: ToolDescriptor[];
   promptOptions?: ResponseCompletePayload["promptOptions"];
   activeLocalSkillDir?: string;
 }
@@ -253,6 +261,12 @@ export function hookFetch(): () => void {
       );
     }
     const requestBody = modified?.body ?? init.body;
+    const executableToolDescriptors = augmentationFailed
+      ? []
+      : (modified?.toolDescriptors ?? fallbackToolDescriptors);
+    const filterToolDescriptors = augmentationFailed
+      ? fallbackToolDescriptors
+      : executableToolDescriptors;
     const requestContext = createRequestContext(requestBody, {
       requestId: originalContext.requestId,
       ...(modified?.requestId ? { requestId: modified.requestId } : {}),
@@ -260,9 +274,8 @@ export function hookFetch(): () => void {
         modified?.originalPrompt ?? originalContext.originalPrompt,
       agentTaskPrompt:
         modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-      toolDescriptors: augmentationFailed
-        ? []
-        : (modified?.toolDescriptors ?? fallbackToolDescriptors),
+      toolDescriptors: executableToolDescriptors,
+      filterToolDescriptors,
       ...(modified?.promptOptions
         ? { promptOptions: modified.promptOptions }
         : {}),
@@ -377,6 +390,12 @@ export function hookXHR(): () => void {
             );
           }
           const requestBody = modified?.body ?? body;
+          const executableToolDescriptors = augmentationFailed
+            ? []
+            : (modified?.toolDescriptors ?? fallbackToolDescriptors);
+          const filterToolDescriptors = augmentationFailed
+            ? fallbackToolDescriptors
+            : executableToolDescriptors;
           cancelResponseInterceptor = setupXHRResponseInterceptor(
             xhr,
             createRequestContext(requestBody, {
@@ -386,9 +405,8 @@ export function hookXHR(): () => void {
                 modified?.originalPrompt ?? originalContext.originalPrompt,
               agentTaskPrompt:
                 modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-              toolDescriptors: augmentationFailed
-                ? []
-                : (modified?.toolDescriptors ?? fallbackToolDescriptors),
+              toolDescriptors: executableToolDescriptors,
+              filterToolDescriptors,
               ...(modified?.promptOptions
                 ? { promptOptions: modified.promptOptions }
                 : {}),
@@ -514,6 +532,10 @@ export function createRequestContext(
         : typeof body.prompt === "string"
           ? body.prompt
           : "";
+    const toolDescriptors = overrides.toolDescriptors ?? [
+      ...hookState.toolDescriptors,
+    ];
+    const filterToolDescriptors = overrides.filterToolDescriptors ?? toolDescriptors;
     return {
       requestId,
       originalPrompt,
@@ -526,14 +548,17 @@ export function createRequestContext(
         originalPrompt,
         overrides.agentTaskPrompt ?? bodyPrompt,
       ),
-      toolDescriptors: overrides.toolDescriptors ?? [
-        ...hookState.toolDescriptors,
-      ],
+      toolDescriptors,
+      filterToolDescriptors,
       ...(overrides.activeLocalSkillDir !== undefined
         ? { activeLocalSkillDir: overrides.activeLocalSkillDir }
         : {}),
     };
   } catch {
+    const toolDescriptors = overrides.toolDescriptors ?? [
+      ...hookState.toolDescriptors,
+    ];
+    const filterToolDescriptors = overrides.filterToolDescriptors ?? toolDescriptors;
     return {
       requestId,
       originalPrompt: overrides.originalPrompt ?? "",
@@ -546,9 +571,8 @@ export function createRequestContext(
         overrides.originalPrompt ?? "",
         overrides.agentTaskPrompt ?? "",
       ),
-      toolDescriptors: overrides.toolDescriptors ?? [
-        ...hookState.toolDescriptors,
-      ],
+      toolDescriptors,
+      filterToolDescriptors,
       ...(overrides.activeLocalSkillDir !== undefined
         ? { activeLocalSkillDir: overrides.activeLocalSkillDir }
         : {}),
@@ -1555,7 +1579,7 @@ function createPassiveDeepSeekStreamState(
   const frameDecoder = createDeepSeekSseFrameDecoder();
   const summary = createDeepSeekStreamSummary();
   const filter = new XmlToolStreamFilter(
-    requestContext.toolDescriptors,
+    requestContext.filterToolDescriptors,
     requestContext.originalPrompt,
   );
   let cancelled = false;

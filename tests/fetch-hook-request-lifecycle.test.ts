@@ -596,6 +596,76 @@ describe('fetch hook request lifecycle', () => {
     }
   });
 
+  it('filters known tool XML without executing it when fetch augmentation fails open', async () => {
+    const nativeFetch = window.fetch;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leakedToolCall = '<shell_session_begin>{"cwd":"C:\\Users\\mark0\\Documents"}</shell_session_begin>';
+    const rawWire = `data: ${JSON.stringify({
+      p: 'response/content',
+      o: 'APPEND',
+      v: `before\n${leakedToolCall}\nafter`,
+    })}\n\n`;
+    const fetchImpl = vi.fn(async () => new Response(rawWire));
+    window.fetch = fetchImpl;
+    updateHookState({ toolDescriptors: [makeDescriptor('shell_session_begin')] });
+    onRequestBody.mockRejectedValue(new Error('DeepSeek++ main/content bridge disconnected.'));
+
+    let uninstallFetch: (() => void) | null = null;
+    try {
+      uninstallFetch = hookFetch();
+      const response = await window.fetch('https://chat.deepseek.com/api/v0/chat/completion', {
+        method: 'POST',
+        body: '{"prompt":"hello"}',
+      });
+      const visibleWire = await response.text();
+
+      expect(visibleWire).not.toContain('<shell_session_begin>');
+      expect(visibleWire).not.toContain('C:\\Users\\mark0\\Documents');
+      expect(onToolCall).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(onResponseComplete).toHaveBeenCalledOnce());
+    } finally {
+      uninstallFetch?.();
+      consoleError.mockRestore();
+      window.fetch = nativeFetch;
+    }
+  });
+
+  it('filters known tool XML without executing it when XHR augmentation fails open', async () => {
+    const nativeXMLHttpRequest = globalThis.XMLHttpRequest;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leakedToolCall = '<shell_session_begin>{"cwd":"C:\\Users\\mark0\\Documents"}</shell_session_begin>';
+    const rawWire = `data: ${JSON.stringify({
+      p: 'response/content',
+      o: 'APPEND',
+      v: `before\n${leakedToolCall}\nafter`,
+    })}\n\n`;
+    const FakeXMLHttpRequest = createFakeXMLHttpRequest(rawWire, 200);
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest);
+    updateHookState({ toolDescriptors: [makeDescriptor('shell_session_begin')] });
+    onRequestBody.mockRejectedValue(new Error('DeepSeek++ main/content bridge disconnected.'));
+
+    let uninstallXHR: (() => void) | null = null;
+    try {
+      uninstallXHR = hookXHR();
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'https://chat.deepseek.com/api/v0/chat/completion');
+      xhr.send('{"prompt":"hello"}');
+
+      await vi.waitFor(() => {
+        expect((xhr as unknown as FakeXMLHttpRequestInstance).sentBody).toBe('{"prompt":"hello"}');
+      });
+      await vi.waitFor(() => expect(onResponseComplete).toHaveBeenCalledOnce());
+
+      expect(xhr.responseText).not.toContain('<shell_session_begin>');
+      expect(xhr.responseText).not.toContain('C:\\Users\\mark0\\Documents');
+      expect(onToolCall).not.toHaveBeenCalled();
+    } finally {
+      uninstallXHR?.();
+      consoleError.mockRestore();
+      vi.stubGlobal('XMLHttpRequest', nativeXMLHttpRequest);
+    }
+  });
+
   it('cancels XHR network failures without publishing a false completion', async () => {
     const nativeXMLHttpRequest = globalThis.XMLHttpRequest;
     const rawWire = 'data: {"p":"response/content","o":"APPEND","v":"partial"}\n\n';
