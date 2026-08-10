@@ -46,7 +46,7 @@ export const content = {
     joinProjectNamed: '加入项目：{name}',
     moveToProjectNamed: '移动到项目：{name}',
     currentProjectNamed: '已在项目：{name}',
-    removeFromProjectNamed: '移除项目：{name}',
+    removeFromProjectNamed: '移出当前项目',
     conversationActions: '会话操作',
     newConversationInProject: '在 {name} 下开启新对话',
     useNextConversation: '下一条新会话使用 {name}',
