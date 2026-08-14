@@ -13,7 +13,6 @@ import {
 import { join, resolve } from 'node:path';
 import {
   DEFAULT_PYTHON_TIMEOUT_MS,
-  DEFAULT_SHELL,
   DEFAULT_TIMEOUT_MS,
   HOST_FEATURES,
   MAX_OUTPUT_BYTES,
@@ -30,6 +29,7 @@ import {
   getEnvironmentPath,
   getWindowsVersionLabel,
   localAppData,
+  resolveDefaultShell,
   splitPath,
 } from './os-adapter.mjs';
 
@@ -54,7 +54,7 @@ function createShellStatusResult() {
         osRelease: osRelease(),
         osVersion: osVersion(),
         windowsVersion: getWindowsVersionLabel(),
-        shell: DEFAULT_SHELL,
+        shell: resolveDefaultShell(),
         cwd: homedir(),
         nodeVersion: process.version,
         hostname: hostname(),
@@ -89,7 +89,7 @@ async function executeShellTool(args) {
 }
 function execCommand(command, { cwd, env, timeoutMs }) {
   return new Promise((resolve, reject) => {
-    const { shellBin, shellArgs } = createShellInvocation(command);
+    const { shellBin, shellArgs } = createShellInvocation(command, env);
 
     const child = spawn(shellBin, shellArgs, {
       cwd,

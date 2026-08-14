@@ -290,6 +290,16 @@ const PRINT_CWD = IS_WIN ? 'Get-Location' : 'pwd';
 const CD_PARENT = IS_WIN ? 'Set-Location ..' : 'cd ..';
 const EXPORT_VAR = IS_WIN ? '$env:DPP_SMOKE = "persisted"' : 'export DPP_SMOKE=persisted';
 const PRINT_VAR_CMD = IS_WIN ? 'Write-Output $env:DPP_SMOKE' : 'echo $DPP_SMOKE';
+const PRINT_PATH = IS_WIN ? 'Write-Output $env:Path' : 'printf "%s\\n" "$PATH"';
+const SESSION_PATH_PREFIX = IS_WIN ? 'C:\\deepseek-session-expected' : '/tmp/deepseek-session-expected';
+const SESSION_PATH_SEPARATOR = IS_WIN ? ';' : ':';
+const SESSION_PATH_ENV = IS_WIN
+  ? {
+      Path: `${SESSION_PATH_PREFIX}${SESSION_PATH_SEPARATOR}${process.env.Path || process.env.PATH || ''}`,
+    }
+  : {
+      PATH: `${SESSION_PATH_PREFIX}${SESSION_PATH_SEPARATOR}${process.env.PATH || ''}`,
+    };
 
 // The session_id from begin must be threaded into subsequent exec/end calls, so
 // use an explicit imperative block that talks to one long-lived host instead
@@ -302,12 +312,36 @@ const PRINT_VAR_CMD = IS_WIN ? 'Write-Output $env:DPP_SMOKE' : 'echo $DPP_SMOKE'
     // begin: start the session in tmpdir so we can verify cwd drifts from there.
     sendNativeMessage(child, makeEnvelope('tools/call', {
       name: 'shell_session_begin',
-      arguments: { cwd: tmpdir() },
+      arguments: {
+        cwd: tmpdir(),
+        env: SESSION_PATH_ENV,
+      },
     }));
     let res = await readNativeMessage(child);
     sessionId = res.result?.structuredContent?.data?.session_id;
     assert(sessionId, 'expected session_id from begin');
     assert(res.result?.structuredContent?.data?.cwd === tmpdir(), 'expected begin cwd to match requested');
+    const sessionShell = res.result?.structuredContent?.data?.shell;
+assert(
+  sessionShell === reportedShell,
+  `expected session shell ${sessionShell} to match shell_status ${reportedShell}`,
+);
+
+sendNativeMessage(child, makeEnvelope('tools/call', {
+  name: 'shell_session_exec',
+  arguments: {
+    session_id: sessionId,
+    command: PRINT_PATH,
+  },
+}));
+
+res = await readNativeMessage(child);
+
+const sessionPath = res.result?.structuredContent?.data?.stdout.trim() || '';
+assert(
+  sessionPath.startsWith(SESSION_PATH_PREFIX),
+  `expected session PATH to start with ${SESSION_PATH_PREFIX}, got "${sessionPath}"`,
+);
 
     // exec: basic stdout
     sendNativeMessage(child, makeEnvelope('tools/call', {
