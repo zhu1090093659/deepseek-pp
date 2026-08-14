@@ -156,12 +156,14 @@ const GZIP_ENCODER_VARIANCE_BYTES = 256;
 // Raised 125500 -> 125600 for 1.14.0: the same-build measurement under the
 // CI Node-22.23.1 runtime is 125600 gzip (local Node-25: 125307), so the cap
 // is set to the CI measurement to stay green on both runtimes.
+// Raised 125600 -> 125602 for the project-sidebar menu stability fix: the
+// zh-CN label change leaves the raw graph at 408548 and shifts CI gzip by 2B.
 const BUDGET = Object.freeze({
   initialShell: {
     raw: BASELINE.initialShell.raw,
     gzip: BASELINE.initialShell.gzip + GZIP_ENCODER_VARIANCE_BYTES,
   },
-  firstChatScreen: { raw: 408_548, gzip: 125_600 },
+  firstChatScreen: { raw: 408_548, gzip: 125_602 },
   richRendererIncrement: { raw: 120_000, gzip: 36_000 },
   routeChunks: {
     ChatPage: { raw: 25_000, gzip: 8_000 },

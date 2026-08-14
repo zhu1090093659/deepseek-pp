@@ -70,7 +70,7 @@ type ProjectSectionHandlers = Pick<
 
 interface BoundProjectSection extends HTMLElement {
   __dppProjectSidebarHandlers?: ProjectSectionHandlers;
-  __dppProjectSidebarPointerHandled?: boolean;
+  __dppProjectSidebarPointerTarget?: Element;
 }
 
 interface ProjectConversationMenuState {
@@ -95,6 +95,7 @@ export function startDeepSeekProjectSidebarOrganizer(
   let projectConversationMenu: ProjectConversationMenuState | null = null;
   let rendering = false;
   let cachedHistoryItems: readonly HistoryItem[] = [];
+  let projectSectionRenderPending = true;
   const expandedProjectIds = new Set<string>();
   const showAllProjectIds = new Set<string>();
 
@@ -107,7 +108,7 @@ export function startDeepSeekProjectSidebarOrganizer(
     } catch (error) {
       statusMessage = getLabels().operationFailed(getErrorMessage(error));
       console.error('DeepSeek++ failed to load project sidebar state', error);
-      schedule();
+      schedule(true);
     }
   };
 
@@ -119,16 +120,22 @@ export function startDeepSeekProjectSidebarOrganizer(
       }
     }
     statusMessage = '';
-    schedule();
+    schedule(true);
   };
 
-  const schedule = () => {
+  const schedule = (renderProjectSection = false) => {
+    if (renderProjectSection) projectSectionRenderPending = true;
     if (stopped || timer || rendering) return;
     timer = setTimeout(() => {
       timer = null;
       rendering = true;
       try {
-        cachedHistoryItems = extractHistoryItems(document, EMPTY_HISTORY_STATE);
+        const nextHistoryItems = extractHistoryItems(document, EMPTY_HISTORY_STATE);
+        const shouldRenderProjectSection = projectSectionRenderPending ||
+          historyItemsChanged(cachedHistoryItems, nextHistoryItems) ||
+          projectSectionMountChanged(document, nextHistoryItems);
+        cachedHistoryItems = nextHistoryItems;
+        projectSectionRenderPending = false;
         renderProjectSidebar(document, {
           historyItems: cachedHistoryItems,
           state,
@@ -142,7 +149,7 @@ export function startDeepSeekProjectSidebarOrganizer(
             } else {
               expandedProjectIds.add(projectId);
             }
-            schedule();
+            schedule(true);
           },
           onToggleShowAll(projectId) {
             if (showAllProjectIds.has(projectId)) {
@@ -150,14 +157,14 @@ export function startDeepSeekProjectSidebarOrganizer(
             } else {
               showAllProjectIds.add(projectId);
             }
-            schedule();
+            schedule(true);
           },
           onOpenProjectConversation(conversationId, href) {
             openProjectConversation(conversationId, href, cachedHistoryItems);
           },
           onOpenProjectConversationMenu(menu) {
             projectConversationMenu = isSameProjectConversationMenu(projectConversationMenu, menu) ? null : menu;
-            schedule();
+            schedule(true);
           },
           onRemoveConversationFromProject(conversationId) {
             void mutateProjectSidebarState(async () => {
@@ -207,6 +214,7 @@ export function startDeepSeekProjectSidebarOrganizer(
           },
           nativeMenuConversation,
           activeProjectConversationMenu: projectConversationMenu,
+          preserveProjectSection: !shouldRenderProjectSection,
           onNativeJoinProject(projectId) {
             void mutateProjectSidebarState(async () => {
               if (!nativeMenuConversation) return;
@@ -230,6 +238,9 @@ export function startDeepSeekProjectSidebarOrganizer(
             });
           },
         });
+      } catch (error) {
+        projectSectionRenderPending = true;
+        throw error;
       } finally {
         rendering = false;
       }
@@ -244,7 +255,7 @@ export function startDeepSeekProjectSidebarOrganizer(
     } catch (error) {
       statusMessage = getLabels().operationFailed(getErrorMessage(error));
       console.error('DeepSeek++ failed to update project sidebar state', error);
-      schedule();
+      schedule(true);
     }
   };
 
@@ -268,7 +279,7 @@ export function startDeepSeekProjectSidebarOrganizer(
       } catch (error) {
         statusMessage = getLabels().operationFailed(getErrorMessage(error));
         console.error('DeepSeek++ failed to apply project sidebar update', error);
-        schedule();
+        schedule(true);
       }
     }
   };
@@ -276,18 +287,29 @@ export function startDeepSeekProjectSidebarOrganizer(
   const navigationHandler = () => {
     nativeMenuConversation = null;
     projectConversationMenu = null;
-    schedule();
+    schedule(true);
   };
 
   const clickCaptureHandler = (event: MouseEvent) => {
     const target = event.target;
     if (!(target instanceof Node)) return;
-    if (target instanceof Element && target.closest(`#${PROJECT_SECTION_ID}`)) return;
+    const targetElement = target instanceof Element ? target : target.parentElement;
+    if (projectConversationMenu && targetElement) {
+      const activeMenu = targetElement.closest('.dpp-project-sidebar__conversation-menu');
+      const activeButton = targetElement.closest<HTMLButtonElement>('[data-dpp-project-conversation-menu]');
+      const clickedActiveButton = activeButton?.dataset.dppProjectConversationId === projectConversationMenu.conversationId &&
+        activeButton.dataset.dppProjectId === projectConversationMenu.projectId;
+      if (!activeMenu && !clickedActiveButton) {
+        projectConversationMenu = null;
+        schedule(true);
+      }
+    }
+    if (targetElement?.closest(`#${PROJECT_SECTION_ID}`)) return;
     const conversation = findHistoryConversationForNode(target, cachedHistoryItems);
     if (conversation) {
       nativeMenuConversation = conversation;
       projectConversationMenu = null;
-      schedule();
+      schedule(true);
       return;
     }
     if (target instanceof Element && target.closest(`[${NATIVE_MENU_ENHANCER_ATTR}="true"]`)) return;
@@ -315,7 +337,7 @@ export function startDeepSeekProjectSidebarOrganizer(
 
   return {
     refreshLabels() {
-      schedule();
+      schedule(true);
     },
     stop() {
       stopped = true;
@@ -374,6 +396,7 @@ export function renderProjectSidebar(
     onTogglePending(projectId: string): void;
     nativeMenuConversation?: NativeMenuConversation | null;
     activeProjectConversationMenu?: ProjectConversationMenuState | null;
+    preserveProjectSection?: boolean;
     onNativeJoinProject?(projectId: string): void;
     onNativeRemoveProject?(): void;
     historyItems?: readonly HistoryItem[];
@@ -389,7 +412,7 @@ export function renderProjectSidebar(
   }
 
   const section = ensureProjectSection(root, mount);
-  renderProjectSection(section, historyItems, options);
+  if (!options.preserveProjectSection) renderProjectSection(section, historyItems, options);
   hideProjectHistoryRows(historyItems, options.state?.conversations ?? []);
   renderNativeMenuEnhancements(root, options);
   return section;
@@ -579,22 +602,26 @@ function bindProjectSection(
   section.addEventListener('pointerdown', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (!target.closest('button') && !target.closest('a[data-dpp-project-conversation-id]')) return;
-    boundSection.__dppProjectSidebarPointerHandled = true;
+    const actionTarget = target.closest('button, a[data-dpp-project-conversation-id]');
+    if (!actionTarget) return;
+    boundSection.__dppProjectSidebarPointerTarget = actionTarget;
     handleProjectSectionAction(event);
-    setTimeout(() => {
-      boundSection.__dppProjectSidebarPointerHandled = false;
-    }, 0);
   }, true);
 
   section.addEventListener('click', (event) => {
-    if (boundSection.__dppProjectSidebarPointerHandled) {
+    const pointerTarget = boundSection.__dppProjectSidebarPointerTarget;
+    boundSection.__dppProjectSidebarPointerTarget = undefined;
+    if (pointerTarget && event.target instanceof Node &&
+      (pointerTarget === event.target || pointerTarget.contains(event.target))) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
     handleProjectSectionAction(event);
   });
+  section.addEventListener('pointercancel', () => {
+    boundSection.__dppProjectSidebarPointerTarget = undefined;
+  }, true);
 }
 
 function ensureProjectSection(
@@ -619,6 +646,27 @@ function getElementById(root: ParentNode, id: string): HTMLElement | null {
   if (root instanceof Document) return root.getElementById(id);
   if (root instanceof DocumentFragment) return root.getElementById(id);
   return root.querySelector?.<HTMLElement>(`#${id}`) ?? null;
+}
+
+function historyItemsChanged(
+  previous: readonly HistoryItem[],
+  next: readonly HistoryItem[],
+): boolean {
+  return previous.length !== next.length || previous.some((item, index) => {
+    const nextItem = next[index];
+    return !nextItem || item.sessionId !== nextItem.sessionId || item.title !== nextItem.title ||
+      item.element !== nextItem.element;
+  });
+}
+
+function projectSectionMountChanged(
+  root: ParentNode,
+  historyItems: readonly HistoryItem[],
+): boolean {
+  const section = getElementById(root, PROJECT_SECTION_ID);
+  const mount = findProjectSidebarMount(root, historyItems);
+  if (!mount) return Boolean(section);
+  return !section || section.parentElement !== mount.container || section.nextElementSibling !== mount.before;
 }
 
 function findProjectSidebarMount(

@@ -21,7 +21,7 @@ const labels: ProjectSidebarOrganizerLabels = {
   joinProjectNamed: (name) => `加入项目：${name}`,
   moveToProjectNamed: (name) => `移动到项目：${name}`,
   currentProjectNamed: (name) => `已在项目：${name}`,
-  removeFromProjectNamed: (name) => `移除项目：${name}`,
+  removeFromProjectNamed: () => '移出当前项目',
   conversationActions: '会话操作',
   newConversationInProject: (name) => `在 ${name} 下开启新对话`,
   useNextConversation: (name) => `下一条新会话使用 ${name}`,
@@ -354,7 +354,8 @@ describe('DeepSeek project sidebar organizer', () => {
 
     document.querySelector<HTMLButtonElement>('[data-dpp-project-conversation-menu="true"]')?.click();
     await flushProjectSidebar();
-    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')?.textContent).toContain('移除项目：deepseek-pp');
+    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')?.textContent)
+      .toContain('移出当前项目');
 
     document.querySelector<HTMLButtonElement>('[data-dpp-project-remove-conversation="true"]')?.click();
     await Promise.resolve();
@@ -386,11 +387,80 @@ describe('DeepSeek project sidebar organizer', () => {
       menuButton.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }));
       menuButton.click();
       await flushProjectSidebar();
-      expect(document.querySelector('.dpp-project-sidebar__conversation-menu')?.textContent).toContain('移除项目：deepseek-pp');
+      expect(document.querySelector('.dpp-project-sidebar__conversation-menu')?.textContent)
+        .toContain('移出当前项目');
     } finally {
       document.removeEventListener('click', swallowHostClick, true);
       controller.stop();
     }
+  });
+
+  it('handles a physical pointer gesture only once when click arrives in a later task', async () => {
+    const state = createProjectState();
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      return { ok: true };
+    });
+    mountHistoryDom();
+
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+
+    await dispatchPointerClickWithTaskGap(
+      document.querySelector<HTMLButtonElement>('[data-dpp-project-conversation-menu="true"]')!,
+    );
+    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')?.textContent)
+      .toContain('移出当前项目');
+
+    await dispatchPointerClickWithTaskGap(
+      document.querySelector<HTMLButtonElement>('[data-dpp-project-conversation-menu="true"]')!,
+    );
+    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')).toBeNull();
+    controller.stop();
+  });
+
+  it('closes the project conversation menu when clicking elsewhere in the project sidebar', async () => {
+    const state = createProjectState();
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      return { ok: true };
+    });
+    mountHistoryDom();
+
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+
+    document.querySelector<HTMLButtonElement>('[data-dpp-project-conversation-menu="true"]')?.click();
+    await flushProjectSidebar();
+    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')).not.toBeNull();
+
+    document.querySelector('.dpp-project-sidebar__section-title')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushProjectSidebar();
+    expect(document.querySelector('.dpp-project-sidebar__conversation-menu')).toBeNull();
+    controller.stop();
+  });
+
+  it('preserves project action nodes across unrelated host mutations', async () => {
+    const state = createProjectState();
+    sendMessage.mockImplementation(async (message) => {
+      if (message.type === 'GET_PROJECT_CONTEXT_STATE') return state;
+      return { ok: true };
+    });
+    mountHistoryDom();
+
+    const controller = startDeepSeekProjectSidebarOrganizer(() => labels);
+    await flushProjectSidebar();
+    const actionButton = document.querySelector<HTMLButtonElement>('[data-dpp-project-action="new-project-conversation"]');
+    expect(actionButton).not.toBeNull();
+
+    const unrelatedHostNode = document.createElement('div');
+    unrelatedHostNode.dataset.testid = 'unrelated-host-mutation';
+    document.body.appendChild(unrelatedHostNode);
+    await flushProjectSidebar();
+
+    expect(document.querySelector('[data-dpp-project-action="new-project-conversation"]')).toBe(actionButton);
+    controller.stop();
   });
 
   it('removes injected UI and restores hidden history rows on stop', async () => {
@@ -619,4 +689,11 @@ async function flushProjectSidebar() {
   await Promise.resolve();
   vi.advanceTimersByTime(120);
   await Promise.resolve();
+}
+
+async function dispatchPointerClickWithTaskGap(target: HTMLElement): Promise<void> {
+  target.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }));
+  vi.advanceTimersByTime(1);
+  target.click();
+  await flushProjectSidebar();
 }
