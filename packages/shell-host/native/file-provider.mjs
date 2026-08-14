@@ -1,4 +1,18 @@
-import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import {
@@ -13,6 +27,8 @@ export function createFileToolHandlers({ logLine }) {
     { name: 'local_file_stat', handle: createLocalFileStatResult },
     { name: 'local_file_read', handle: createLocalFileReadResult },
     { name: 'local_file_write', handle: args => createLocalFileWriteResult(args, logLine) },
+    { name: 'local_file_edit', handle: args => createLocalFileEditResult(args, logLine) },
+    { name: 'local_file_search', handle: args => createLocalFileSearchResult(args, logLine) },
   ];
 }
 
@@ -46,6 +62,12 @@ function createLocalFileReadResult(args) {
   const inputPath = typeof args?.path === 'string' ? args.path.trim() : '';
   if (!inputPath) return toolError('path is required and must be a non-empty string.');
 
+  // 检测行模式
+  const mode = args?.mode === 'lines' ? 'lines' : 'chars';
+  const startLine = typeof args?.start_line === 'number' && args.start_line >= 1 ? Math.floor(args.start_line) : 1;
+  const endLine = typeof args?.end_line === 'number' && args.end_line >= 1 ? Math.floor(args.end_line) : undefined;
+
+  // 字符模式参数
   const start = typeof args?.start === 'number' && args.start >= 0 ? Math.floor(args.start) : 0;
   const maxChars = typeof args?.max_chars === 'number' && args.max_chars >= 1
     ? Math.min(Math.floor(args.max_chars), MAX_LOCAL_FILE_READ_CHARS)
@@ -56,20 +78,54 @@ function createLocalFileReadResult(args) {
     const stat = safeStat(resolvedPath);
     if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${resolvedPath}`);
 
-    const { content, totalChars, charsRead } = readTextFileWindow(resolvedPath, start, maxChars);
-    const nextStart = start + charsRead;
+    let result;
+    if (mode === 'lines') {
+      const lineResult = readTextFileLines(resolvedPath, startLine, endLine);
+      result = {
+        content: lineResult.content,
+        startLine: lineResult.startLine,
+        endLine: lineResult.endLine,
+        totalLines: lineResult.totalLines,
+        totalChars: lineResult.totalChars,
+        lineEnding: lineResult.lineEnding,
+      };
+    } else {
+      const { content, totalChars, charsRead } = readTextFileWindow(resolvedPath, start, maxChars);
+      result = {
+        content,
+        totalChars,
+        charsRead,
+        startLine: undefined,
+        endLine: undefined,
+        nextStart: start + charsRead,
+      };
+    }
+
+    const sha256 = hashFileSha256(resolvedPath);
+    const nextStart = mode === 'lines'
+      ? (result.endLine < result.totalLines ? result.endLine + 1 : null)
+      : result.nextStart;
+    const hasMore = mode === 'lines'
+      ? (result.endLine < result.totalLines)
+      : (nextStart < result.totalChars);
+
     return {
-      content: [{ type: 'text', text: `Read ${content.length} characters from ${resolvedPath}` }],
+      content: [{ type: 'text', text: `Read ${result.content.length} characters from ${resolvedPath}` }],
       structuredContent: {
         ok: true,
         data: {
           path: resolvedPath,
-          content,
-          start,
-          nextStart,
-          maxChars,
-          totalChars,
-          truncated: nextStart < totalChars,
+          content: result.content,
+          startLine: result.startLine ?? undefined,
+          endLine: result.endLine ?? undefined,
+          totalLines: result.totalLines,
+          totalChars: result.totalChars,
+          sizeBytes: stat.size,
+          sha256,
+          hasMore,
+          nextStart: nextStart,
+          lineEnding: result.lineEnding,
+          mode,
         },
       },
     };
@@ -118,6 +174,231 @@ function createLocalFileWriteResult(args, logLine) {
   }
 }
 
+function createLocalFileEditResult(args, logLine) {
+  const inputPath = typeof args?.path === 'string' ? args.path.trim() : '';
+
+  try {
+    const plan = prepareLocalFileEdit(args);
+    const result = applyPreparedLocalFileEdit(plan);
+
+    logLine(
+      `local_file_edit OK path=${result.path} replacements=${result.replacements} ` +
+      `bytesBefore=${result.bytesBefore} bytesAfter=${result.bytesAfter} ` +
+      `sha256Before=${result.sha256Before} sha256After=${result.sha256After}`,
+    );
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Edited ${result.path}: ${result.replacements} exact replacement.`,
+      }],
+      structuredContent: {
+        ok: true,
+        data: result,
+      },
+    };
+  } catch (error) {
+    logLine(
+      `local_file_edit ERROR path=${inputPath} error=${errorMessage(error)}`,
+    );
+
+    return toolError(errorMessage(error));
+  }
+}
+
+function createLocalFileSearchResult(args, logLine) {
+  const inputPath = typeof args?.path === 'string' ? args.path.trim() : '';
+  if (!inputPath) return toolError('path is required and must be a non-empty string.');
+
+  const query = typeof args?.query === 'string' ? args.query.trim() : '';
+  if (!query) return toolError('query is required and must be a non-empty string.');
+
+  const caseSensitive = args?.case_sensitive !== false;
+  const useRegex = args?.use_regex === true;
+  const maxResults = typeof args?.max_results === 'number' && args.max_results >= 1
+    ? Math.min(Math.floor(args.max_results), 100)
+    : 10;
+  const contextLines = typeof args?.context_lines === 'number' && args.context_lines >= 0
+    ? Math.min(Math.floor(args.context_lines), 50)
+    : 0;
+  const offset = typeof args?.offset === 'number' && args.offset >= 0
+    ? Math.floor(args.offset)
+    : 0;
+  const expectedSha256 = typeof args?.expected_sha256 === 'string'
+    ? args.expected_sha256.trim().toLowerCase()
+    : '';
+
+  try {
+    const resolvedPath = resolveLocalPath(inputPath);
+    const stat = safeStat(resolvedPath);
+    if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${resolvedPath}`);
+
+    const fd = openSync(resolvedPath, 'r');
+    try {
+      const before = fstatSync(fd);
+      const totalBytes = before.size;
+      const sha256 = hashFdSha256(fd);
+      if (expectedSha256 && expectedSha256 !== sha256) {
+        throw new Error('file changed during local_file_search; search the file again');
+      }
+
+    let searchFn;
+    if (useRegex) {
+      // No global flag: g keeps lastIndex across .test() calls and misses matches.
+      const flags = caseSensitive ? '' : 'i';
+      const regex = new RegExp(query, flags);
+      searchFn = (line) => regex.test(line);
+    } else {
+      const searchStr = caseSensitive ? query : query.toLowerCase();
+      searchFn = (line) => {
+        const compare = caseSensitive ? line : line.toLowerCase();
+        return compare.includes(searchStr);
+      };
+    }
+
+      const matches = [];
+      const pending = [];
+      const beforeRing = [];
+      const collectStart = offset;
+      const collectLimit = offset + maxResults;
+      let totalMatches = 0;
+      let totalLines = 0;
+
+      for (const line of iterLinesByByte(fd, totalBytes)) {
+        totalLines++;
+
+        if (contextLines > 0) {
+          for (let j = pending.length - 1; j >= 0; j--) {
+            pending[j].after.push(line);
+            pending[j].afterRemaining--;
+            if (pending[j].afterRemaining <= 0) {
+              const m = pending.splice(j, 1)[0];
+              matches.push({
+                line: m.line,
+                content: m.content,
+                context: { before: m.before, after: m.after },
+              });
+            }
+          }
+        }
+
+        if (searchFn(line)) {
+          const matchIndex = totalMatches;
+          totalMatches++;
+
+          if (matchIndex >= collectStart && matchIndex < collectLimit) {
+            if (contextLines > 0) {
+              pending.push({
+                line: totalLines,
+                content: line,
+                before: beforeRing.slice(),
+                after: [],
+                afterRemaining: contextLines,
+              });
+            } else {
+              matches.push({ line: totalLines, content: line });
+            }
+          }
+        }
+
+        if (contextLines > 0) {
+          beforeRing.push(line);
+          if (beforeRing.length > contextLines) beforeRing.shift();
+        }
+      }
+
+      for (const m of pending) {
+        matches.push({
+          line: m.line,
+          content: m.content,
+          context: { before: m.before, after: m.after },
+        });
+      }
+
+      const returnedMatches = matches.length;
+      const hasMore = offset + returnedMatches < totalMatches;
+      const nextOffset = hasMore ? offset + returnedMatches : null;
+      const truncated = hasMore;
+
+      const after = fstatSync(fd);
+      if (
+        after.size !== before.size
+        || after.mtimeMs !== before.mtimeMs
+        || after.ctimeMs !== before.ctimeMs
+      ) {
+        throw new Error('file changed during local_file_search; search the file again');
+      }
+
+      logLine(`local_file_search OK path=${resolvedPath} query=${query} matches=${totalMatches} returned=${matches.length} truncated=${truncated}`);
+
+      const summary = totalMatches === 0
+        ? `No matches found for ${JSON.stringify(query)} in ${resolvedPath} (searched ${totalLines} lines).`
+        : `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} for ${JSON.stringify(query)} in ${resolvedPath}${hasMore ? ` (showing first ${returnedMatches}, next offset ${nextOffset})` : ''}.`;
+
+      return {
+        content: [{ type: 'text', text: summary }],
+        structuredContent: {
+          ok: true,
+          data: {
+            path: resolvedPath,
+            matches,
+            totalMatches,
+            offset,
+            returnedMatches,
+            nextOffset,
+            hasMore,
+            truncated,
+            sha256,
+            totalLines,
+            query,
+            caseSensitive,
+            useRegex,
+          },
+        },
+      };
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    logLine(`local_file_search ERROR path=${inputPath} error=${errorMessage(error)}`);
+    return toolError(errorMessage(error));
+  }
+}
+
+function* iterLinesByByte(fd, totalBytes) {
+  const chunkSize = 64 * 1024;
+  let bytePos = 0;
+  let carry = Buffer.alloc(0);
+
+  while (bytePos < totalBytes) {
+    const want = Math.min(chunkSize, totalBytes - bytePos);
+    const buf = Buffer.alloc(want);
+    const got = readSync(fd, buf, 0, want, bytePos);
+    if (got === 0) break;
+    bytePos += got;
+    const atEof = bytePos >= totalBytes;
+    const combined = Buffer.concat([carry, buf.subarray(0, got)]);
+    let lineStart = 0;
+    for (let i = 0; i < combined.length; i++) {
+      if (combined[i] !== 0x0A) continue;
+      let end = i;
+      if (end > lineStart && combined[end - 1] === 0x0D) end--;
+      yield combined.subarray(lineStart, end).toString('utf8');
+      lineStart = i + 1;
+    }
+    if (atEof) {
+      if (lineStart < combined.length) {
+        let end = combined.length;
+        if (end > lineStart && combined[end - 1] === 0x0D) end--;
+        yield combined.subarray(lineStart, end).toString('utf8');
+      }
+      carry = Buffer.alloc(0);
+    } else {
+      carry = combined.subarray(lineStart);
+    }
+  }
+}
+
 export function resolveLocalPath(input) {
   const trimmed = input.trim();
   if (trimmed === '~') return homedir();
@@ -138,8 +419,344 @@ export function readTextFile(filePath) {
   return readFileSync(filePath, 'utf8');
 }
 
+function hashFdSha256(fd) {
+  const hash = createHash('sha256');
+  const buffer = Buffer.alloc(256 * 1024);
+  let position = 0;
+
+  while (true) {
+    const bytesRead = readSync(
+      fd,
+      buffer,
+      0,
+      buffer.length,
+      position,
+    );
+
+    if (bytesRead === 0) break;
+
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+
+  return hash.digest('hex');
+}
+
+function hashFileSha256(filePath) {
+  const hash = createHash('sha256');
+  const fd = openSync(filePath, 'r');
+
+  try {
+    const buffer = Buffer.alloc(256 * 1024);
+    let position = 0;
+
+    while (true) {
+      const bytesRead = readSync(
+        fd,
+        buffer,
+        0,
+        buffer.length,
+        position,
+      );
+
+      if (bytesRead === 0) break;
+
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+
+    return hash.digest('hex');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function prepareLocalFileEdit(args) {
+  const inputPath = typeof args?.path === 'string' ? args.path.trim() : '';
+  if (!inputPath) {
+    throw new Error('path is required and must be a non-empty string.');
+  }
+
+  const oldText = args?.old_text;
+  if (typeof oldText !== 'string' || oldText.length === 0) {
+    throw new Error('old_text is required and must be a non-empty string.');
+  }
+
+  const newText = args?.new_text;
+  if (typeof newText !== 'string') {
+    throw new Error('new_text is required and must be a string.');
+  }
+
+  const expectedSha256 = typeof args?.expected_sha256 === 'string'
+    ? args.expected_sha256.trim().toLowerCase()
+    : '';
+
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    throw new Error(
+      'expected_sha256 is required and must be a 64-character SHA-256 hex string.',
+    );
+  }
+
+  const resolvedPath = resolveLocalPath(inputPath);
+  const stat = safeStat(resolvedPath);
+
+  if (!stat || !stat.isFile()) {
+    throw new Error(`Local file is not editable: ${resolvedPath}`);
+  }
+
+  // 一次性读取同一份原始字节，再同时用于 SHA 校验和文本编辑，
+  // 避免“读到的内容”和“计算 SHA 的内容”不是同一个版本。
+  const originalBytes = readFileSync(resolvedPath);
+
+  const sha256Before = createHash('sha256')
+    .update(originalBytes)
+    .digest('hex');
+
+  if (sha256Before !== expectedSha256) {
+    throw new Error(
+      `File changed since it was read: SHA-256 mismatch for ${resolvedPath}. ` +
+      'Read the file again before editing. No changes were made.',
+    );
+  }
+
+  const originalContent = originalBytes.toString('utf8');
+  const matchCount = countExactOccurrences(originalContent, oldText);
+
+  if (matchCount === 0) {
+    throw new Error(
+      `old_text was not found in ${resolvedPath}. ` +
+      'Read the file again and use the exact current text. No changes were made.',
+    );
+  }
+
+  if (matchCount > 1) {
+    throw new Error(
+      `old_text matched ${matchCount} locations in ${resolvedPath}. ` +
+      'Provide more surrounding context so exactly one location matches. No changes were made.',
+    );
+  }
+
+  const matchIndex = originalContent.indexOf(oldText);
+
+  const updatedContent =
+    originalContent.slice(0, matchIndex) +
+    newText +
+    originalContent.slice(matchIndex + oldText.length);
+
+  const sha256After = createHash('sha256')
+    .update(updatedContent, 'utf8')
+    .digest('hex');
+
+  return {
+    path: resolvedPath,
+    originalContent,
+    updatedContent,
+    replacements: 1,
+    bytesBefore: originalBytes.length,
+    bytesAfter: Buffer.byteLength(updatedContent, 'utf8'),
+    sha256Before,
+    sha256After,
+  };
+}
+
+export function applyPreparedLocalFileEdit(plan) {
+  if (!plan || typeof plan !== 'object') {
+    throw new Error('A prepared local file edit plan is required.');
+  }
+
+  const tempPath =
+    `${plan.path}.dpp-${process.pid}-${randomUUID()}.tmp`;
+
+  let tempCreated = false;
+
+  try {
+    // 1. 新内容只写临时文件，不碰正式文件
+    writeFileSync(
+      tempPath,
+      plan.updatedContent,
+      {
+        encoding: 'utf8',
+        flag: 'wx',
+      },
+    );
+
+    tempCreated = true;
+
+    // 2. 验证临时文件
+    const tempBytes = readFileSync(tempPath);
+    const tempContent = tempBytes.toString('utf8');
+
+    const tempSha256 = createHash('sha256')
+      .update(tempBytes)
+      .digest('hex');
+
+    if (
+      tempContent !== plan.updatedContent ||
+      tempSha256 !== plan.sha256After
+    ) {
+      throw new Error(
+        `Temporary file verification failed for ${plan.path}. ` +
+        'Original file was not modified.',
+      );
+    }
+
+    // 3. 最后一次检查正式文件有没有被 IDEA / 用户再次修改
+    const currentBytes = readFileSync(plan.path);
+
+    const currentSha256 = createHash('sha256')
+      .update(currentBytes)
+      .digest('hex');
+
+    if (currentSha256 !== plan.sha256Before) {
+      throw new Error(
+        `File changed after the edit was prepared: SHA-256 mismatch for ${plan.path}. ` +
+        'Read the file again before editing. Original file was not modified.',
+      );
+    }
+
+    // 4. 临时文件已经验证通过，此时才替换正式文件
+    renameSync(tempPath, plan.path);
+    tempCreated = false;
+
+    // 5. 再读取真正的正式文件做最终验证
+    const finalBytes = readFileSync(plan.path);
+    const finalContent = finalBytes.toString('utf8');
+
+    const finalSha256 = createHash('sha256')
+      .update(finalBytes)
+      .digest('hex');
+
+    if (
+      finalContent !== plan.updatedContent ||
+      finalSha256 !== plan.sha256After
+    ) {
+      throw new Error(
+        `Final file verification failed for ${plan.path}.`,
+      );
+    }
+
+    return {
+      path: plan.path,
+      replacements: plan.replacements,
+      bytesBefore: plan.bytesBefore,
+      bytesAfter: finalBytes.length,
+      sha256Before: plan.sha256Before,
+      sha256After: finalSha256,
+    };
+  } finally {
+    // 写临时文件后任何一步失败，都清理临时文件
+    if (tempCreated) {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // Cleanup failure must not hide the original edit error.
+      }
+    }
+  }
+}
+
+function countExactOccurrences(content, needle) {
+  let count = 0;
+  let start = 0;
+
+  while (start <= content.length - needle.length) {
+    const index = content.indexOf(needle, start);
+    if (index === -1) break;
+
+    count++;
+    start = index + 1;
+  }
+
+  return count;
+}
+
+
 // 按需字节读取字符窗口，避免整文件读入内存（根除 OOM）。
 // 返回 { content: 窗口字符串(≤maxChars 字符), totalChars: 整文件字符数 }。
+function readTextFileLines(filePath, startLine, endLine) {
+  const stat = safeStat(filePath);
+  if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${filePath}`);
+  const totalBytes = stat.size;
+  if (totalBytes === 0) {
+    return { content: '', startLine: 1, endLine: 0, totalLines: 0, totalChars: 0, lineEnding: 'LF' };
+  }
+
+  const fd = openSync(filePath, 'r');
+  try {
+    const chunkSize = 64 * 1024;
+    let bytePos = 0;
+    let carry = Buffer.alloc(0);
+    let totalLines = 0;
+    let totalChars = 0;
+    let lineEnding = 'LF';
+    const wantedStart = startLine;
+    const wantedEnd = endLine === undefined ? Infinity : endLine;
+    const parts = [];
+
+    while (bytePos < totalBytes) {
+      const want = Math.min(chunkSize, totalBytes - bytePos);
+      const buf = Buffer.alloc(want);
+      const got = readSync(fd, buf, 0, want, bytePos);
+      if (got === 0) break;
+      bytePos += got;
+      const atEof = bytePos >= totalBytes;
+      const combined = Buffer.concat([carry, buf.subarray(0, got)]);
+      let lineStart = 0;
+
+      for (let i = 0; i < combined.length; i++) {
+        if (combined[i] !== 0x0A) continue;
+        let end = i;
+        let sepLen = 1;
+        if (end > lineStart && combined[end - 1] === 0x0D) {
+          end--;
+          sepLen = 2;
+          lineEnding = 'CRLF';
+        }
+        const text = combined.subarray(lineStart, end).toString('utf8');
+        totalLines++;
+        totalChars += text.length + sepLen;
+        if (totalLines >= wantedStart && totalLines <= wantedEnd) {
+          parts.push(text);
+        }
+        lineStart = i + 1;
+      }
+
+      if (atEof) {
+        if (lineStart < combined.length) {
+          let end = combined.length;
+          if (end > lineStart && combined[end - 1] === 0x0D) {
+            end--;
+            lineEnding = 'CRLF';
+          }
+          const text = combined.subarray(lineStart, end).toString('utf8');
+          totalLines++;
+          totalChars += text.length;
+          if (totalLines >= wantedStart && totalLines <= wantedEnd) {
+            parts.push(text);
+          }
+        }
+        carry = Buffer.alloc(0);
+      } else {
+        carry = combined.subarray(lineStart);
+      }
+    }
+
+    const actualStart = Math.max(1, Math.min(startLine, totalLines));
+    const actualEnd = endLine === undefined ? totalLines : Math.min(endLine, totalLines);
+    const lineSep = lineEnding === 'CRLF' ? '\r\n' : '\n';
+    return {
+      content: parts.join(lineSep),
+      startLine: actualStart,
+      endLine: actualEnd,
+      totalLines,
+      totalChars,
+      lineEnding,
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readTextFileWindow(filePath, startChar, maxChars) {
   const stat = safeStat(filePath);
   if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${filePath}`);

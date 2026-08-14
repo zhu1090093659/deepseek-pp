@@ -30,7 +30,17 @@ describe('createShellMcpPresetInput', () => {
     // tools so a fresh install cannot execute commands until the user opts in.
     const preset = createShellMcpPresetInput();
     const allowlisted = new Set(preset.allowlist?.toolNames ?? []);
-    const gatedTools = ['shell_exec', 'python_exec', 'local_file_write', 'local_file_read', 'local_file_stat', 'shell_session_begin', 'shell_session_exec', 'shell_session_end'];
+    const gatedTools = [
+    'shell_exec',
+    'python_exec',
+    'local_file_write',
+    'local_file_edit',
+    'local_file_read',
+    'local_file_stat',
+    'shell_session_begin',
+    'shell_session_exec',
+    'shell_session_end',
+  ];
     for (const tool of gatedTools) {
       expect(allowlisted.has(tool as string)).toBe(false);
     }
@@ -42,6 +52,7 @@ describe('createShellMcpPresetInput', () => {
     expect(SHELL_TOOL_NAMES).toContain('shell_session_begin');
     expect(SHELL_TOOL_NAMES).toContain('shell_session_exec');
     expect(SHELL_TOOL_NAMES).toContain('shell_session_end');
+    expect(SHELL_TOOL_NAMES).toContain('local_file_edit');
   });
 
   it('upgrades legacy read-only Shell allowlists with local file tools too', () => {
@@ -51,14 +62,15 @@ describe('createShellMcpPresetInput', () => {
     })).toEqual({
       mode: 'allow',
       toolNames: [
-        'shell_status',
-        'python_status',
-        'local_skill_preview',
-        'local_folder_pick',
-        'local_file_stat',
-        'local_file_read',
-        'local_file_write',
-      ],
+      'shell_status',
+      'python_status',
+      'local_skill_preview',
+      'local_folder_pick',
+      'local_file_stat',
+      'local_file_read',
+      'local_file_write',
+      'local_file_edit',
+    ],
     });
   });
 
@@ -69,15 +81,16 @@ describe('createShellMcpPresetInput', () => {
     })).toEqual({
       mode: 'allow',
       toolNames: [
-        'shell_status',
-        'python_status',
-        'shell_exec',
-        'local_skill_preview',
-        'local_folder_pick',
-        'local_file_stat',
-        'local_file_read',
-        'local_file_write',
-      ],
+      'shell_status',
+      'python_status',
+      'shell_exec',
+      'local_skill_preview',
+      'local_folder_pick',
+      'local_file_stat',
+      'local_file_read',
+      'local_file_write',
+      'local_file_edit',
+    ],
     });
   });
 

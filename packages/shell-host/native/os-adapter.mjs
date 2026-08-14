@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { Buffer } from 'node:buffer';
+import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir, platform, release as osRelease } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -6,9 +7,48 @@ import { promisify } from 'node:util';
 import { DEFAULT_SHELL, WINDOWS_POWERSHELL_UTF8_PREAMBLE } from './contracts.mjs';
 
 const execFileAsync = promisify(execFile);
+let cachedWindowsDefaultShell = null;
 
 export const PATH_SEPARATOR = platform() === 'win32' ? ';' : ':';
 export const localAppData = process.env.LOCALAPPDATA || resolve(homedir(), 'AppData', 'Local');
+
+export function resolveDefaultShell() {
+  if (platform() !== 'win32') return DEFAULT_SHELL;
+
+  const configuredShell = typeof process.env.DPP_SHELL === 'string'
+    ? process.env.DPP_SHELL.trim()
+    : '';
+
+  if (configuredShell) return configuredShell;
+
+  if (cachedWindowsDefaultShell) {
+    return cachedWindowsDefaultShell;
+  }
+
+  const probe = spawnSync(
+    'pwsh.exe',
+    [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'exit 0',
+    ],
+    {
+      env: process.env,
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 3000,
+    },
+  );
+
+  cachedWindowsDefaultShell =
+    !probe.error && probe.status === 0
+      ? 'pwsh.exe'
+      : DEFAULT_SHELL;
+
+  return cachedWindowsDefaultShell;
+}
 
 const SHELL_ENV_BASE_KEYS = platform() === 'win32'
   ? ['SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE',
@@ -103,21 +143,38 @@ export function createPythonChildEnv() {
   env.PIP_DISABLE_PIP_VERSION_CHECK = '1';
   return env;
 }
+export function createWindowsPathRestorePreamble(env) {
+  const pathValue = getEnvironmentPath(env);
+  if (!pathValue) return '';
 
-export function createShellInvocation(command) {
+  const encodedPath = Buffer.from(pathValue, 'utf8').toString('base64');
+
+  return `$env:Path = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encodedPath}'))`;
+}
+
+export function createShellInvocation(command, env = process.env) {
+  const shellBin = resolveDefaultShell();
+
   if (platform() === 'win32') {
+    const pathRestorePreamble = createWindowsPathRestorePreamble(env);
+
     return {
-      shellBin: DEFAULT_SHELL,
+      shellBin,
       shellArgs: [
         '-NoLogo',
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${command}`,
+        [
+          WINDOWS_POWERSHELL_UTF8_PREAMBLE,
+          pathRestorePreamble,
+          command,
+        ].filter(Boolean).join('; '),
       ],
     };
   }
-  return { shellBin: DEFAULT_SHELL, shellArgs: ['-c', command] };
+
+  return { shellBin, shellArgs: ['-c', command] };
 }
 
 export function splitPath(value) {

@@ -28,6 +28,7 @@ export const LOCAL_FILE_SHELL_TOOL_NAMES = [
   'local_file_stat',
   'local_file_read',
   'local_file_write',
+  'local_file_edit',
 ] as const;
 
 export function createShellMcpPresetInput(
@@ -49,7 +50,7 @@ export function createShellMcpPresetInput(
     },
     limits: {
       maxResultBytes: 128_000,
-      maxToolCount: 8,
+      maxToolCount: 16,
     },
     allowlist: {
       mode: 'allow',

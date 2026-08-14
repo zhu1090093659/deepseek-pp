@@ -49,10 +49,17 @@ function makeTransport(windows: McpCallToolResult[]): McpProtocolTransport {
   return { request } as unknown as McpProtocolTransport;
 }
 
-function windowResult(content: string, nextStart: number, totalChars: number, truncated: boolean): McpCallToolResult {
+function windowResult(
+  content: string,
+  nextStart: number,
+  totalChars: number,
+  truncated: boolean,
+  sha256?: string,
+  sizeBytes?: number,
+): McpCallToolResult {
   return {
     content: [{ type: 'text', text: `Read ${content.length} characters` }],
-    structuredContent: { data: { path: '/x', content, start: 0, nextStart, maxChars: content.length, totalChars, truncated } },
+    structuredContent: { data: { path: '/x', content, start: 0, nextStart, maxChars: content.length, totalChars, truncated, ...(sha256 !== undefined ? { sha256 } : {}), ...(sizeBytes !== undefined ? { sizeBytes } : {}) } },
   };
 }
 
@@ -358,5 +365,66 @@ describe('callLocalFileReadAuto (扩展侧 auto 续读)', () => {
     const data = autoReadData(result);
     expect(data.truncated).toBe(true);
     expect(data.windows).toBe(1000);
+  });
+
+  // ===== snapshot 一致性 + 元数据透传（本次修复）=====
+
+  it('单窗透传 sha256 与 sizeBytes', async () => {
+    const transport = makeTransport([
+      windowResult('AAAA', 4, 4, false, 'abc123', 4),
+    ]);
+    const result = await callLocalFileReadAuto(server, transport, { call } as never);
+    expect(result.ok).toBe(true);
+    const data = autoReadData(result) as { sha256?: unknown; sizeBytes?: unknown };
+    expect(data.sha256).toBe('abc123');
+    expect(data.sizeBytes).toBe(4);
+  });
+
+  it('多窗 SHA 相同且保留 sha256', async () => {
+    const transport = makeTransport([
+      windowResult('AAAA', 4, 8, true, 'same', 8),
+      windowResult('BBBB', 8, 8, false, 'same', 8),
+    ]);
+    const result = await callLocalFileReadAuto(server, transport, { call } as never);
+    expect(result.ok).toBe(true);
+    const data = autoReadData(result) as { content?: unknown; sha256?: unknown; sizeBytes?: unknown };
+    expect(data.content).toBe('AAAABBBB');
+    expect(data.sha256).toBe('same');
+    expect(data.sizeBytes).toBe(8);
+  });
+
+  it('两窗 SHA 不同必须失败，不得返回混合文件', async () => {
+    const transport = makeTransport([
+      windowResult('AAAA', 4, 8, true, 'sha-A', 8),
+      windowResult('BBBB', 8, 8, false, 'sha-B', 8),
+    ]);
+    const result = await callLocalFileReadAuto(server, transport, { call } as never);
+    expect(result.ok).toBe(false);
+    const data = autoReadData(result) as { content?: unknown; windows?: number };
+    expect(data.content).not.toBe('AAAABBBB');
+    expect(data.windows).toBe(1);
+  });
+
+  it('第一窗有 SHA、后续窗 SHA 缺失必须失败', async () => {
+    const transport = makeTransport([
+      windowResult('AAAA', 4, 8, true, 'sha-A', 8),
+      windowResult('BBBB', 8, 8, false, undefined, 8),
+    ]);
+    const result = await callLocalFileReadAuto(server, transport, { call } as never);
+    expect(result.ok).toBe(false);
+    const data = autoReadData(result) as { content?: unknown; windows?: number };
+    expect(data.content).not.toBe('AAAABBBB');
+    expect(data.windows).toBe(1);
+  });
+
+  it('legacy 宿主无 SHA 时仍能读取，但不伪造 SHA', async () => {
+    const transport = makeTransport([
+      windowResult('AAAA', 4, 4, false),
+    ]);
+    const result = await callLocalFileReadAuto(server, transport, { call } as never);
+    expect(result.ok).toBe(true);
+    const data = autoReadData(result) as { content?: unknown; sha256?: unknown };
+    expect(data.content).toBe('AAAA');
+    expect(data.sha256).toBeFalsy();
   });
 });

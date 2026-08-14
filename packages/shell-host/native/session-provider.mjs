@@ -2,13 +2,16 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir, platform } from 'node:os';
 import {
-  DEFAULT_SHELL,
   DEFAULT_TIMEOUT_MS,
   SESSION_IDLE_TIMEOUT_MS,
   SESSION_MARKER_PREFIX,
   SESSION_MAX_OUTPUT_BYTES,
 } from './contracts.mjs';
-import { createChildEnv } from './os-adapter.mjs';
+import {
+  createChildEnv,
+  createWindowsPathRestorePreamble,
+  resolveDefaultShell,
+} from './os-adapter.mjs';
 import { formatExecSummary } from './process-provider.mjs';
 
 export function createSessionProvider({ logLine }) {
@@ -42,7 +45,7 @@ export function createSessionProvider({ logLine }) {
     const requestedShell = typeof args?.shell === 'string' && args.shell.trim() ? args.shell.trim() : null;
     const cwd = typeof args?.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : homedir();
     const env = createChildEnv(args?.env);
-    const shellBin = requestedShell || DEFAULT_SHELL;
+    const shellBin = requestedShell || resolveDefaultShell();
     const shellArgs = createPersistentShellArgs(requestedShell);
 
     let child;
@@ -69,6 +72,12 @@ export function createSessionProvider({ logLine }) {
       };
       if (platform() !== 'win32') spawnOptions.detached = true;
       child = spawn(shellBin, shellArgs, spawnOptions);
+if (platform() === 'win32') {
+  const pathRestorePreamble = createWindowsPathRestorePreamble(env);
+  if (pathRestorePreamble) {
+    child.stdin.write(`${pathRestorePreamble}\n`);
+  }
+}
     } catch (err) {
       return {
         isError: true,
