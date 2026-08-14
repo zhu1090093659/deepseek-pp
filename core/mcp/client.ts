@@ -263,6 +263,8 @@ export async function callLocalFileReadAuto(
   let lastTruncated = false;
   let remainingBudget = totalBudget;
   let budgetExhausted = false;
+  let lastSha256: string | null = null;
+  let lastSizeBytes: number | null = null;
 
   for (let guard = 0; guard < AUTO_READ_MAX_WINDOWS; guard++) {
     // 每窗只申请「剩余总预算」与「单窗传输上限」中的较小值，使总返回量严格不超过 max_chars。
@@ -286,19 +288,38 @@ export async function callLocalFileReadAuto(
       );
       windowResult = unwrapMcpResponse(response, 'mcp_tool_call_failed') as McpCallToolResult;
     } catch (err) {
-      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, `第 ${contents.length + 1} 窗调用失败: ${err instanceof Error ? err.message : String(err)}`);
+      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, `第 ${contents.length + 1} 窗调用失败: ${err instanceof Error ? err.message : String(err)}`, false, lastSha256, lastSizeBytes);
     }
     const data = (windowResult.structuredContent as Record<string, unknown> | undefined)?.data as
       | Record<string, unknown>
       | undefined;
     const content = typeof data?.content === 'string' ? data.content : undefined;
     if (typeof content !== 'string') {
-      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, '无法从工具结果解析窗口内容');
+      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, '无法从工具结果解析窗口内容', false, lastSha256, lastSizeBytes);
+    }
+    if (typeof data?.totalChars === 'number') totalChars = data.totalChars;
+    const windowSha256 = typeof data?.sha256 === 'string' ? data.sha256 : null;
+    const windowSizeBytes = typeof data?.sizeBytes === 'number' ? data.sizeBytes : null;
+    // 一致性校验必须发生在 push 之前：避免把不同版本文件的内容混入返回结果。
+    if (windowSha256) {
+      if (lastSha256 === null) {
+        lastSha256 = windowSha256;
+      } else if (windowSha256 !== lastSha256) {
+        return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, 'file changed during local_file_read; read the file again', false, lastSha256, lastSizeBytes);
+      }
+    } else if (lastSha256 !== null) {
+      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, 'file changed during local_file_read; read the file again', false, lastSha256, lastSizeBytes);
+    }
+    if (windowSizeBytes !== null) {
+      if (lastSizeBytes === null) {
+        lastSizeBytes = windowSizeBytes;
+      } else if (windowSizeBytes !== lastSizeBytes) {
+        return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, 'file changed during local_file_read; read the file again', false, lastSha256, lastSizeBytes);
+      }
     }
     contents.push(content);
     // 按 Unicode 码点计数扣减预算，与宿主 charsRead 同义（代理对不会被重复计为两个字符）。
     remainingBudget -= Array.from(content).length;
-    if (typeof data?.totalChars === 'number') totalChars = data.totalChars;
     const truncated = data?.truncated === true;
     lastTruncated = truncated;
     if (!truncated) break;
@@ -308,14 +329,14 @@ export async function callLocalFileReadAuto(
     }
     const nextStart = typeof data?.nextStart === 'number' ? data.nextStart : NaN;
     if (!Number.isFinite(nextStart) || nextStart <= prevNextStart) {
-      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, `nextStart 未前进 (${prevNextStart} -> ${nextStart})`);
+      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, `nextStart 未前进 (${prevNextStart} -> ${nextStart})`, false, lastSha256, lastSizeBytes);
     }
     prevNextStart = nextStart;
     start = nextStart;
   }
   // 预算耗尽是调用方通过 max_chars 主动设定的上限，属正常成功返回，只需如实标记 truncated。
   if (budgetExhausted) {
-    return buildAutoReadResult(server, options, startedAt, contents, totalChars, true, undefined, true);
+    return buildAutoReadResult(server, options, startedAt, contents, totalChars, true, undefined, true, lastSha256, lastSizeBytes);
   }
   // M1 修复：若因达到最大窗口数而退出循环，且最后一窗仍 truncated（文件超过上限），
   // 必须 fail-closed（ok:false 且 truncated:true），不得谎报为成功读取（fail-open）。
@@ -329,9 +350,11 @@ export async function callLocalFileReadAuto(
       false,
       `auto 续读窗口数已达上限（${AUTO_READ_MAX_WINDOWS}），文件可能过大未完整读取`,
       true,
+      lastSha256,
+      lastSizeBytes,
     );
   }
-  return buildAutoReadResult(server, options, startedAt, contents, totalChars, true, undefined);
+  return buildAutoReadResult(server, options, startedAt, contents, totalChars, true, undefined, false, lastSha256, lastSizeBytes);
 }
 
 function buildAutoReadResult(
@@ -343,15 +366,21 @@ function buildAutoReadResult(
   ok: boolean,
   failReason?: string,
   truncated = false,
+  sha256: string | null = null,
+  sizeBytes: number | null = null,
 ): ToolResult {
   const call = options.call;
   const windows = contents.length;
   // 输出形状与非 auto 路径同构：单一 data.content 字符串，而非逐窗数组。
   const content = contents.join('');
   const charsReturned = Array.from(content).length;
+  const shaText = sha256 ? `
+SHA-256: ${sha256}` : '';
+  const sizeText = sizeBytes !== null ? `
+Size bytes: ${sizeBytes}` : '';
   const detail = ok
-    ? `已通过 auto 续读分 ${windows} 窗读取，返回 ${charsReturned} 字符（文件共 ${totalChars} 字符）${truncated ? '，已达 max_chars 上限，内容未完整' : '，无静默截断'}。完整内容见 output.data.content。`
-    : `local_file_read auto 续读异常终止（${failReason ?? '未知原因'}）。已读取 ${windows} 窗，共 ${charsReturned} 字符。`;
+    ? `已通过 auto 续读分 ${windows} 窗读取，返回 ${charsReturned} 字符（文件共 ${totalChars} 字符）${truncated ? '，已达 max_chars 上限，内容未完整' : '，无静默截断'}。完整内容见 output.data.content。${shaText}${sizeText}`
+    : `local_file_read auto 续读异常终止（${failReason ?? '未知原因'}）。已读取 ${windows} 窗，共 ${charsReturned} 字符。${shaText}${sizeText}`;
   // 将聚合结果装配为标准 McpCallToolResult 后交回 normalizeMcpToolResult：
   // 由其统一施加 maxResultBytes 字节上限、计时与 output 归一化，避免另起一条绕过统一
   // normalization 的返回路径（这正是评审指出的 max_chars/maxResultBytes 失效根因）。
@@ -365,6 +394,8 @@ function buildAutoReadResult(
         charsReturned,
         truncated,
         content,
+        sha256,
+        sizeBytes,
       },
     },
     isError: !ok,

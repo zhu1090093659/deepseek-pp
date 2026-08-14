@@ -156,10 +156,34 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Absolute or home-relative local file path to read.' },
-        start: { type: 'integer', minimum: 0, description: 'Starting character offset. Default 0.' },
-        max_chars: { type: 'integer', minimum: 1, maximum: MAX_LOCAL_FILE_READ_CHARS, description: 'Maximum characters to return. Default 16000.' },
+        mode: { type: 'string', enum: ['chars', 'lines'], description: 'Read mode: "chars" for character offset (default) or "lines" for line numbers.' },
+        start: { type: 'integer', minimum: 0, description: 'Starting character offset. Default 0. Only used in "chars" mode.' },
+        max_chars: { type: 'integer', minimum: 1, maximum: MAX_LOCAL_FILE_READ_CHARS, description: 'Maximum characters to return. Default 16000. Only used in "chars" mode.' },
+        start_line: { type: 'integer', minimum: 1, description: 'Starting line number (1-based). Only used in "lines" mode.' },
+        end_line: { type: 'integer', minimum: 1, description: 'End line number (inclusive, 1-based). Only used in "lines" mode.' },
       },
       required: ['path'],
+      additionalProperties: false,
+    },
+    annotations: { operation: 'read', risk: 'medium' },
+  },
+  {
+    name: 'local_file_search',
+    title: 'Search Local Text File',
+    description: 'Search for text in a UTF-8 local file and return matching lines with line numbers and optional context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute or home-relative local file path to search.' },
+        query: { type: 'string', description: 'Search query string or regex pattern.' },
+        case_sensitive: { type: 'boolean', description: 'Whether the search should be case-sensitive. Default true.' },
+        use_regex: { type: 'boolean', description: 'Whether to interpret query as a regular expression. Default false.' },
+        max_results: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum number of matches to return. Default 10.' },
+        context_lines: { type: 'integer', minimum: 0, maximum: 50, description: 'Number of lines of context before and after each match. Default 0.' },
+        offset: { type: 'integer', minimum: 0, description: 'Number of matching results to skip before returning matches. Default 0.' },
+        expected_sha256: { type: 'string', pattern: '^[a-fA-F0-9]{64}$', description: 'Optional SHA-256 of the complete file. If provided, the search fails if the current file hash differs.' },
+      },
+      required: ['path', 'query'],
       additionalProperties: false,
     },
     annotations: { operation: 'read', risk: 'medium' },
@@ -181,6 +205,47 @@ const TOOL_DEFINITIONS = [
     },
     annotations: { operation: 'write', risk: 'high' },
   },
+
+  {
+  name: 'local_file_edit',
+  title: 'Edit Local Text File',
+  description: 'Safely edit exactly one occurrence of text in an existing UTF-8 local file. Requires the SHA-256 returned by local_file_read and rejects stale, missing, or ambiguous edits.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Absolute or home-relative path of the existing local file to edit.',
+      },
+      old_text: {
+        type: 'string',
+        description: 'Exact existing text to replace. It must occur exactly once.',
+      },
+      new_text: {
+        type: 'string',
+        description: 'Replacement text. May be empty to delete the matched text.',
+      },
+      expected_sha256: {
+        type: 'string',
+        pattern: '^[a-fA-F0-9]{64}$',
+        description: 'SHA-256 of the complete file returned by the latest local_file_read. The edit is rejected if the file changed.',
+      },
+    },
+    required: [
+      'path',
+      'old_text',
+      'new_text',
+      'expected_sha256',
+    ],
+    additionalProperties: false,
+  },
+  annotations: {
+    operation: 'write',
+    risk: 'high',
+  },
+},
+
+
   {
     name: 'shell_session_begin',
     title: 'Open Persistent Shell Session',

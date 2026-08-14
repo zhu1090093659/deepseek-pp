@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir, platform, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -139,7 +144,9 @@ await testMethod('tools/list', 'tools/list', undefined, (res) => {
     'local_folder_pick',
     'local_file_stat',
     'local_file_read',
+    'local_file_search',
     'local_file_write',
+    'local_file_edit',
     'shell_session_begin',
     'shell_session_exec',
     'shell_session_end',
@@ -147,6 +154,113 @@ await testMethod('tools/list', 'tools/list', undefined, (res) => {
   assert(res.result.tools.length === requiredTools.length, `expected exactly ${requiredTools.length} tools, got ${res.result.tools.length}`);
   assert(JSON.stringify(names) === JSON.stringify(requiredTools), `unexpected tool order: ${names.join(', ')}`);
 });
+
+// --- Safe local file edit ---
+//
+// Exercise the real Native Host path:
+// local_file_read -> sha256 -> local_file_edit -> verified file content.
+{
+  const editDir = mkdtempSync(
+    resolve(tmpdir(), 'dpp-file-edit-smoke-'),
+  );
+
+  const editPath = resolve(editDir, 'Test.java');
+
+  const original = `class Test {
+  String value = "old";
+}
+`;
+
+  writeFileSync(editPath, original, 'utf8');
+
+  let expectedSha256 = null;
+
+  await testMethod(
+    'tools/call local_file_read (sha256)',
+    'tools/call',
+    {
+      name: 'local_file_read',
+      arguments: {
+        path: editPath,
+        max_chars: 1000,
+      },
+    },
+    (res) => {
+      assert(res.result, 'expected result');
+
+      const data = res.result.structuredContent?.data;
+
+      assert(data, 'expected structured local_file_read data');
+
+      assert(
+        typeof data.sha256 === 'string'
+          && /^[a-f0-9]{64}$/.test(data.sha256),
+        `expected SHA-256, got ${data.sha256}`,
+      );
+
+      assert(
+        data.content === original,
+        'expected local_file_read content to match original file',
+      );
+
+      expectedSha256 = data.sha256;
+    },
+  );
+
+  await testMethod(
+    'tools/call local_file_edit (exact replacement)',
+    'tools/call',
+    {
+      name: 'local_file_edit',
+      arguments: {
+        path: editPath,
+        old_text: 'String value = "old";',
+        new_text: 'String value = "new";',
+        expected_sha256: expectedSha256,
+      },
+    },
+    (res) => {
+      assert(res.result, 'expected result');
+      assert(res.result.isError !== true, 'expected successful local_file_edit');
+
+      const data = res.result.structuredContent?.data;
+
+      assert(data, 'expected structured local_file_edit data');
+
+      assert(
+        data.replacements === 1,
+        `expected exactly one replacement, got ${data.replacements}`,
+      );
+
+      assert(
+        data.sha256Before === expectedSha256,
+        'expected edit sha256Before to match local_file_read sha256',
+      );
+
+      assert(
+        data.sha256After !== data.sha256Before,
+        'expected SHA-256 to change after edit',
+      );
+
+      const finalContent = readFileSync(editPath, 'utf8');
+
+      assert(
+        finalContent.includes('String value = "new";'),
+        'expected edited file to contain new text',
+      );
+
+      assert(
+        !finalContent.includes('String value = "old";'),
+        'expected old text to be removed',
+      );
+    },
+  );
+
+  rmSync(editDir, {
+    recursive: true,
+    force: true,
+  });
+}
 
 await testMethod('tools/call shell_status', 'tools/call', {
   name: 'shell_status',
