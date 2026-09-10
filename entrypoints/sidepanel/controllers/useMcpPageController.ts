@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LocaleMessageKey, MessageParams } from '../../../core/i18n';
+import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
+import { detectMcpOAuthRequirement } from '../../../core/mcp/oauth-client';
 import type {
   McpCapabilityExposureMode,
   McpCapabilitySettings,
@@ -27,8 +29,60 @@ import {
 } from './mcp-tools-controller';
 
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
-type BusyAction = 'refresh' | 'test' | 'permission';
+type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
+export async function withDetectedOAuth(
+  payload: McpServerCreateInput,
+  options: { autoDetect?: boolean } = {},
+): Promise<McpServerCreateInput> {
+  if (options.autoDetect === false) return payload;
+  const kind = payload.transport.kind;
+  const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
+  if (!httpBased || payload.oauth?.enabled) return payload;
+  const endpoint = payload.transport.url;
+  if (!endpoint) return payload;
+  try {
+    // The probe sends an unauthenticated request to the endpoint, so the host
+    // permission for its origin must be granted first. The save action is a
+    // user gesture, which is the only context where permissions.request works.
+    let originPattern: string;
+    try {
+      const parsed = new URL(endpoint);
+      originPattern = `${parsed.protocol}//${parsed.host}/*`;
+    } catch {
+      return payload;
+    }
+    const granted = await mcpToolsController.requestHostPermission([originPattern]);
+    if (!granted) return payload;
+
+    const detection = await detectMcpOAuthRequirement({
+      transport: payload.transport,
+      oauth: payload.oauth,
+    });
+    if (!detection.requiresOAuth) return payload;
+    return {
+      ...payload,
+      oauth: {
+        enabled: true,
+        ...(payload.oauth ?? {}),
+        authorizationUrl: payload.oauth?.authorizationUrl ?? detection.authorizationUrl,
+        tokenUrl: payload.oauth?.tokenUrl ?? detection.tokenUrl,
+        registrationUrl: payload.oauth?.registrationUrl ?? detection.registrationUrl,
+        scopes: payload.oauth?.scopes?.length ? payload.oauth.scopes : detection.scopes,
+        resource: payload.oauth?.resource ?? detection.resource,
+      },
+    };
+  } catch {
+    return payload;
+  }
+}
+
+function isOAuthHttpServer(server: McpServerConfig): boolean {
+  const kind = server.transport.kind;
+  const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
+  return httpBased && server.oauth?.enabled === true;
+}
+
 type Confirm = (options: {
   title: string;
   message: string;
@@ -48,6 +102,7 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
   const [busy, setBusy] = useState<Record<string, BusyAction | null>>({});
   const [banner, setBanner] = useState<Banner | null>(null);
   const [platform, setPlatform] = useState<PlatformEnvironment | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<Record<string, McpOAuthStatus | null>>({});
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectionInitialized = useRef(false);
   const requestFence = useRef(createRequestGenerationFence());
@@ -77,6 +132,13 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
       setCaches(snapshot.caches);
       setHistory(snapshot.history);
       setCapabilitySettings(snapshot.capabilitySettings);
+      const oauthEntries = await Promise.all(snapshot.servers
+        .filter((server) => server.oauth?.enabled)
+        .map(async (server) => (
+          [server.id, await mcpToolsController.getMcpOAuthStatus(server.id)] as const
+        )));
+      if (!requestFence.current.isCurrent(generation)) return;
+      setOauthStatus(Object.fromEntries(oauthEntries));
       const shouldSelectInitialServer = !selectionInitialized.current
         && snapshot.servers.length > 0;
       if (shouldSelectInitialServer) selectionInitialized.current = true;
@@ -165,28 +227,61 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     }
   }, [clearBanner, load, platform, servers, showBanner, t]);
 
-  const saveServer = useCallback(async (payload: McpServerCreateInput) => {
+  const saveServer = useCallback(async (
+    payload: McpServerCreateInput,
+    options: { autoDetectOAuth?: boolean } = {},
+  ) => {
     const editingServer = editing
       ? servers.find((server) => server.id === editing.id) ?? editing
       : null;
-    const requestPayload = editingServer
+    let requestPayload = editingServer
       ? { ...payload, allowlist: editingServer.allowlist }
       : payload;
     try {
+      requestPayload = await withDetectedOAuth(requestPayload, {
+        autoDetect: options.autoDetectOAuth,
+      });
+      let saved: McpServerConfig | null;
       if (editingServer) {
-        const saved = await mcpToolsController.updateServer(editingServer, requestPayload);
+        saved = await mcpToolsController.updateServer(editingServer, requestPayload);
         if (!saved) throw new Error('MCP server no longer exists.');
       } else {
-        await mcpToolsController.createServer(requestPayload);
+        saved = await mcpToolsController.createServer(requestPayload);
       }
       setShowForm(false);
       setEditing(null);
       clearBanner();
       await load();
+      // When a server enables OAuth, run the interactive authorization flow
+      // immediately after saving so the user does not have to click Authorize
+      // separately. A failure here is surfaced as a banner but does not undo
+      // the save.
+      if (saved && isOAuthHttpServer(saved)) {
+        setSelectedId(saved.id);
+        setBusy((current) => ({ ...current, [saved.id]: 'oauth' }));
+        try {
+          const result = await mcpToolsController.authorizeMcpOAuth(saved.id);
+          if (result.ok) {
+            setOauthStatus((current) => ({ ...current, [saved.id]: result.status }));
+            showBanner('success', t('sidepanel.mcpPage.oauth.authorizeSuccess'));
+            await load();
+          } else {
+            showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+              error: result.error,
+            }));
+          }
+        } catch (error) {
+          showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+            error: getRuntimeErrorMessage(error),
+          }));
+        } finally {
+          setBusy((current) => ({ ...current, [saved.id]: null }));
+        }
+      }
     } catch {
       showBanner('error', t('sidepanel.mcpPage.messages.saveFailed'));
     }
-  }, [clearBanner, editing, load, servers, showBanner, t]);
+  }, [clearBanner, editing, load, servers, setOauthStatus, showBanner, t]);
 
   const removeServer = useCallback(async (server: McpServerConfig) => {
     const approved = await confirm({
@@ -274,6 +369,42 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     }
   }, [clearBanner, load, setBusyState, showBanner, t]);
 
+  const authorizeOAuth = useCallback(async (server: McpServerConfig) => {
+    setBusyState(server.id, 'oauth');
+    clearBanner();
+    try {
+      const result = await mcpToolsController.authorizeMcpOAuth(server.id);
+      if (result.ok) {
+        setOauthStatus((current) => ({ ...current, [server.id]: result.status }));
+        showBanner('success', t('sidepanel.mcpPage.oauth.authorizeSuccess'));
+        await load();
+      } else {
+        showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', { error: result.error }));
+      }
+    } catch (error) {
+      showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
+    } finally {
+      setBusyState(server.id, null);
+    }
+  }, [clearBanner, load, setBusyState, showBanner, t]);
+
+  const disconnectOAuth = useCallback(async (server: McpServerConfig) => {
+    setBusyState(server.id, 'oauth');
+    clearBanner();
+    try {
+      await mcpToolsController.disconnectMcpOAuth(server.id);
+      setOauthStatus((current) => ({ ...current, [server.id]: null }));
+      showBanner('success', t('sidepanel.mcpPage.oauth.disconnectSuccess'));
+      await load();
+    } catch (error) {
+      showBanner('error', getRuntimeErrorMessage(error));
+    } finally {
+      setBusyState(server.id, null);
+    }
+  }, [clearBanner, load, setBusyState, showBanner, t]);
+
   const toggleTool = useCallback(async (server: McpServerConfig, tool: ToolDescriptor) => {
     const selected = isMcpToolSelected(server, tool);
     await patchServer(server, {
@@ -352,6 +483,9 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     patchServer,
     requestPermission,
     refreshServer: connectServer,
+    oauthStatus,
+    authorizeOAuth,
+    disconnectOAuth,
     toggleTool,
     updateCapabilitySettings,
     setServerExposure,

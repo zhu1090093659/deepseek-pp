@@ -1,0 +1,1014 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  McpOAuthError,
+  authorizeMcpServer,
+  getMcpOAuthStatus,
+  invalidateMcpOAuthToken,
+  isMcpOAuthEnabled,
+  isMcpOAuthTransportSupported,
+  resolveMcpOAuthAuthorization,
+  detectMcpOAuthRequirement,
+} from '../core/mcp/oauth-client';
+import {
+  authorizeMcpOAuthServer,
+  disconnectMcpOAuthServer,
+  getMcpOAuthStatusForServer,
+} from '../core/mcp/oauth-service';
+import { createMcpServer, getMcpServerById, updateMcpServer } from '../core/mcp/store';
+import { decodeMcpStorageState, encodeMcpStorageState } from '../core/mcp/storage-codec';
+import {
+  describeMcpOAuthFailure,
+  resolveMcpRequestHeaders,
+  shouldRetryMcpUnauthorized,
+} from '../core/mcp/transports/auth';
+import { isRecoverableOAuthGrantError } from '../core/mcp/discovery';
+import type { McpServerConfig } from '../core/mcp/types';
+import type { SyncIdentityPort } from '../core/sync/identity-port';
+
+const SERVER_ID = 'oauth-server';
+const REDIRECT_URI = 'https://ext.chromiumapp.org/';
+
+function createServer(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
+  return {
+    version: 1,
+    id: SERVER_ID,
+    displayName: 'OAuth Server',
+    enabled: true,
+    transport: { kind: 'http', url: 'https://mcp.example.com/mcp' },
+    headers: [],
+    secrets: [],
+    oauth: {
+      enabled: true,
+      clientId: 'client-123',
+      authorizationUrl: 'https://auth.example.com/authorize',
+      tokenUrl: 'https://auth.example.com/token',
+      scopes: ['mcp.read'],
+    },
+    timeouts: { connectMs: 5_000, requestMs: 60_000, discoveryMs: 10_000 },
+    limits: { maxResultBytes: 1_024, maxToolCount: 10 },
+    allowlist: { mode: 'all', toolNames: [] },
+    execution: { mode: 'auto', enabled: true },
+    status: 'unknown',
+    lastConnectedAt: null,
+    lastError: null,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function jsonResponse(payload: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** Identity port that echoes the request `state` back into the redirect URL. */
+function createIdentity(redirect = REDIRECT_URI) {
+  const launchWebAuthFlow = vi.fn(async (details: { url: string }) => {
+    const authUrl = new URL(details.url);
+    return `${redirect}?code=auth-code-1&state=${authUrl.searchParams.get('state') ?? ''}`;
+  });
+  const identity: SyncIdentityPort = {
+    getRedirectUri: () => redirect,
+    launchWebAuthFlow,
+  };
+  return { identity, launchWebAuthFlow };
+}
+
+function stubChromeStorage(): Record<string, unknown> {
+  const storage: Record<string, unknown> = {};
+  vi.stubGlobal('chrome', {
+    storage: {
+      local: {
+        get: vi.fn(async (key: string) => (Object.prototype.hasOwnProperty.call(storage, key)
+          ? { [key]: storage[key] }
+          : {})),
+        set: vi.fn(async (values: Record<string, unknown>) => {
+          Object.assign(storage, values);
+        }),
+        remove: vi.fn(),
+      },
+    },
+    runtime: { getManifest: () => ({ permissions: ['identity'], version: '1.14.0' }) },
+    identity: {
+      getRedirectURL: () => REDIRECT_URI,
+      launchWebAuthFlow: vi.fn(async (details: { url: string }) => {
+        const authUrl = new URL(details.url);
+        return `${REDIRECT_URI}?code=service-code&state=${authUrl.searchParams.get('state') ?? ''}`;
+      }),
+    },
+    permissions: { contains: async () => true, request: async () => true },
+  });
+  return storage;
+}
+
+afterEach(() => {
+  invalidateMcpOAuthToken(SERVER_ID);
+  vi.unstubAllGlobals();
+});
+
+describe('MCP OAuth transport gating', () => {
+  it('supports HTTP-based transports only', () => {
+    for (const kind of ['http', 'sse', 'streamable_http'] as const) {
+      const server = createServer({ transport: { kind, url: 'https://mcp.example.com/mcp' } });
+      expect(isMcpOAuthTransportSupported(server)).toBe(true);
+    }
+    for (const kind of ['native_messaging', 'stdio_bridge'] as const) {
+      const server = createServer({ transport: { kind, nativeHost: 'com.example.host' } });
+      expect(isMcpOAuthTransportSupported(server)).toBe(false);
+    }
+  });
+
+  it('requires both an enabled oauth config and an HTTP transport', () => {
+    expect(isMcpOAuthEnabled(createServer())).toBe(true);
+    expect(isMcpOAuthEnabled(createServer({ oauth: undefined }))).toBe(false);
+    expect(isMcpOAuthEnabled(createServer({ oauth: { enabled: false } }))).toBe(false);
+    expect(isMcpOAuthEnabled(createServer({
+      transport: { kind: 'native_messaging', nativeHost: 'com.example.host' },
+    }))).toBe(false);
+  });
+});
+
+describe('MCP OAuth status', () => {
+  it('reports an unauthorized server before any authorization', () => {
+    expect(getMcpOAuthStatus(createServer())).toEqual({
+      enabled: true,
+      authorized: false,
+      expiresAt: null,
+      hasRefreshToken: false,
+      scopes: ['mcp.read'],
+      authorizationUrl: 'https://auth.example.com/authorize',
+    });
+  });
+
+  it('exposes a stored refresh token without marking the server authorized', () => {
+    const server = createServer({
+      oauth: { enabled: true, refreshToken: 'stored-refresh', scopes: [] },
+    });
+    const status = getMcpOAuthStatus(server);
+    expect(status.hasRefreshToken).toBe(true);
+    expect(status.authorized).toBe(false);
+  });
+});
+
+describe('resolveMcpOAuthAuthorization', () => {
+  it('returns null when OAuth is not enabled', async () => {
+    await expect(resolveMcpOAuthAuthorization(createServer({ oauth: undefined })))
+      .resolves
+      .toBeNull();
+  });
+
+  it('fails non-interactively instead of sending an unauthenticated request', async () => {
+    const rejection = await resolveMcpOAuthAuthorization(createServer()).catch((error) => error);
+    expect(rejection).toBeInstanceOf(McpOAuthError);
+    expect(rejection).toMatchObject({
+      code: 'mcp_oauth_authorization_required',
+      retryable: true,
+    });
+  });
+
+  it('transparently refreshes using the durable refresh token', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'refreshed-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer refreshed-access');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain('grant_type=refresh_token');
+    expect(body).toContain('refresh_token=durable-refresh');
+    expect(body).toContain('client_id=client-123');
+    expect(getMcpOAuthStatus(server).authorized).toBe(true);
+  });
+
+  it('reuses a cached access token without refreshing again', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'cached-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer cached-access');
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer cached-access');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the real refresh failure instead of masking it as authorization_required', async () => {
+    // Regression: a server with a stored refresh token has already been
+    // authorized. A rejected refresh (invalid_grant) is a token problem, not a
+    // missing authorization, and must not resurrect the "Authorize this server"
+    // prompt after the user completed the flow.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(
+      { error: 'invalid_grant', error_description: 'refresh token expired' },
+      400,
+    )));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'stale-refresh',
+      },
+    });
+
+    const rejection = await resolveMcpOAuthAuthorization(server).catch((error) => error);
+    expect(rejection).toBeInstanceOf(McpOAuthError);
+    expect(rejection).toMatchObject({ code: 'mcp_oauth_refresh_failed' });
+    expect(rejection.code).not.toBe('mcp_oauth_authorization_required');
+    expect(rejection.message).toContain('invalid_grant');
+    expect(getMcpOAuthStatus(server).authorized).toBe(false);
+  });
+
+  it('runs the PKCE authorization-code flow when interactive', async () => {
+    const { identity, launchWebAuthFlow } = createIdentity();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input) === 'https://auth.example.com/token') {
+        return jsonResponse({
+          access_token: 'interactive-access',
+          token_type: 'Bearer',
+          expires_in: 3_600,
+          refresh_token: 'interactive-refresh',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(resolveMcpOAuthAuthorization(createServer(), { interactive: true, identity }))
+      .resolves
+      .toBe('Bearer interactive-access');
+
+    const authUrl = new URL(launchWebAuthFlow.mock.calls[0][0].url);
+    expect(`${authUrl.origin}${authUrl.pathname}`).toBe('https://auth.example.com/authorize');
+    expect(authUrl.searchParams.get('response_type')).toBe('code');
+    expect(authUrl.searchParams.get('client_id')).toBe('client-123');
+    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(authUrl.searchParams.get('code_challenge')).toBeTruthy();
+    expect(authUrl.searchParams.get('redirect_uri')).toBe(REDIRECT_URI);
+    expect(authUrl.searchParams.get('scope')).toBe('mcp.read');
+    expect(authUrl.searchParams.get('state')).toBeTruthy();
+
+    const tokenBody = String(fetchMock.mock.calls[0][1]?.body);
+    expect(tokenBody).toContain('grant_type=authorization_code');
+    expect(tokenBody).toContain('code=auth-code-1');
+    expect(tokenBody).toContain('code_verifier=');
+  });
+});
+
+describe('authorizeMcpServer', () => {
+  it('rejects when OAuth is not configured', async () => {
+    await expect(authorizeMcpServer(createServer({ oauth: undefined })))
+      .rejects
+      .toMatchObject({ code: 'mcp_oauth_not_configured' });
+  });
+
+  it('returns the access and refresh tokens from the interactive flow', async () => {
+    const { identity } = createIdentity();
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'access-123',
+      token_type: 'Bearer',
+      expires_in: 1_800,
+      refresh_token: 'refresh-123',
+      scope: 'mcp.read',
+    })));
+
+    await expect(authorizeMcpServer(createServer(), { identity })).resolves.toMatchObject({
+      accessToken: 'access-123',
+      refreshToken: 'refresh-123',
+      scope: 'mcp.read',
+    });
+  });
+
+  it('surfaces a state mismatch as a provider error', async () => {
+    const identity: SyncIdentityPort = {
+      getRedirectUri: () => REDIRECT_URI,
+      launchWebAuthFlow: vi.fn(async () => `${REDIRECT_URI}?code=auth-code-1&state=wrong-state`),
+    };
+    vi.stubGlobal('fetch', vi.fn());
+
+    await expect(authorizeMcpServer(createServer(), { identity }))
+      .rejects
+      .toMatchObject({ code: 'mcp_oauth_provider_error' });
+  });
+
+  it('surfaces a provider error response', async () => {
+    const identity: SyncIdentityPort = {
+      getRedirectUri: () => REDIRECT_URI,
+      launchWebAuthFlow: vi.fn(async () => `${REDIRECT_URI}?error=access_denied`),
+    };
+    vi.stubGlobal('fetch', vi.fn());
+
+    await expect(authorizeMcpServer(createServer(), { identity }))
+      .rejects
+      .toMatchObject({ code: 'mcp_oauth_provider_error' });
+  });
+
+  it('reports cancellation when the identity flow returns no redirect url', async () => {
+    const identity: SyncIdentityPort = {
+      getRedirectUri: () => REDIRECT_URI,
+      launchWebAuthFlow: vi.fn(async () => undefined),
+    };
+
+    await expect(authorizeMcpServer(createServer(), { identity }))
+      .rejects
+      .toMatchObject({ code: 'mcp_oauth_authorization_cancelled' });
+  });
+
+  it('reports an unavailable identity port without a browser identity', async () => {
+    await expect(authorizeMcpServer(createServer(), { identity: null }))
+      .rejects
+      .toMatchObject({ code: 'mcp_oauth_identity_unavailable' });
+  });
+});
+
+describe('OAuth-owned request headers', () => {
+  it('keeps static headers and returns them untouched when OAuth is disabled', async () => {
+    const server = createServer({
+      oauth: undefined,
+      secrets: [{ kind: 'bearer', value: 'static-token' }],
+    });
+
+    await expect(resolveMcpRequestHeaders(server)).resolves.toEqual({
+      Authorization: 'Bearer static-token',
+    });
+  });
+
+  it('throws instead of sending an unauthenticated request for a protected server', async () => {
+    await expect(resolveMcpRequestHeaders(createServer())).rejects.toMatchObject({
+      code: 'mcp_oauth_authorization_required',
+    });
+  });
+
+  it('lets OAuth own the Authorization header over a static secret', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'oauth-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    })));
+    const server = createServer({
+      secrets: [{ kind: 'bearer', value: 'static-token' }],
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+      },
+    });
+
+    await expect(resolveMcpRequestHeaders(server)).resolves.toMatchObject({
+      Authorization: 'Bearer oauth-access',
+    });
+  });
+
+  it('invalidates the cached token after a 401 so the next attempt refreshes', () => {
+    const server = createServer();
+    expect(shouldRetryMcpUnauthorized(server, 401)).toBe(true);
+    expect(shouldRetryMcpUnauthorized(server, 200)).toBe(false);
+    expect(shouldRetryMcpUnauthorized(createServer({ oauth: undefined }), 401)).toBe(false);
+  });
+});
+
+describe('background OAuth orchestration', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('persists the refresh token and clears it on disconnect', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'service-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+      refresh_token: 'service-refresh',
+    })));
+    const created = await createMcpServer({
+      displayName: 'Service OAuth Server',
+      transport: { kind: 'http', url: 'https://service.example.com/mcp' },
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+
+    const result = await authorizeMcpOAuthServer(created.id);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.status.authorized).toBe(true);
+
+    const withSecrets = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(withSecrets?.oauth?.refreshToken).toBe('service-refresh');
+
+    const sanitized = await getMcpServerById(created.id);
+    expect(sanitized?.oauth?.refreshToken).toBe('********');
+
+    await expect(getMcpOAuthStatusForServer(created.id)).resolves.toMatchObject({
+      hasRefreshToken: true,
+      authorized: true,
+    });
+
+    await disconnectMcpOAuthServer(created.id);
+    const afterDisconnect = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(afterDisconnect?.oauth?.refreshToken).toBeUndefined();
+  });
+
+  it('reports mcp_oauth_not_configured for a server without OAuth', async () => {
+    const created = await createMcpServer({
+      displayName: 'Plain Server',
+      transport: { kind: 'native_messaging', nativeHost: 'com.example.plain' },
+    });
+
+    await expect(authorizeMcpOAuthServer(created.id)).resolves.toEqual({
+      ok: false,
+      error: 'mcp_oauth_not_configured',
+    });
+  });
+
+  it('reports a missing server instead of throwing', async () => {
+    await expect(authorizeMcpOAuthServer('missing-server')).resolves.toEqual({
+      ok: false,
+      error: 'mcp_server_not_found',
+    });
+    await expect(getMcpOAuthStatusForServer('missing-server')).resolves.toBeNull();
+  });
+});
+
+describe('MCP OAuth refresh resilience', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('reuses a cached access token even when the config was read sanitized', async () => {
+    // Regression: sanitized reads redact clientSecret to '********'. Hashing
+    // that placeholder changed the credential fingerprint, so a fresh access
+    // token looked stale and every Refresh fell into a refresh attempt that
+    // could not present the real secret.
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'sanitized-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+      refresh_token: 'rotation-1',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { identity } = createIdentity();
+    const secretServer = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: 'real-secret',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+    await authorizeMcpServer(secretServer, { identity });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const sanitized = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: '********',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+    await expect(resolveMcpOAuthAuthorization(sanitized)).resolves.toBe('Bearer sanitized-access');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives an idle service worker by persisting the discovered client id and endpoints', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/token')) {
+        const body = String(init?.body ?? '');
+        if (body.includes('grant_type=refresh_token')) {
+          return jsonResponse({
+            access_token: 'refreshed-after-idle',
+            token_type: 'Bearer',
+            expires_in: 3_600,
+          });
+        }
+        return jsonResponse({
+          access_token: 'first-access',
+          token_type: 'Bearer',
+          expires_in: 3_600,
+          refresh_token: 'durable-after-idle',
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const created = await createMcpServer({
+      displayName: 'Idle Worker Server',
+      transport: { kind: 'http', url: 'https://idle.example.com/mcp' },
+      oauth: {
+        enabled: true,
+        clientId: 'client-idle',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+
+    const authorized = await authorizeMcpOAuthServer(created.id);
+    expect(authorized.ok).toBe(true);
+
+    const persisted = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(persisted?.oauth?.refreshToken).toBe('durable-after-idle');
+    expect(persisted?.oauth?.clientId).toBe('client-idle');
+    expect(persisted?.oauth?.tokenUrl).toBe('https://auth.example.com/token');
+
+    invalidateMcpOAuthToken(created.id);
+    const raw = await getMcpServerById(created.id, { includeSecrets: true });
+    if (!raw) throw new Error('Missing server.');
+    await expect(resolveMcpOAuthAuthorization(raw)).resolves.toBe('Bearer refreshed-after-idle');
+  });
+});
+
+describe('OAuth config redaction', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('redacts client secret and refresh token in sanitized reads', async () => {
+    const created = await createMcpServer({
+      displayName: 'Secret Server',
+      transport: { kind: 'http', url: 'https://secret.example.com/mcp' },
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: 'top-secret',
+        refreshToken: 'top-refresh',
+      },
+    });
+    expect(created.oauth?.clientSecret).toBe('********');
+    expect(created.oauth?.refreshToken).toBe('********');
+
+    const raw = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(raw?.oauth?.clientSecret).toBe('top-secret');
+    expect(raw?.oauth?.refreshToken).toBe('top-refresh');
+  });
+
+  it('preserves redacted secrets when updating unrelated OAuth fields', async () => {
+    const created = await createMcpServer({
+      displayName: 'Preserve Server',
+      transport: { kind: 'http', url: 'https://preserve.example.com/mcp' },
+      oauth: { enabled: true, clientId: 'client-123', clientSecret: 'keep-me' },
+    });
+    const sanitized = await getMcpServerById(created.id);
+    if (!sanitized?.oauth) throw new Error('Missing OAuth config.');
+
+    const updated = await updateMcpServer(created.id, {
+      oauth: { ...sanitized.oauth, scopes: ['mcp.read'] },
+    });
+    expect(updated?.oauth?.scopes).toEqual(['mcp.read']);
+
+    const raw = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(raw?.oauth?.clientSecret).toBe('keep-me');
+  });
+});
+
+describe('OAuth storage codec', () => {
+  it('round-trips an OAuth-enabled server without changing the record', () => {
+    const raw = {
+      version: 2,
+      servers: [
+        createServer({
+          oauth: {
+            enabled: true,
+            clientId: 'client-123',
+            authorizationUrl: 'https://auth.example.com/authorize',
+            tokenUrl: 'https://auth.example.com/token',
+            scopes: ['mcp.read'],
+          },
+        }),
+      ],
+      toolCaches: [],
+    };
+
+    const decoded = decodeMcpStorageState(raw);
+    expect(encodeMcpStorageState(decoded)).toEqual(raw);
+  });
+});
+
+describe('detectMcpOAuthRequirement', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('reports no OAuth when the endpoint answers without a 401', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ jsonrpc: '2.0', id: 'oauth-probe', result: {} })));
+    const detection = await detectMcpOAuthRequirement(createServer());
+    expect(detection.requiresOAuth).toBe(false);
+    expect(detection.metadataDetected).toBe(false);
+  });
+
+  it('flags a 401 Bearer challenge as requiring OAuth', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', {
+      status: 401,
+      headers: { 'www-authenticate': 'Bearer realm="mcp"' },
+    })));
+    const detection = await detectMcpOAuthRequirement(createServer());
+    expect(detection.requiresOAuth).toBe(true);
+    expect(detection.challenge).toContain('Bearer');
+    expect(detection.metadataDetected).toBe(false);
+  });
+
+  it('resolves authorization-server metadata from the challenge', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const target = String(input);
+      if (target === 'https://mcp.example.com/mcp') {
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate': 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+          },
+        });
+      }
+      if (target === 'https://mcp.example.com/.well-known/oauth-protected-resource') {
+        return jsonResponse({
+          authorization_servers: ['https://auth.example.com'],
+          scopes_supported: ['mcp.read'],
+        });
+      }
+      if (target === 'https://auth.example.com/.well-known/oauth-authorization-server') {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+          registration_endpoint: 'https://auth.example.com/register',
+        });
+      }
+      throw new Error('Unexpected fetch: ' + target);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const detection = await detectMcpOAuthRequirement(createServer({ oauth: undefined }));
+    expect(detection.requiresOAuth).toBe(true);
+    expect(detection.metadataDetected).toBe(true);
+    expect(detection.authorizationUrl).toBe('https://auth.example.com/authorize');
+    expect(detection.tokenUrl).toBe('https://auth.example.com/token');
+    expect(detection.registrationUrl).toBe('https://auth.example.com/register');
+  });
+
+  it('skips detection for non-HTTP transports', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const detection = await detectMcpOAuthRequirement(createServer({
+      transport: { kind: 'native_messaging', nativeHost: 'com.example.host' },
+    }));
+    expect(detection.requiresOAuth).toBe(false);
+    expect(detection.reason).toBe('unsupported_transport');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('OAuth redaction sentinel handling', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('does not treat a redacted refresh token as authorization', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: '********',
+        scopes: [],
+      },
+    });
+    const status = getMcpOAuthStatus(server);
+    expect(status.hasRefreshToken).toBe(false);
+    expect(status.authorized).toBe(false);
+  });
+
+  it('asks for authorization instead of refreshing a redacted refresh token', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: '********',
+        scopes: [],
+      },
+    });
+    const rejection = await resolveMcpOAuthAuthorization(server).catch((error) => error);
+    expect(rejection).toBeInstanceOf(McpOAuthError);
+    expect(rejection).toMatchObject({ code: 'mcp_oauth_authorization_required' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('omits a redacted client secret from the refresh request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'refreshed-without-secret',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: '********',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        scopes: [],
+      },
+    });
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer refreshed-without-secret');
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain('grant_type=refresh_token');
+    expect(body).not.toContain('client_secret');
+  });
+});
+
+describe('OAuth 401 after a successful refresh', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('keeps the granted scopes on the refresh request', async () => {
+    // Regression: a refresh that silently drops `scope` can return a token the
+    // resource server refuses with 401 even though the token endpoint answered
+    // 200. The scopes must be re-requested exactly as granted.
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'scoped-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        resource: 'https://mcp.example.com/mcp',
+        scopes: ['mcp.read', 'mcp.write'],
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer scoped-access');
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain('scope=mcp.read+mcp.write');
+    expect(body).toContain('resource=https%3A%2F%2Fmcp.example.com%2Fmcp');
+  });
+
+  it('describes the OAuth state so a surviving 401 is diagnosable', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        resource: 'https://mcp.example.com/mcp',
+      },
+    });
+
+    const description = describeMcpOAuthFailure(server);
+    expect(description).toContain('oauthEnabled=true');
+    expect(description).toContain('hasRefreshToken=true');
+    expect(description).toContain('tokenUrl=set');
+    expect(description).toContain('clientId=set');
+    expect(description).toContain('resource=https://mcp.example.com/mcp');
+  });
+
+  it('reports a redacted refresh token as absent in the failure description', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        refreshToken: '********',
+      },
+    });
+
+    const description = describeMcpOAuthFailure(server);
+    expect(description).toContain('hasRefreshToken=false');
+    expect(description).toContain('tokenUrl=unset');
+  });
+});
+
+describe('recoverable OAuth grant failures', () => {
+  it('treats a rejected refresh and a rejected access token as recoverable', () => {
+    // Both mean the stored grant is dead and only a fresh consent helps.
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_refresh_failed' })).toBe(true);
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_invalid_token' })).toBe(true);
+  });
+
+  it('does not treat a missing authorization as a dead grant', () => {
+    // No refresh token at all is a different state: ask the user to authorize,
+    // do not silently relaunch the consent window.
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_authorization_required' })).toBe(false);
+    expect(isRecoverableOAuthGrantError(null)).toBe(false);
+    expect(isRecoverableOAuthGrantError('boom')).toBe(false);
+  });
+});
+
+describe('refresh token rotation', () => {
+  it('hands a rotated refresh token to the caller for persistence', async () => {
+    // Notion rotates the refresh token on every refresh. If the new token is
+    // not persisted, the next refresh sends a consumed token and the endpoint
+    // answers invalid_grant, which no refresh can recover from.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'rotated-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+      refresh_token: 'rotated-refresh',
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'original-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+    const persisted: string[] = [];
+
+    await expect(resolveMcpOAuthAuthorization(server, {
+      onRefreshTokenRotated: (token) => {
+        persisted.push(token);
+      },
+    })).resolves.toBe('Bearer rotated-access');
+
+    expect(persisted).toEqual(['rotated-refresh']);
+  });
+
+  it('does not report a rotation when the provider keeps the same token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'same-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'original-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+    const onRefreshTokenRotated = vi.fn();
+
+    await resolveMcpOAuthAuthorization(server, { onRefreshTokenRotated });
+
+    expect(onRefreshTokenRotated).not.toHaveBeenCalled();
+  });
+});
+
+describe('authorization fingerprint', () => {
+  it('fingerprint the minting client id so a persisted token is reused, not refreshed', async () => {
+    // Regression: on first authorization the config has no clientId yet
+    // (dynamic registration just created it). Fingerprinting server.oauth at
+    // that moment hashes '' and every later resolve sees a different
+    // fingerprint, forcing a needless refresh right after a successful consent.
+    stubChromeStorage();
+    const identity = createIdentity();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/register')) {
+        return jsonResponse({ client_id: 'registered-client' });
+      }
+      // token endpoint
+      const body = String(init?.body ?? '');
+      if (body.includes('grant_type=authorization_code')) {
+        return jsonResponse({
+          access_token: 'fresh-access',
+          token_type: 'Bearer',
+          expires_in: 3_600,
+          refresh_token: 'fresh-refresh',
+        });
+      }
+      return jsonResponse({ error: 'invalid_grant' }, 400);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // First authorization: no clientId configured yet.
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        registrationUrl: 'https://auth.example.com/register',
+        scopes: ['mcp.read'],
+      },
+    });
+    const authorized = await authorizeMcpServer(server, { identity: identity.identity });
+    expect(authorized.accessToken).toBe('fresh-access');
+    expect(authorized.oauthPatch.clientId).toBe('registered-client');
+
+    // Simulate persisting the discovered config, then resolving headers again.
+    const persisted = createServer({
+      oauth: {
+        enabled: true,
+        ...server.oauth,
+        ...authorized.oauthPatch,
+        refreshToken: authorized.refreshToken,
+      },
+    });
+    const callsAfterAuthorize = fetchMock.mock.calls.length;
+
+    await expect(resolveMcpOAuthAuthorization(persisted)).resolves.toBe('Bearer fresh-access');
+    // No extra refresh: the cached token's fingerprint matches the persisted clientId.
+    expect(fetchMock.mock.calls.length).toBe(callsAfterAuthorize);
+  });
+});
+
+describe('authorization scheme normalization', () => {
+  it('normalizes a lowercase token_type to the Bearer scheme', async () => {
+    // Some providers answer token_type: "bearer". A strict resource server
+    // rejects `Authorization: bearer <token>` with invalid_token, so the header
+    // must always use the RFC 6750 scheme `Bearer`.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'lowercase-type-token',
+      token_type: 'bearer',
+      expires_in: 3_600,
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer lowercase-type-token');
+  });
+
+  it('normalizes a lowercase token_type on the interactive authorization path', async () => {
+    stubChromeStorage();
+    const identity = createIdentity();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = String(init?.body ?? '');
+      if (body.includes('grant_type=authorization_code')) {
+        return jsonResponse({
+          access_token: 'interactive-lowercase',
+          token_type: 'bearer',
+          expires_in: 3_600,
+          refresh_token: 'fresh-refresh',
+        });
+      }
+      return jsonResponse({ error: 'unexpected' }, 400);
+    }));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        scopes: ['mcp.read'],
+      },
+    });
+
+    const authorized = await authorizeMcpServer(server, { identity: identity.identity });
+    expect(authorized.accessToken).toBe('interactive-lowercase');
+    await expect(resolveMcpOAuthAuthorization(createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        scopes: ['mcp.read'],
+      },
+    }))).resolves.toBe('Bearer interactive-lowercase');
+  });
+});

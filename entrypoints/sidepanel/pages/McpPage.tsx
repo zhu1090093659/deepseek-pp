@@ -19,6 +19,7 @@ import type {
   ToolExecutionMode,
   PlatformEnvironment,
 } from '../../../core/types';
+import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
 import PageIntro from '../components/PageIntro';
 import { useI18n } from '../i18n';
 import {
@@ -40,7 +41,7 @@ import {
 } from '../components/settings/primitives';
 
 type McpTransportKind = McpServerTransportConfig['kind'];
-type BusyAction = 'refresh' | 'test' | 'permission';
+type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 
 type FormState = {
@@ -62,6 +63,13 @@ type FormState = {
   maxToolCount: string;
   executionEnabled: boolean;
   executionMode: ToolExecutionMode;
+  oauthAutoDetect: boolean;
+  oauthEnabled: boolean;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthScopes: string;
+  oauthAuthorizationUrl: string;
+  oauthTokenUrl: string;
 };
 
 const TRANSPORT_OPTIONS: { kind: McpTransportKind; label: string; hintKey: LocaleMessageKey }[] = [
@@ -91,6 +99,13 @@ const DEFAULT_FORM: FormState = {
   maxToolCount: '128',
   executionEnabled: true,
   executionMode: 'auto',
+  oauthAutoDetect: true,
+  oauthEnabled: false,
+  oauthClientId: '',
+  oauthClientSecret: '',
+  oauthScopes: '',
+  oauthAuthorizationUrl: '',
+  oauthTokenUrl: '',
 };
 
 export default function McpPage() {
@@ -123,6 +138,9 @@ export default function McpPage() {
     patchServer,
     requestPermission,
     refreshServer,
+    oauthStatus,
+    authorizeOAuth,
+    disconnectOAuth,
     toggleTool,
     updateCapabilitySettings,
     setServerExposure,
@@ -260,6 +278,9 @@ export default function McpPage() {
                     onRequestPermission={() => requestPermission(server)}
                     onRefresh={() => refreshServer(server, 'refresh')}
                     onTest={() => refreshServer(server, 'test')}
+                    oauthStatus={oauthStatus[server.id] ?? null}
+                    onAuthorizeOAuth={() => authorizeOAuth(server)}
+                    onDisconnectOAuth={() => disconnectOAuth(server)}
                     onToggleTool={(tool) => toggleTool(server, tool)}
                     onTogglePinned={(tool) => togglePinnedTool(server, tool)}
                     t={t}
@@ -366,7 +387,7 @@ function McpServerForm({
 }: {
   initial: McpServerConfig | null;
   platform: PlatformEnvironment | null;
-  onSave: (payload: McpServerCreateInput) => Promise<void>;
+  onSave: (payload: McpServerCreateInput, options?: { autoDetectOAuth?: boolean }) => Promise<void>;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -403,10 +424,17 @@ function McpServerForm({
       return;
     }
     setError('');
-    await onSave(result.payload);
+    await onSave(result.payload, { autoDetectOAuth: form.oauthAutoDetect });
   };
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const oauthRedirectUri = (() => {
+    try {
+      return chrome?.identity?.getRedirectURL?.() ?? '';
+    } catch {
+      return '';
+    }
+  })();
 
   return (
     <div className="ds-form rounded-lg p-3 space-y-3">
@@ -584,6 +612,76 @@ function McpServerForm({
                 <option value="disabled">{t('sidepanel.mcpPage.form.modeDisabled')}</option>
               </select>
             </div>
+
+            <div className="ds-surface-panel rounded-lg p-3 space-y-2">
+              <ToggleRow
+                title={t('sidepanel.mcpPage.oauth.autoDetect')}
+                description={t('sidepanel.mcpPage.oauth.autoDetectHint')}
+                enabled={form.oauthAutoDetect}
+                onToggle={(next) => update('oauthAutoDetect', next)}
+              />
+            </div>
+          {isHttpTransportKind(form.transportKind) && (
+            <SettingsSection title={t('sidepanel.mcpPage.oauth.section')}>
+              <ToggleRow
+                title={t('sidepanel.mcpPage.oauth.enable')}
+                description={t('sidepanel.mcpPage.oauth.hint')}
+                enabled={form.oauthEnabled}
+                onToggle={(next) => update('oauthEnabled', next)}
+              />
+              {form.oauthEnabled && (
+                <>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.clientId')}
+                    hint={t('sidepanel.mcpPage.oauth.clientIdHint')}
+                  >
+                    <input
+                      value={form.oauthClientId}
+                      onChange={(event) => update('oauthClientId', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="client-id"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.clientSecret')}
+                    hint={t('sidepanel.mcpPage.oauth.clientSecretHint')}
+                  >
+                    <input
+                      type="password"
+                      value={form.oauthClientSecret}
+                      onChange={(event) => update('oauthClientSecret', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="********"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.scopes')}
+                    hint={t('sidepanel.mcpPage.oauth.scopesHint')}
+                  >
+                    <input
+                      value={form.oauthScopes}
+                      onChange={(event) => update('oauthScopes', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="mcp.read mcp.write"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.redirectUri')}
+                    hint={t('sidepanel.mcpPage.oauth.redirectUriHint')}
+                  >
+                    <input
+                      readOnly
+                      value={oauthRedirectUri}
+                      onFocus={(event) => event.target.select()}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      style={{ fontFamily: 'monospace' }}
+                    />
+                  </Field>
+                </>
+              )}
+            </SettingsSection>
+          )}
+
           </div>
         )}
       </div>
@@ -786,6 +884,9 @@ function ServerDetail({
   onRequestPermission,
   onRefresh,
   onTest,
+  oauthStatus,
+  onAuthorizeOAuth,
+  onDisconnectOAuth,
   onToggleTool,
   onTogglePinned,
   t,
@@ -802,11 +903,19 @@ function ServerDetail({
   onRequestPermission: () => void;
   onRefresh: () => void;
   onTest: () => void;
+  oauthStatus: McpOAuthStatus | null;
+  onAuthorizeOAuth: () => void;
+  onDisconnectOAuth: () => void;
   onToggleTool: (tool: ToolDescriptor) => void;
   onTogglePinned: (tool: ToolDescriptor) => void;
   t: Translator;
   locale: SupportedLocale;
 }) {
+  // Authorized for display purposes when we hold either a live access token or a
+  // durable refresh token. The in-memory access-token cache is lost whenever the
+  // MV3 service worker goes idle, so keying the badge off it alone makes a
+  // completed authorization look un-authorized after a short pause.
+  const oauthConnected = Boolean(oauthStatus?.authorized || oauthStatus?.hasRefreshToken);
   const tools = cache?.descriptors ?? [];
   const serverHistory = history.filter((record) => record.call.provider?.id === server.id).slice(0, 5);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -842,6 +951,63 @@ function ServerDetail({
       {(cache?.health.error || server.lastError) && (
         <div className="rounded-lg px-3 py-2 text-xs" style={{ color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)', border: '1px solid var(--ds-danger-border)' }}>
           {cache?.health.error ?? server.lastError}
+        </div>
+      )}
+
+      {oauthStatus?.enabled && (
+        <div className="ds-card rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                {t('sidepanel.mcpPage.oauth.section')}
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                {t('sidepanel.mcpPage.oauth.hint')}
+              </div>
+            </div>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+              style={{
+                color: oauthConnected ? 'var(--ds-success)' : 'var(--ds-text-tertiary)',
+                background: oauthConnected ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
+              }}
+            >
+              {oauthConnected
+                ? t('sidepanel.mcpPage.oauth.authorized')
+                : t('sidepanel.mcpPage.oauth.notAuthorized')}
+            </span>
+          </div>
+          <div className="text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
+            {oauthStatus.expiresAt
+              ? t('sidepanel.mcpPage.oauth.expiresAt', {
+                time: formatTime(oauthStatus.expiresAt, locale),
+              })
+              : t('sidepanel.mcpPage.oauth.noExpiry')}
+          </div>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={onAuthorizeOAuth}
+              disabled={busy !== null}
+              className="ds-btn-primary px-2.5 py-1 text-[11px] font-medium text-white rounded-md disabled:opacity-50"
+            >
+              {busy === 'oauth'
+                ? t('sidepanel.mcpPage.row.testing')
+                : oauthConnected
+                  ? t('sidepanel.mcpPage.oauth.reauthorize')
+                  : t('sidepanel.mcpPage.oauth.authorize')}
+            </button>
+            {oauthConnected && (
+              <button
+                type="button"
+                onClick={onDisconnectOAuth}
+                disabled={busy !== null}
+                className="ds-btn-secondary px-2.5 py-1 text-[11px] rounded-md disabled:opacity-50"
+              >
+                {t('sidepanel.mcpPage.oauth.disconnect')}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1127,6 +1293,13 @@ function formFromServer(server: McpServerConfig): FormState {
     maxToolCount: String(server.limits.maxToolCount),
     executionEnabled: server.execution.enabled,
     executionMode: server.execution.mode,
+    oauthAutoDetect: true,
+    oauthEnabled: server.oauth?.enabled ?? false,
+    oauthClientId: server.oauth?.clientId ?? '',
+    oauthClientSecret: server.oauth?.clientSecret ?? '',
+    oauthScopes: (server.oauth?.scopes ?? []).join(' '),
+    oauthAuthorizationUrl: server.oauth?.authorizationUrl ?? '',
+    oauthTokenUrl: server.oauth?.tokenUrl ?? '',
   };
 }
 
@@ -1160,6 +1333,17 @@ function payloadFromForm(
   const secretsResult = normalizeSecrets(form.secrets, t);
   if ('error' in secretsResult) return secretsResult;
 
+  const oauth = form.oauthEnabled && isHttpTransportKind(form.transportKind)
+    ? {
+      enabled: true,
+      clientId: form.oauthClientId.trim() || undefined,
+      clientSecret: form.oauthClientSecret.trim() || undefined,
+      scopes: form.oauthScopes.split(/\s+/).filter(Boolean),
+      authorizationUrl: form.oauthAuthorizationUrl.trim() || undefined,
+      tokenUrl: form.oauthTokenUrl.trim() || undefined,
+    }
+    : undefined;
+
   return {
     payload: {
       displayName,
@@ -1167,6 +1351,7 @@ function payloadFromForm(
       transport: transportResult.transport,
       headers: headersResult.headers,
       secrets: secretsResult.secrets,
+      oauth,
       timeouts: timeouts as { connectMs: number; requestMs: number; discoveryMs: number },
       limits: limits as { maxResultBytes: number; maxToolCount: number },
       allowlist: {
@@ -1587,6 +1772,10 @@ function nativeSetupMessage(
     return { message: t(`${setupKey}.disabled` as LocaleMessageKey), isError: false };
   }
   return { message: t(`${setupKey}.installFirst` as LocaleMessageKey), isError: false };
+}
+
+function isHttpTransportKind(kind: McpTransportKind): boolean {
+  return kind === 'http' || kind === 'sse' || kind === 'streamable_http';
 }
 
 function transportLabel(kind: McpTransportKind): string {

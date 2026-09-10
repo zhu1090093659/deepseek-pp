@@ -159,6 +159,11 @@ import {
   updateMcpServer,
 } from '../core/mcp/store';
 import { refreshMcpServerDiscovery } from '../core/mcp/discovery';
+import {
+  authorizeMcpOAuthServer,
+  disconnectMcpOAuthServer,
+  getMcpOAuthStatusForServer,
+} from '../core/mcp/oauth-service';
 import { getMcpOriginPattern, hasMcpServerOriginPermission } from '../core/mcp/transports';
 import {
   buildShellAllowlistUpgrade,
@@ -525,6 +530,9 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         deleteMcpServer,
         getMcpToolCache,
         refreshMcpServerDiscovery,
+        getMcpOAuthStatusForServer,
+        authorizeMcpOAuthServer,
+        disconnectMcpOAuthServer,
         getMcpOriginPattern,
         hasMcpServerOriginPermission,
         broadcastMcpServersUpdate,

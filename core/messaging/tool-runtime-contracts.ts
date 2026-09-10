@@ -3,6 +3,7 @@ import type {
   McpServerHealth,
   McpToolCacheEntry,
 } from '../mcp/types';
+import type { McpOAuthStatus } from '../mcp/oauth-client';
 import type {
   McpCapabilitySettings,
 } from '../mcp/capability-types';
@@ -58,6 +59,10 @@ export type WebSearchDiagnostics = Record<string, WebSearchDiagnostic>;
 
 export type McpServerPermissionResponse =
   | { ok: boolean; origin: string | null }
+  | DomainFailure;
+
+export type McpOAuthAuthorizationResponse =
+  | { ok: true; status: McpOAuthStatus }
   | DomainFailure;
 
 export interface McpServerConnectionResponse {
@@ -118,6 +123,18 @@ export interface ToolRuntimeCommandContracts {
   TEST_MCP_SERVER_CONNECTION: {
     request: { type: 'TEST_MCP_SERVER_CONNECTION'; payload: { serverId: string } };
     response: McpServerConnectionResponse;
+  };
+  GET_MCP_OAUTH_STATUS: {
+    request: { type: 'GET_MCP_OAUTH_STATUS'; payload: { serverId: string } };
+    response: McpOAuthStatus | null;
+  };
+  AUTHORIZE_MCP_SERVER: {
+    request: { type: 'AUTHORIZE_MCP_SERVER'; payload: { serverId: string } };
+    response: McpOAuthAuthorizationResponse;
+  };
+  DISCONNECT_MCP_OAUTH: {
+    request: { type: 'DISCONNECT_MCP_OAUTH'; payload: { serverId: string } };
+    response: Ack;
   };
   GET_WEB_TOOL_SETTINGS: {
     request: { type: 'GET_WEB_TOOL_SETTINGS' };

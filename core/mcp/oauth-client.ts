@@ -1,0 +1,893 @@
+import {
+  getCurrentSyncIdentityPort,
+  type SyncIdentityPort,
+} from '../sync/identity-port';
+import type { McpOAuthConfig, McpServerConfig, McpServerId } from './types';
+import { getMcpEndpointUrl } from './transports/common';
+import { hasRealMcpSecret } from './constants';
+
+/**
+ * MCP OAuth 2.1 (+ PKCE) client.
+ *
+ * MCP servers that require OAuth advertise a protected-resource metadata
+ * document and issue a 401 with a `WWW-Authenticate: Bearer` challenge. This
+ * module discovers the authorization server, runs the authorization-code flow
+ * with PKCE through the shared browser identity port, and caches access tokens
+ * in memory.
+ *
+ * The durable credential is the refresh token, which is persisted on the
+ * server's oauth config (redacted like every other secret). Access tokens are
+ * never persisted and are additionally bound to a non-logged fingerprint of
+ * the client credentials, so a changed client id/secret can never reuse a
+ * stale cache entry.
+ */
+
+const TOKEN_REFRESH_SKEW_MS = 60_000;
+const OAUTH_REQUEST_TIMEOUT_MS = 20_000;
+
+export type McpOAuthErrorCode =
+  | 'mcp_oauth_not_configured'
+  | 'mcp_oauth_identity_unavailable'
+  | 'mcp_oauth_metadata_failed'
+  | 'mcp_oauth_registration_failed'
+  | 'mcp_oauth_authorization_required'
+  | 'mcp_oauth_authorization_cancelled'
+  | 'mcp_oauth_provider_error'
+  | 'mcp_oauth_missing_code'
+  | 'mcp_oauth_token_exchange_failed'
+  | 'mcp_oauth_refresh_failed';
+
+export class McpOAuthError extends Error {
+  readonly code: McpOAuthErrorCode;
+  readonly retryable: boolean;
+
+  constructor(code: McpOAuthErrorCode, message: string, options?: { retryable?: boolean }) {
+    super(message);
+    this.name = 'McpOAuthError';
+    this.code = code;
+    this.retryable = options?.retryable ?? false;
+  }
+}
+
+/**
+ * Result of probing an MCP endpoint to decide whether it requires OAuth.
+ *
+ * MCP servers that need OAuth answer an unauthenticated request with 401 and
+ * a `WWW-Authenticate: Bearer` challenge (RFC 9728). When the challenge names
+ * a `resource_metadata` document we also resolve the authorization server so
+ * the caller can enable OAuth and start the flow without further discovery.
+ */
+export interface McpOAuthDetection {
+  /** True when the endpoint answered 401 with a Bearer challenge. */
+  requiresOAuth: boolean;
+  /** True when protected-resource / authorization-server metadata was resolved. */
+  metadataDetected: boolean;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+  scopes?: string[];
+  resource?: string;
+  /** Raw `WWW-Authenticate` header value, when present. */
+  challenge?: string;
+  /** Non-fatal explanation when detection could not complete. */
+  reason?: string;
+}
+
+export interface McpOAuthStatus {
+  /** True when the server declares OAuth and uses an HTTP-based transport. */
+  enabled: boolean;
+  /** True when a currently-usable access token exists in the in-memory cache. */
+  authorized: boolean;
+  expiresAt: number | null;
+  hasRefreshToken: boolean;
+  scopes: string[];
+  authorizationUrl: string | null;
+}
+
+interface CachedOAuthToken {
+  accessToken: string;
+  tokenType: string;
+  scope?: string;
+  /** Epoch ms; null when the provider did not advertise an expiry. */
+  expiresAt: number | null;
+  refreshToken?: string;
+  credentialFingerprint: string;
+}
+
+interface ResolvedOAuthMetadata {
+  authorizationUrl: string;
+  tokenUrl: string;
+  registrationUrl?: string;
+  scopes: string[];
+  resource?: string;
+}
+
+const tokenCache = new Map<McpServerId, CachedOAuthToken>();
+
+/** OAuth only applies to HTTP-based transports; native/stdio paths are local. */
+export function isMcpOAuthTransportSupported(server: McpServerConfig): boolean {
+  return server.transport.kind === 'http'
+    || server.transport.kind === 'sse'
+    || server.transport.kind === 'streamable_http';
+}
+
+export function isMcpOAuthEnabled(server: McpServerConfig): boolean {
+  return server.oauth?.enabled === true && isMcpOAuthTransportSupported(server);
+}
+
+export function getMcpOAuthStatus(server: McpServerConfig): McpOAuthStatus {
+  const enabled = isMcpOAuthEnabled(server);
+  const cached = tokenCache.get(server.id);
+  return {
+    enabled,
+    authorized: Boolean(cached && isTokenFresh(cached)),
+    expiresAt: cached?.expiresAt ?? null,
+    hasRefreshToken: hasRealMcpSecret(server.oauth?.refreshToken),
+    scopes: server.oauth?.scopes ?? [],
+    authorizationUrl: server.oauth?.authorizationUrl ?? null,
+  };
+}
+
+/** Drop a cached access token (e.g. after a 401) so the next call refreshes. */
+export function invalidateMcpOAuthToken(serverId: McpServerId): void {
+  tokenCache.delete(serverId);
+}
+
+function isTokenFresh(entry: CachedOAuthToken): boolean {
+  if (entry.expiresAt === null) return true;
+  return Date.now() < entry.expiresAt - TOKEN_REFRESH_SKEW_MS;
+}
+
+/**
+ * Resolve the Authorization header for an OAuth-protected MCP server.
+ *
+ * Returns null when the server does not use OAuth (static secrets keep
+ * owning the header). When interactive is false and no usable token exists,
+ * throws `mcp_oauth_authorization_required` so callers can prompt the user
+ * instead of silently sending an unauthenticated request.
+ */
+export async function resolveMcpOAuthAuthorization(
+  server: McpServerConfig,
+  options: {
+    interactive?: boolean;
+    signal?: AbortSignal;
+    identity?: SyncIdentityPort | null;
+    /**
+     * Called when a refresh rotates the refresh token. Authorization servers
+     * that rotate invalidate the previous token, so the caller must persist the
+     * new one or the next refresh sends a consumed token and fails with
+     * `invalid_grant`.
+     */
+    onRefreshTokenRotated?: (refreshToken: string) => void | Promise<void>;
+  } = {},
+): Promise<string | null> {
+  if (!isMcpOAuthEnabled(server)) return null;
+
+  const cached = tokenCache.get(server.id);
+  const fingerprint = await fingerprintCredentials(server.oauth);
+  if (cached && cached.credentialFingerprint === fingerprint && isTokenFresh(cached)) {
+    return `${toAuthorizationScheme(cached.tokenType)} ${cached.accessToken}`;
+  }
+
+  // Try a transparent refresh when a durable refresh token exists.
+  const refreshToken = hasRealMcpSecret(server.oauth?.refreshToken) ? server.oauth.refreshToken : undefined;
+  if (refreshToken) {
+    try {
+      const refreshed = await refreshAccessToken(server, refreshToken, fingerprint, options.signal);
+      tokenCache.set(server.id, refreshed);
+      // Persist a rotated refresh token before returning: otherwise the next
+      // refresh reuses the now-consumed token and the server answers
+      // invalid_grant, which no amount of refreshing can recover from.
+      if (refreshed.refreshToken && refreshed.refreshToken !== refreshToken) {
+        await options.onRefreshTokenRotated?.(refreshed.refreshToken);
+      }
+      return `${toAuthorizationScheme(refreshed.tokenType)} ${refreshed.accessToken}`;
+    } catch (error) {
+      invalidateMcpOAuthToken(server.id);
+      if (!options.interactive) {
+        // A stored refresh token means the user already authorized, so a failed
+        // refresh is a token/transport problem (expired or rotated grant,
+        // unreachable endpoint, rejected client), never a missing
+        // authorization. Preserve the real cause instead of masking it as
+        // mcp_oauth_authorization_required, which made a completed consent look
+        // like it never happened.
+        throw asRefreshFailure(error);
+      }
+      // Fall through to a fresh interactive authorization.
+    }
+  }
+
+  if (!options.interactive) {
+    throw new McpOAuthError(
+      'mcp_oauth_authorization_required',
+      'MCP OAuth authorization is required. Authorize this server, then retry.',
+      { retryable: true },
+    );
+  }
+
+  const { token: authorized } = await runInteractiveAuthorization(server, options);
+  return `${toAuthorizationScheme(authorized.tokenType)} ${authorized.accessToken}`;
+}
+
+/**
+ * Run the full interactive authorization flow and return the fresh token.
+ * The caller is responsible for persisting the returned refresh token onto the
+ * server config; this module never writes storage itself.
+ */
+export interface DiscoveredOAuthConfig {
+  clientId?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+  scopes?: string[];
+  resource?: string;
+}
+
+export async function authorizeMcpServer(
+  server: McpServerConfig,
+  options: { signal?: AbortSignal; identity?: SyncIdentityPort | null } = {},
+): Promise<{
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number | null;
+  scope?: string;
+  oauthPatch: DiscoveredOAuthConfig;
+}> {
+  if (!server.oauth?.enabled) {
+    throw new McpOAuthError('mcp_oauth_not_configured', 'OAuth is not enabled for this MCP server.');
+  }
+  const { token, oauthPatch } = await runInteractiveAuthorization(server, options);
+  return {
+    accessToken: token.accessToken,
+    refreshToken: token.refreshToken,
+    expiresAt: token.expiresAt,
+    scope: token.scope,
+    oauthPatch,
+  };
+}
+
+async function runInteractiveAuthorization(
+  server: McpServerConfig,
+  options: { signal?: AbortSignal; identity?: SyncIdentityPort | null },
+): Promise<{ token: CachedOAuthToken; oauthPatch: DiscoveredOAuthConfig }> {
+  const identity = options.identity ?? getCurrentSyncIdentityPort();
+  if (!identity) {
+    throw new McpOAuthError(
+      'mcp_oauth_identity_unavailable',
+      'OAuth authorization is not available in this browser context.',
+    );
+  }
+  const metadata = await resolveOAuthMetadata(server, options.signal);
+  const clientId = await ensureClientId(server, metadata, options.signal);
+  const redirectUri = identity.getRedirectUri();
+  const codeVerifier = createCodeVerifier();
+  const codeChallenge = await createCodeChallenge(codeVerifier);
+  const state = createRandomToken();
+
+  const authUrl = new URL(metadata.authorizationUrl);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('code_challenge', codeChallenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('state', state);
+  if (metadata.scopes.length > 0) authUrl.searchParams.set('scope', metadata.scopes.join(' '));
+  if (metadata.resource) authUrl.searchParams.set('resource', metadata.resource);
+
+  let redirectUrl: string | undefined;
+  try {
+    redirectUrl = await identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
+  } catch (error) {
+    // chrome.identity throws here when the provider refuses to load the page
+    // (unregistered redirect URI, invalid client id, blocked endpoint). Surface
+    // the concrete URL and redirect URI so the misconfiguration is actionable.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpOAuthError(
+      'mcp_oauth_provider_error',
+      `MCP OAuth authorization page could not be loaded (${detail}). Redirect URI: ${redirectUri}. Authorization URL: ${authUrl.toString()}`,
+    );
+  }
+  if (!redirectUrl) {
+    throw new McpOAuthError('mcp_oauth_authorization_cancelled', 'MCP OAuth authorization was cancelled.');
+  }
+  const parsed = parseRedirectUrl(redirectUrl);
+  if (parsed.error) {
+    throw new McpOAuthError(
+      'mcp_oauth_provider_error',
+      `MCP OAuth provider returned an error: ${parsed.error}`,
+    );
+  }
+  if (parsed.state && parsed.state !== state) {
+    throw new McpOAuthError('mcp_oauth_provider_error', 'MCP OAuth state did not match.');
+  }
+  if (!parsed.code) {
+    throw new McpOAuthError('mcp_oauth_missing_code', 'MCP OAuth provider did not return an authorization code.');
+  }
+
+  // Fingerprint the client id that actually minted this token. On the first
+  // authorization the config still has no clientId (dynamic registration just
+  // created it), so fingerprinting `server.oauth` would hash '' and every later
+  // resolve would see a different fingerprint and force an unnecessary refresh.
+  const fingerprint = await fingerprintClientId(clientId);
+  const token = await exchangeCodeForToken(server, metadata, {
+    code: parsed.code,
+    codeVerifier,
+    redirectUri,
+    clientId,
+    signal: options.signal,
+  });
+  const entry: CachedOAuthToken = { ...token, credentialFingerprint: fingerprint };
+  tokenCache.set(server.id, entry);
+  // Persist what we discovered during the interactive flow. Access tokens live
+  // only in memory and vanish when the MV3 service worker idles, so a later
+  // refresh must reach the token endpoint again and reuse the same client id
+  // instead of re-registering a brand-new one (which invalidates the stored
+  // refresh token).
+  const oauthPatch: DiscoveredOAuthConfig = {
+    clientId,
+    authorizationUrl: metadata.authorizationUrl,
+    tokenUrl: metadata.tokenUrl,
+    registrationUrl: metadata.registrationUrl,
+    scopes: metadata.scopes,
+    resource: metadata.resource,
+  };
+  return { token: entry, oauthPatch };
+}
+
+async function refreshAccessToken(
+  server: McpServerConfig,
+  refreshToken: string,
+  fingerprint: string,
+  signal?: AbortSignal,
+): Promise<CachedOAuthToken> {
+  const metadata = await resolveOAuthMetadata(server, signal);
+  const clientId = await ensureClientId(server, metadata, signal);
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+  });
+  if (hasRealMcpSecret(server.oauth?.clientSecret)) body.set('client_secret', server.oauth.clientSecret);
+  // Re-request the originally granted scopes. A refresh that silently drops
+  // them can come back with a token the resource server refuses (401) even
+  // though the token endpoint returned 200.
+  if (metadata.scopes.length > 0) body.set('scope', metadata.scopes.join(' '));
+  if (metadata.resource) body.set('resource', metadata.resource);
+
+  const payload = await postTokenForm(metadata.tokenUrl, body, 'mcp_oauth_refresh_failed', signal);
+  if (!payload?.access_token) {
+    throw new McpOAuthError(
+      'mcp_oauth_refresh_failed',
+      'MCP OAuth token refresh did not return an access token.',
+      { retryable: true },
+    );
+  }
+  return {
+    accessToken: String(payload.access_token),
+    tokenType: typeof payload.token_type === 'string' ? payload.token_type : 'Bearer',
+    scope: typeof payload.scope === 'string' ? payload.scope : undefined,
+    expiresAt: toExpiry(payload.expires_in),
+    refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : refreshToken,
+    credentialFingerprint: fingerprint,
+  };
+}
+
+async function exchangeCodeForToken(
+  server: McpServerConfig,
+  metadata: ResolvedOAuthMetadata,
+  input: { code: string; codeVerifier: string; redirectUri: string; clientId: string; signal?: AbortSignal },
+): Promise<Omit<CachedOAuthToken, 'credentialFingerprint'>> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: input.code,
+    code_verifier: input.codeVerifier,
+    redirect_uri: input.redirectUri,
+    client_id: input.clientId,
+  });
+  if (hasRealMcpSecret(server.oauth?.clientSecret)) body.set('client_secret', server.oauth.clientSecret);
+  if (metadata.resource) body.set('resource', metadata.resource);
+
+  const payload = await postTokenForm(metadata.tokenUrl, body, 'mcp_oauth_token_exchange_failed', input.signal);
+  if (!payload?.access_token) {
+    throw new McpOAuthError(
+      'mcp_oauth_token_exchange_failed',
+      'MCP OAuth token exchange did not return an access token.',
+    );
+  }
+  return {
+    accessToken: String(payload.access_token),
+    tokenType: typeof payload.token_type === 'string' ? payload.token_type : 'Bearer',
+    scope: typeof payload.scope === 'string' ? payload.scope : undefined,
+    expiresAt: toExpiry(payload.expires_in),
+    refreshToken: typeof payload.refresh_token === 'string' ? payload.refresh_token : undefined,
+  };
+}
+
+async function ensureClientId(
+  server: McpServerConfig,
+  metadata: ResolvedOAuthMetadata,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (server.oauth?.clientId) return server.oauth.clientId;
+  // Dynamic client registration (RFC 7591) is required by the MCP spec for
+  // servers that do not hand out a static client id. It is best-effort: when
+  // the server publishes no registration endpoint the caller sees a clear
+  // error instead of a malformed authorization request.
+  if (!metadata.registrationUrl) {
+    throw new McpOAuthError(
+      'mcp_oauth_registration_failed',
+      'MCP OAuth requires a client id, but the server does not support dynamic client registration.',
+    );
+  }
+  const identity = getCurrentSyncIdentityPort();
+  const redirectUri = identity?.getRedirectUri() ?? undefined;
+  const payload = await postJson(metadata.registrationUrl, {
+    client_name: 'DeepSeek++',
+    redirect_uris: redirectUri ? [redirectUri] : [],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    scope: metadata.scopes.join(' ') || undefined,
+  }, signal);
+  if (typeof payload?.client_id !== 'string' || !payload.client_id) {
+    throw new McpOAuthError(
+      'mcp_oauth_registration_failed',
+      'MCP OAuth dynamic client registration did not return a client id.',
+    );
+  }
+  return payload.client_id;
+}
+
+/**
+ * Fetch authorization-server metadata (RFC 8414). When the issuer carries a
+ * path, the well-known segment is inserted *before* it
+ * (https://host/.well-known/oauth-authorization-server/path). Dropping the path
+ * makes path-based issuers such as GitHub answer 404.
+ */
+async function fetchAuthorizationServerMetadata(
+  authorizationServer: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  let issuer: URL;
+  try {
+    issuer = new URL(authorizationServer);
+  } catch {
+    return null;
+  }
+  const suffix = issuer.pathname.replace(/\/$/, '');
+  const candidates = [
+    `${issuer.origin}/.well-known/oauth-authorization-server${suffix}`,
+    `${issuer.origin}/.well-known/openid-configuration${suffix}`,
+    new URL('/.well-known/oauth-authorization-server', issuer).toString(),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const metadata = await fetchJson(candidate, signal);
+      if (metadata) return metadata;
+    } catch {
+      // try the next well-known shape
+    }
+  }
+  return null;
+}
+
+async function resolveOAuthMetadata(
+  server: McpServerConfig,
+  signal?: AbortSignal,
+): Promise<ResolvedOAuthMetadata> {
+  const oauth = server.oauth ?? { enabled: false };
+  const resource = oauth.resource ?? server.transport.url ?? undefined;
+
+  if (oauth.authorizationUrl && oauth.tokenUrl) {
+    return {
+      authorizationUrl: oauth.authorizationUrl,
+      tokenUrl: oauth.tokenUrl,
+      registrationUrl: oauth.registrationUrl,
+      scopes: oauth.scopes ?? [],
+      resource,
+    };
+  }
+
+  // Discover the authorization server via protected-resource metadata.
+  const endpoint = server.transport.url;
+  if (!endpoint) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      'MCP OAuth metadata cannot be discovered without a service URL.',
+    );
+  }
+  const parsedEndpoint = new URL(endpoint);
+  const origin = parsedEndpoint.origin;
+  // RFC 9728 publishes protected-resource metadata under the well-known path
+  // *suffixed with the resource path* (e.g. .../oauth-protected-resource/mcp).
+  // The bare origin path is only a fallback; GitHub 404s on the bare form.
+  const candidates = [
+    `${origin}/.well-known/oauth-protected-resource${parsedEndpoint.pathname.replace(/\/$/, '')}`,
+    `${origin}/.well-known/oauth-protected-resource`,
+  ];
+  let protectedResource: Record<string, unknown> | null = null;
+  for (const candidate of candidates) {
+    try {
+      protectedResource = await fetchJson(candidate, signal);
+    } catch {
+      protectedResource = null;
+    }
+    if (protectedResource) break;
+  }
+  if (!protectedResource) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      `MCP OAuth protected-resource metadata could not be fetched from ${candidates.join(' or ')}.`,
+    );
+  }
+  const authorizationServer = Array.isArray(protectedResource?.authorization_servers)
+    ? protectedResource.authorization_servers.find((value): value is string => typeof value === 'string')
+    : undefined;
+  if (!authorizationServer) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      'MCP OAuth protected-resource metadata did not advertise an authorization server.',
+    );
+  }
+  const metadata = await fetchAuthorizationServerMetadata(authorizationServer, signal);
+  const authorizationUrl = pickString(metadata?.authorization_endpoint) ?? oauth.authorizationUrl;
+  const tokenUrl = pickString(metadata?.token_endpoint) ?? oauth.tokenUrl;
+  if (!authorizationUrl || !tokenUrl) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      'MCP OAuth authorization-server metadata is missing required endpoints.',
+    );
+  }
+  const scopes = oauth.scopes && oauth.scopes.length > 0
+    ? oauth.scopes
+    : parseScopes(protectedResource?.scopes_supported) ?? parseScopes(metadata?.scopes_supported) ?? [];
+  return {
+    authorizationUrl,
+    tokenUrl,
+    registrationUrl: pickString(metadata?.registration_endpoint) ?? oauth.registrationUrl,
+    scopes,
+    resource: resource ?? pickString(metadata?.resource),
+  };
+}
+
+async function postForm(
+  url: string,
+  body: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: body.toString(),
+    signal,
+  });
+  return readJsonBody(response);
+}
+
+/**
+ * Token-endpoint POST. Unlike the discovery helpers this reports the provider's
+ * `error` / `error_description` and never downgrades an HTTP failure to a
+ * generic metadata error, so a refresh failure keeps its real cause.
+ */
+async function postTokenForm(
+  url: string,
+  body: URLSearchParams,
+  failureCode: McpOAuthErrorCode,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: body.toString(),
+    signal,
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      const error = typeof payload?.error === 'string' ? payload.error : undefined;
+      const description = typeof payload?.error_description === 'string'
+        ? payload.error_description
+        : undefined;
+      if (error) detail = description ? `${error}: ${description}` : error;
+    } catch {
+      // Non-JSON error body; keep the status-only detail.
+    }
+    throw new McpOAuthError(
+      failureCode,
+      `MCP OAuth token endpoint rejected the request (${detail}).`,
+      { retryable: response.status >= 500 },
+    );
+  }
+  try {
+    const value = await response.json();
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wrap any refresh-path failure while preserving its cause. Only a *missing*
+ * refresh token is treated as "authorization required"; a present-but-rejected
+ * token stays a refresh failure so callers can show what actually went wrong.
+ */
+function asRefreshFailure(error: unknown): McpOAuthError {
+  if (error instanceof McpOAuthError && error.code === 'mcp_oauth_refresh_failed') {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new McpOAuthError(
+    'mcp_oauth_refresh_failed',
+    `MCP OAuth token refresh failed: ${message}`,
+    { retryable: true },
+  );
+}
+
+async function postJson(
+  url: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  return readJsonBody(response);
+}
+
+async function fetchJson(url: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+  const response = await fetchWithTimeout(url, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    signal,
+  });
+  return readJsonBody(response);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OAUTH_REQUEST_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+async function readJsonBody(response: Response): Promise<Record<string, unknown> | null> {
+  if (!response.ok) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      `MCP OAuth endpoint returned HTTP ${response.status}.`,
+      { retryable: response.status >= 500 },
+    );
+  }
+  try {
+    const value = await response.json();
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseRedirectUrl(redirectUrl: string): { code?: string; state?: string; error?: string } {
+  const url = new URL(redirectUrl);
+  const params = new URLSearchParams(url.hash ? url.hash.slice(1) : url.search);
+  return {
+    code: params.get('code') ?? undefined,
+    state: params.get('state') ?? undefined,
+    error: params.get('error') ?? undefined,
+  };
+}
+
+function toExpiry(expiresIn: unknown): number | null {
+  const seconds = typeof expiresIn === 'number' ? expiresIn : Number(expiresIn);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Date.now() + seconds * 1000;
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function parseScopes(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : undefined;
+}
+
+function createCodeVerifier(): string {
+  return base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+async function createCodeChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+function createRandomToken(): string {
+  return base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+/**
+ * Normalize the token_type returned by the authorization server into a proper
+ * Authorization scheme. RFC 6750 fixes the scheme name as `Bearer`; some
+ * providers answer `token_type: "bearer"`, and strict resource servers reject
+ * `Authorization: bearer <token>` with `invalid_token`. Always emit `Bearer`.
+ */
+function toAuthorizationScheme(tokenType: string | undefined): string {
+  return tokenType?.toLowerCase() === 'bearer' ? 'Bearer' : (tokenType || 'Bearer');
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Fingerprint the stable, non-redacted part of the OAuth client identity.
+ *
+ * Only `clientId` qualifies: it is never redacted, so the fingerprint stays
+ * stable between a raw config and a sanitized one. `clientSecret` is redacted
+ * to '********' on every sanitized read, so including it would make the
+ * fingerprint impossible to reproduce and a still-valid cached access token
+ * would look like it belonged to different credentials.
+ */
+async function fingerprintCredentials(oauth: McpOAuthConfig | undefined): Promise<string> {
+  return fingerprintClientId(oauth?.clientId);
+}
+
+async function fingerprintClientId(clientId: string | undefined): Promise<string> {
+  const material = clientId ?? '';
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Probe an MCP HTTP endpoint to determine whether it requires OAuth.
+ *
+ * Sends a minimal `initialize` request without credentials and inspects the
+ * response. A 401 with a Bearer challenge means the server is OAuth-protected;
+ * when the challenge advertises a `resource_metadata` document we resolve the
+ * authorization server endpoints so OAuth can be enabled immediately.
+ */
+export type McpOAuthDetectionInput = Pick<McpServerConfig, 'transport' | 'oauth'>
+  & Partial<Pick<McpServerConfig, 'timeouts'>>;
+
+export async function detectMcpOAuthRequirement(
+  input: McpOAuthDetectionInput,
+  options: { signal?: AbortSignal } = {},
+): Promise<McpOAuthDetection> {
+  const server = input as McpServerConfig;
+  if (!isMcpOAuthTransportSupported(server)) {
+    return { requiresOAuth: false, metadataDetected: false, reason: 'unsupported_transport' };
+  }
+  let url: URL;
+  try {
+    url = getMcpEndpointUrl(server);
+  } catch (error) {
+    return {
+      requiresOAuth: false,
+      metadataDetected: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const probe = await probeMcpOAuthChallenge(url.toString(), options.signal);
+  if (probe.error) {
+    return { requiresOAuth: false, metadataDetected: false, reason: probe.error };
+  }
+  if (!probe.unauthorized) {
+    return { requiresOAuth: false, metadataDetected: false };
+  }
+
+  const challenge = probe.challenge;
+  const base: McpOAuthDetection = {
+    requiresOAuth: true,
+    metadataDetected: false,
+    challenge,
+  };
+
+  const resourceMetadataUrl = parseResourceMetadataUrl(challenge);
+  if (!resourceMetadataUrl) return base;
+
+  const resource = server.oauth?.resource ?? url.toString();
+  try {
+    const protectedResource = await fetchJson(resourceMetadataUrl, options.signal);
+    const authorizationServer = Array.isArray(protectedResource?.authorization_servers)
+      ? protectedResource.authorization_servers.find((value): value is string => typeof value === 'string')
+      : undefined;
+    if (!authorizationServer) return base;
+    const metadata = await fetchJson(
+      new URL('/.well-known/oauth-authorization-server', authorizationServer).toString(),
+      options.signal,
+    );
+    const authorizationUrl = pickString(metadata?.authorization_endpoint);
+    const tokenUrl = pickString(metadata?.token_endpoint);
+    return {
+      ...base,
+      metadataDetected: Boolean(authorizationUrl && tokenUrl),
+      authorizationUrl,
+      tokenUrl,
+      registrationUrl: pickString(metadata?.registration_endpoint),
+      scopes: parseScopes(protectedResource?.scopes_supported)
+        ?? parseScopes(metadata?.scopes_supported)
+        ?? [],
+      resource,
+    };
+  } catch (error) {
+    return { ...base, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Probe an MCP endpoint for an OAuth challenge.
+ *
+ * MCP streamable-HTTP servers answer an unauthenticated request with 401 and a
+ * Bearer `WWW-Authenticate` challenge. Different servers police the request
+ * shape differently, so we send a real `initialize` POST with the same headers
+ * the transport uses (`accept: application/json, text/event-stream`) and fall
+ * back to a bare GET when that does not produce a challenge. A 401 from either
+ * attempt means the endpoint is OAuth-protected.
+ */
+async function probeMcpOAuthChallenge(
+  endpoint: string,
+  signal?: AbortSignal,
+): Promise<{ unauthorized: boolean; challenge?: string; error?: string }> {
+  const initBody = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 'oauth-probe',
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'DeepSeek++', version: '0.0.0' },
+    },
+  });
+
+  const attempts: RequestInit[] = [
+    {
+      method: 'POST',
+      credentials: 'omit',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: initBody,
+    },
+    {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { accept: 'application/json, text/event-stream' },
+    },
+  ];
+
+  let lastError: string | undefined;
+  for (const init of attempts) {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(endpoint, init, signal);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      continue;
+    }
+    const challenge = response.headers.get('www-authenticate') ?? undefined;
+    const unauthorized = response.status === 401;
+    await response.body?.cancel().catch(() => undefined);
+    if (unauthorized) return { unauthorized: true, challenge };
+  }
+  return { unauthorized: false, error: lastError };
+}
+
+/** Extract the `resource_metadata` URL from a Bearer WWW-Authenticate header. */
+function parseResourceMetadataUrl(challenge: string | undefined): string | undefined {
+  if (!challenge) return undefined;
+  const match = /resource_metadata="([^"]+)"/i.exec(challenge);
+  return match?.[1];
+}

@@ -76,5 +76,11 @@
     "tmp": "^0.2.7",
     "uuid": "^11.1.1",
     "@earendil-works/pi-ai": "0.83.0"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "spawn-sync@1.0.15": true,
+    "@google/genai@1.52.0": true,
+    "protobufjs@7.6.5": true
   }
 }

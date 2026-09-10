@@ -9,6 +9,8 @@ import {
   saveMcpDiscoveryResult,
 } from './store';
 import { createMcpTransport } from './transports';
+import { authorizeMcpOAuthServer } from './oauth-service';
+import { isMcpOAuthEnabled } from './oauth-client';
 import type {
   McpServerConfig,
   McpServerHealth,
@@ -19,9 +21,20 @@ import type {
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const discoveryTails = new Map<McpServerId, Promise<void>>();
 
+export interface McpDiscoveryOptions {
+  cacheTtlMs?: number;
+  signal?: AbortSignal;
+  /**
+   * Allow a single interactive OAuth re-authorization when the resource server
+   * rejects a freshly refreshed token. Only user-initiated discovery may set
+   * this; background refreshes must never open a web-auth window.
+   */
+  allowInteractiveOAuth?: boolean;
+}
+
 export async function refreshMcpServerDiscovery(
   serverId: McpServerId,
-  options?: { cacheTtlMs?: number; signal?: AbortSignal },
+  options?: McpDiscoveryOptions,
 ): Promise<McpToolCacheEntry> {
   const previous = discoveryTails.get(serverId) ?? Promise.resolve();
   const operation = previous.then(
@@ -37,7 +50,7 @@ export async function refreshMcpServerDiscovery(
 
 async function discoverServerToolsById(
   serverId: McpServerId,
-  options?: { cacheTtlMs?: number; signal?: AbortSignal },
+  options?: McpDiscoveryOptions,
 ): Promise<McpToolCacheEntry> {
   throwIfMcpExecutionAborted(options?.signal);
   const server = await getMcpServerById(serverId, { includeSecrets: true });
@@ -243,18 +256,38 @@ export async function executeMcpToolCall(
 
 async function discoverServerTools(
   server: McpServerConfig,
-  options?: { cacheTtlMs?: number; signal?: AbortSignal },
+  options?: McpDiscoveryOptions,
 ): Promise<McpToolCacheEntry> {
   const startedAt = Date.now();
   let descriptors: ToolDescriptor[];
   try {
-    const transport = createMcpTransport(server);
-    await initializeMcpServer(server, transport, { signal: options?.signal });
-    descriptors = await listMcpTools(server, transport, { signal: options?.signal });
-    throwIfMcpExecutionAborted(options?.signal);
+    descriptors = await listServerToolsOnce(server, options?.signal);
   } catch (err) {
     throwIfMcpExecutionAborted(options?.signal);
-    return persistMcpDiscoveryFailure(server, startedAt, err, options);
+    // A refresh that the resource server still rejects means the stored grant
+    // is dead (revoked, rotated, or minted for another client). Refreshing
+    // again cannot help; only a fresh interactive authorization can. Do that
+    // once, and only for user-initiated discovery.
+    if (isRecoverableOAuthGrantError(err) && options?.allowInteractiveOAuth && isMcpOAuthEnabled(server)) {
+      const reauthorized = await authorizeMcpOAuthServer(server.id);
+      if (reauthorized.ok) {
+        const reloaded = await getMcpServerById(server.id, { includeSecrets: true });
+        if (reloaded) {
+          try {
+            descriptors = await listServerToolsOnce(reloaded, options?.signal);
+          } catch (retryError) {
+            throwIfMcpExecutionAborted(options?.signal);
+            return persistMcpDiscoveryFailure(server, startedAt, retryError, options);
+          }
+        } else {
+          return persistMcpDiscoveryFailure(server, startedAt, err, options);
+        }
+      } else {
+        return persistMcpDiscoveryFailure(server, startedAt, err, options);
+      }
+    } else {
+      return persistMcpDiscoveryFailure(server, startedAt, err, options);
+    }
   }
 
   const completedAt = Date.now();
@@ -275,6 +308,30 @@ async function discoverServerTools(
   };
   await saveMcpDiscoveryResult(entry, server);
   return entry;
+}
+
+async function listServerToolsOnce(
+  server: McpServerConfig,
+  signal?: AbortSignal,
+): Promise<ToolDescriptor[]> {
+  const transport = createMcpTransport(server);
+  await initializeMcpServer(server, transport, { signal });
+  return listMcpTools(server, transport, { signal });
+}
+
+/**
+ * True when a stored OAuth grant is dead and only a fresh interactive
+ * authorization can recover. Covers both shapes the failure can take:
+ *  - `mcp_oauth_refresh_failed`: the token endpoint rejected the refresh token
+ *    (invalid_grant / invalid_client), i.e. the grant is revoked or rotated.
+ *  - `mcp_oauth_invalid_token`: the refresh succeeded but the resource server
+ *    still rejected the access token.
+ * A *missing* refresh token is different and stays `authorization_required`.
+ */
+export function isRecoverableOAuthGrantError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'mcp_oauth_invalid_token' || code === 'mcp_oauth_refresh_failed';
 }
 
 async function persistMcpDiscoveryFailure(

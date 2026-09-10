@@ -1,4 +1,3 @@
-import { buildMcpRequestHeaders } from '../store';
 import type {
   McpJsonRpcNotification,
   McpJsonRpcRequest,
@@ -13,11 +12,27 @@ import {
   getMcpEndpointUrl,
   readJsonRpcResponse,
 } from './common';
+import { describeMcpOAuthFailure, resolveMcpRequestHeaders, shouldRetryMcpUnauthorized } from './auth';
 
 interface McpHttpTransportState {
   protocolVersion?: string;
   sessionId?: string;
   pendingSessionId?: string;
+  /** Redacted shape of the Authorization header attached to the last request. */
+  lastAuthHeader?: string;
+}
+
+/**
+ * Describe an Authorization header without leaking the credential. Tells apart
+ * "no header at all" from "a real JWT was attached", which a bare 401 cannot.
+ */
+function describeAuthorizationHeader(value: string | undefined): string {
+  if (!value) return 'absent';
+  const space = value.indexOf(' ');
+  if (space < 0) return `malformed(len=${value.length}, no scheme)`;
+  const scheme = value.slice(0, space);
+  const token = value.slice(space + 1);
+  return `${scheme} tokenLen=${token.length} jwtSegments=${token.split('.').length}`;
 }
 
 export function createMcpHttpTransport(server: McpServerConfig): McpProtocolTransport {
@@ -72,15 +87,36 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
 ): Promise<McpJsonRpcResponse<TResult>> {
   const timeoutMs = options.timeoutMs ?? server.timeouts.requestMs;
   const maxResponseBytes = options.maxResponseBytes ?? server.limits.maxResultBytes;
+  const streamableSession = options.streamableSession ?? false;
   await ensureMcpServerOriginPermission(server);
   const url = getMcpEndpointUrl(server);
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    credentials: 'omit',
-    headers: createRequestHeaders(server, options.session, options.streamableSession ?? false),
-    body: JSON.stringify(message),
+
+  const post = () => postHttpMessage(server, url, message, {
+    timeoutMs,
+    session: options.session,
+    streamableSession,
     signal: options.signal,
-  }, timeoutMs);
+  });
+
+  let response = await post();
+  if (shouldRetryMcpUnauthorized(server, response.status)) {
+    await response.body?.cancel().catch(() => undefined);
+    response = await post();
+    if (response.status === 401) {
+      const challenge = response.headers.get('www-authenticate') ?? '(no WWW-Authenticate header)';
+      await response.body?.cancel().catch(() => undefined);
+      // A refresh succeeded but the resource server still rejects the token.
+      // That cannot be repaired by refreshing again (the grant is revoked,
+      // rotated, or minted for a different client), so flag it distinctly and
+      // let the caller escalate to a fresh interactive authorization.
+      throw new McpTransportError(
+        'mcp_oauth_invalid_token',
+        `MCP server returned HTTP 401. OAuth retry was still unauthorized (${describeMcpOAuthFailure(server)}). Last request Authorization: ${options.session?.lastAuthHeader ?? 'unknown'}. Server challenge: ${challenge}`,
+        { retryable: false },
+      );
+    }
+  }
+
   const rpcResponse = await readJsonRpcResponse<TResult>(
     response,
     message,
@@ -91,9 +127,33 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
     response,
     message,
     rpcResponse,
-    options.streamableSession ?? false,
+    streamableSession,
   );
   return rpcResponse;
+}
+
+async function postHttpMessage(
+  server: McpServerConfig,
+  url: URL,
+  body: unknown,
+  options: {
+    timeoutMs: number;
+    session?: McpHttpTransportState;
+    streamableSession: boolean;
+    signal?: AbortSignal;
+  },
+): Promise<Response> {
+  const authHeaders = await resolveMcpRequestHeaders(server, { signal: options.signal });
+  if (options.session) {
+    options.session.lastAuthHeader = describeAuthorizationHeader(authHeaders.Authorization);
+  }
+  return fetchWithTimeout(url, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: createRequestHeaders(authHeaders, options.session, options.streamableSession),
+    body: JSON.stringify(body),
+    signal: options.signal,
+  }, options.timeoutMs);
 }
 
 async function sendHttpNotification(
@@ -108,19 +168,25 @@ async function sendHttpNotification(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? server.timeouts.requestMs;
   await ensureMcpServerOriginPermission(server);
-  const response = await fetchWithTimeout(getMcpEndpointUrl(server), {
-    method: 'POST',
-    credentials: 'omit',
-    headers: createRequestHeaders(server, options.session, options.streamableSession ?? false),
-    body: JSON.stringify(notification),
+  const url = getMcpEndpointUrl(server);
+  const send = () => postHttpMessage(server, url, notification, {
+    timeoutMs,
+    session: options.session,
+    streamableSession: options.streamableSession ?? false,
     signal: options.signal,
-  }, timeoutMs);
+  });
+
+  let response = await send();
+  if (shouldRetryMcpUnauthorized(server, response.status)) {
+    await response.body?.cancel().catch(() => undefined);
+    response = await send();
+  }
 
   try {
     if (!response.ok) {
       throw new McpTransportError(
         'mcp_http_error',
-        `MCP server returned HTTP ${response.status}.`,
+        `MCP server returned HTTP ${response.status}. OAuth state: ${describeMcpOAuthFailure(server)}.`,
         { retryable: response.status >= 500 },
       );
     }
@@ -130,18 +196,14 @@ async function sendHttpNotification(
 }
 
 function createRequestHeaders(
-  server: McpServerConfig,
+  base: Record<string, string>,
   session: McpHttpTransportState | undefined,
   includeStreamableSession: boolean,
 ): Record<string, string> {
-  const headers = {
+  return {
     accept: 'application/json, text/event-stream',
     'content-type': 'application/json',
-    ...buildMcpRequestHeaders(server),
-  };
-
-  return {
-    ...headers,
+    ...base,
     ...(session?.protocolVersion ? { 'MCP-Protocol-Version': session.protocolVersion } : {}),
     ...(includeStreamableSession && session?.sessionId ? { 'Mcp-Session-Id': session.sessionId } : {}),
   };

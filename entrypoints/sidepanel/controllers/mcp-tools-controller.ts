@@ -32,6 +32,7 @@ import type {
   ToolCallHistoryRecord,
   ToolDescriptor,
 } from '../../../core/types';
+import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
 import {
   sidepanelRuntimeClient,
   type SidepanelRuntimeClient,
@@ -54,6 +55,11 @@ export interface McpPermissionResult {
   error?: string;
 }
 
+/** Outcome of an interactive OAuth authorization attempt. */
+export type McpOAuthAuthorizationResult =
+  | { ok: true; status: McpOAuthStatus }
+  | { ok: false; error: string };
+
 export interface McpToolsController {
   loadMcpSnapshot(): Promise<McpSnapshot>;
   loadMcpServerState(): Promise<Pick<McpSnapshot, 'servers' | 'platform'>>;
@@ -69,6 +75,12 @@ export interface McpToolsController {
   }): Promise<McpCapabilitySettings>;
   requestServerPermission(server: McpServerConfig): Promise<McpPermissionResult>;
   connectServer(server: McpServerConfig, action: McpConnectionAction): Promise<McpToolCacheEntry>;
+  /** Current OAuth status for a server, or null when the server is unknown. */
+  getMcpOAuthStatus(serverId: string): Promise<McpOAuthStatus | null>;
+  /** Run the interactive OAuth 2.1 + PKCE flow for a server. */
+  authorizeMcpOAuth(serverId: string): Promise<McpOAuthAuthorizationResult>;
+  /** Drop the cached access token and clear the stored refresh token. */
+  disconnectMcpOAuth(serverId: string): Promise<void>;
   getWebToolSettings(): Promise<WebToolSettings>;
   setWebToolEnabled(name: WebSearchToolName, enabled: boolean): Promise<void>;
   diagnoseWebSearch(query: string): Promise<Record<string, {
@@ -203,6 +215,20 @@ export function createMcpToolsController(
           acceptFailure: true,
           decode: (value) => decodeMcpConnectionResponse(value, server),
         },
+      );
+    },
+    getMcpOAuthStatus: (serverId) => runtimeClient.request(
+      { type: 'GET_MCP_OAUTH_STATUS', payload: { serverId } },
+      { decode: decodeMcpOAuthStatus },
+    ),
+    authorizeMcpOAuth: (serverId) => runtimeClient.request(
+      { type: 'AUTHORIZE_MCP_SERVER', payload: { serverId } },
+      { acceptFailure: true, decode: decodeMcpOAuthAuthorizationResponse },
+    ),
+    async disconnectMcpOAuth(serverId) {
+      await runtimeClient.request(
+        { type: 'DISCONNECT_MCP_OAUTH', payload: { serverId } },
+        { decode: decodeAck },
       );
     },
     getWebToolSettings: () => runtimeClient.request(
@@ -456,6 +482,37 @@ function decodeWebSearchDiagnostics(value: unknown): Record<string, {
     error?: string;
     preview?: string;
   }>;
+}
+
+function decodeMcpOAuthStatus(value: unknown): McpOAuthStatus | null {
+  if (value === null || value === undefined) return null;
+  const record = requireRecord(value, 'GET_MCP_OAUTH_STATUS response');
+  const scopes = Array.isArray(record.scopes)
+    ? record.scopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+  return {
+    enabled: record.enabled === true,
+    authorized: record.authorized === true,
+    expiresAt: typeof record.expiresAt === 'number' ? record.expiresAt : null,
+    hasRefreshToken: record.hasRefreshToken === true,
+    scopes,
+    authorizationUrl: typeof record.authorizationUrl === 'string'
+      ? record.authorizationUrl
+      : null,
+  };
+}
+
+function decodeMcpOAuthAuthorizationResponse(value: unknown): McpOAuthAuthorizationResult {
+  const record = requireRecord(value, 'AUTHORIZE_MCP_SERVER response');
+  if (record.ok === true) {
+    const status = decodeMcpOAuthStatus(record.status);
+    if (!status) throw new Error('AUTHORIZE_MCP_SERVER response.status is missing.');
+    return { ok: true, status };
+  }
+  return {
+    ok: false,
+    error: typeof record.error === 'string' ? record.error : 'mcp_oauth_failed',
+  };
 }
 
 function decodeAck(value: unknown): void {

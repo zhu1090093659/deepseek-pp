@@ -33,6 +33,7 @@ import {
   createMcpRuntimeHandlers,
   type McpRuntimeHandlerDependencies,
 } from '../entrypoints/background/mcp-handlers';
+import type { McpOAuthAuthorizationResponse } from '../core/messaging/tool-runtime-contracts';
 import {
   createToolAuthorizationSubject,
   createTrustedToolExecutionContext,
@@ -91,7 +92,7 @@ const call: ToolCall = {
 };
 
 describe('R4.2 tool runtime handler ownership', () => {
-  it('creates exactly the 32 inventory-assigned handlers without duplicate ownership', () => {
+  it('creates exactly the 35 inventory-assigned handlers without duplicate ownership', () => {
     const handlers = createToolRuntimeHandlers({
       mcp: createMcpDependencies(),
       browser: createBrowserDependencies(),
@@ -99,11 +100,11 @@ describe('R4.2 tool runtime handler ownership', () => {
     });
     const types = handlers.map((handler) => handler.type);
     const expected = readInventoryCommands(
-      'R4.2 / #361 — MCP, tool, browser control, and sandbox (32)',
+      'R4.2 / #361 — MCP, tool, browser control, and sandbox (35)',
     );
 
-    expect(types).toHaveLength(32);
-    expect(new Set(types).size).toBe(32);
+    expect(types).toHaveLength(35);
+    expect(new Set(types).size).toBe(35);
     expect([...types].sort()).toEqual([...expected].sort());
     for (const type of types) expect(getRuntimeCommandOwner(type)).toBe('typed-handler');
 
@@ -113,7 +114,7 @@ describe('R4.2 tool runtime handler ownership', () => {
       .filter((type) => expected.includes(type))
       .sort();
     expect(Object.keys(TOOL_RUNTIME_PAYLOAD_DECODERS).sort()).toEqual(decodedTypes);
-    expect(decodedTypes).toHaveLength(22);
+    expect(decodedTypes).toHaveLength(25);
   });
 
   it('rejects malformed nested MCP input before persistence or external I/O', async () => {
@@ -795,6 +796,9 @@ function createMcpDependencies(): McpRuntimeHandlerDependencies {
     deleteMcpServer: vi.fn(async () => undefined),
     getMcpToolCache: vi.fn(async () => createMcpCache()),
     refreshMcpServerDiscovery: vi.fn(async () => createMcpCache()),
+    getMcpOAuthStatusForServer: vi.fn(async () => null),
+    authorizeMcpOAuthServer: vi.fn(async (): Promise<McpOAuthAuthorizationResponse> => ({ ok: false, error: 'not_used' })),
+    disconnectMcpOAuthServer: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })),
     getMcpOriginPattern: vi.fn(() => 'https://example.test/*'),
     hasMcpServerOriginPermission: vi.fn(async () => true),
     broadcastMcpServersUpdate: vi.fn(async () => undefined),
