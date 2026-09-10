@@ -225,7 +225,7 @@ async function runInteractiveAuthorization(
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpOAuthError(
       'mcp_oauth_launch_failed',
-      `OAuth authorization window failed: ${detail} (redirect_uri: ${redirectUri}, authorization endpoint: ${authUrl.origin})`,
+      `OAuth authorization window failed: ${detail} (redirect_uri: ${redirectUri}, authorization URL: ${authUrl.toString()})`,
     );
   }
   if (!redirectUrl) {
