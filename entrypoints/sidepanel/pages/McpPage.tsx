@@ -881,6 +881,11 @@ function ServerDetail({
   t: Translator;
   locale: SupportedLocale;
 }) {
+  // Authorized for display purposes when we hold either a live access token or a
+  // durable refresh token. The in-memory access-token cache is lost whenever the
+  // MV3 service worker goes idle, so keying the badge off it alone makes a
+  // completed authorization look un-authorized after a short pause.
+  const oauthConnected = Boolean(oauthStatus?.authorized || oauthStatus?.hasRefreshToken);
   const tools = cache?.descriptors ?? [];
   const serverHistory = history.filter((record) => record.call.provider?.id === server.id).slice(0, 5);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -933,11 +938,11 @@ function ServerDetail({
             <span
               className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
               style={{
-                color: oauthStatus.authorized ? 'var(--ds-success)' : 'var(--ds-text-tertiary)',
-                background: oauthStatus.authorized ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
+                color: oauthConnected ? 'var(--ds-success)' : 'var(--ds-text-tertiary)',
+                background: oauthConnected ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
               }}
             >
-              {oauthStatus.authorized
+              {oauthConnected
                 ? t('sidepanel.mcpPage.oauth.authorized')
                 : t('sidepanel.mcpPage.oauth.notAuthorized')}
             </span>
@@ -958,11 +963,11 @@ function ServerDetail({
             >
               {busy === 'oauth'
                 ? t('sidepanel.mcpPage.row.testing')
-                : oauthStatus.hasRefreshToken
+                : oauthConnected
                   ? t('sidepanel.mcpPage.oauth.reauthorize')
                   : t('sidepanel.mcpPage.oauth.authorize')}
             </button>
-            {oauthStatus.hasRefreshToken && (
+            {oauthConnected && (
               <button
                 type="button"
                 onClick={onDisconnectOAuth}
