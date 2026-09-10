@@ -31,46 +31,32 @@ import {
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
-interface DetectedOAuthResult {
-  payload: McpServerCreateInput;
-  note: string;
-}
-
-async function withDetectedOAuth(payload: McpServerCreateInput): Promise<DetectedOAuthResult> {
+async function withDetectedOAuth(payload: McpServerCreateInput): Promise<McpServerCreateInput> {
   const kind = payload.transport.kind;
   const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
-  if (!httpBased || payload.oauth?.enabled) return { payload, note: 'skip' };
+  if (!httpBased || payload.oauth?.enabled) return payload;
   const endpoint = payload.transport.url;
-  if (!endpoint) return { payload, note: 'no-url' };
-  let originPattern: string;
+  if (!endpoint) return payload;
   try {
-    const parsed = new URL(endpoint);
-    originPattern = `${parsed.protocol}//${parsed.host}/*`;
-  } catch {
-    return { payload, note: 'bad-url' };
-  }
-  let granted = false;
-  try {
-    granted = await mcpToolsController.requestHostPermission([originPattern]);
-  } catch (error) {
-    return { payload, note: `perm-error:${error instanceof Error ? error.message : String(error)}` };
-  }
-  if (!granted) return { payload, note: 'perm-denied' };
+    // The probe sends an unauthenticated request to the endpoint, so the host
+    // permission for its origin must be granted first. The save action is a
+    // user gesture, which is the only context where permissions.request works.
+    let originPattern: string;
+    try {
+      const parsed = new URL(endpoint);
+      originPattern = `${parsed.protocol}//${parsed.host}/*`;
+    } catch {
+      return payload;
+    }
+    const granted = await mcpToolsController.requestHostPermission([originPattern]);
+    if (!granted) return payload;
 
-  let detection;
-  try {
-    detection = await detectMcpOAuthRequirement({
+    const detection = await detectMcpOAuthRequirement({
       transport: payload.transport,
       oauth: payload.oauth,
     });
-  } catch (error) {
-    return { payload, note: `detect-error:${error instanceof Error ? error.message : String(error)}` };
-  }
-  if (!detection.requiresOAuth) {
-    return { payload, note: `no-oauth:${detection.reason ?? 'no-401'}` };
-  }
-  return {
-    payload: {
+    if (!detection.requiresOAuth) return payload;
+    return {
       ...payload,
       oauth: {
         enabled: true,
@@ -81,9 +67,10 @@ async function withDetectedOAuth(payload: McpServerCreateInput): Promise<Detecte
         scopes: payload.oauth?.scopes?.length ? payload.oauth.scopes : detection.scopes,
         resource: payload.oauth?.resource ?? detection.resource,
       },
-    },
-    note: `oauth-required:meta=${detection.metadataDetected}:authUrl=${detection.authorizationUrl ?? '-'}`,
-  };
+    };
+  } catch {
+    return payload;
+  }
 }
 
 function isOAuthHttpServer(server: McpServerConfig): boolean {
@@ -244,10 +231,7 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
       ? { ...payload, allowlist: editingServer.allowlist }
       : payload;
     try {
-      const detected = await withDetectedOAuth(requestPayload);
-      requestPayload = detected.payload;
-      // Temporary observability for OAuth auto-detection. Remove once verified.
-      showBanner('info', `MCP OAuth detect: ${detected.note}`);
+      requestPayload = await withDetectedOAuth(requestPayload);
       let saved: McpServerConfig | null;
       if (editingServer) {
         saved = await mcpToolsController.updateServer(editingServer, requestPayload);
