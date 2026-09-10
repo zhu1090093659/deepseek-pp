@@ -35,7 +35,22 @@ async function withDetectedOAuth(payload: McpServerCreateInput): Promise<McpServ
   const kind = payload.transport.kind;
   const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
   if (!httpBased || payload.oauth?.enabled) return payload;
+  const endpoint = payload.transport.url;
+  if (!endpoint) return payload;
   try {
+    // The probe sends an unauthenticated request to the endpoint, so the host
+    // permission for its origin must be granted first. The save action is a
+    // user gesture, which is the only context where permissions.request works.
+    let originPattern: string;
+    try {
+      const parsed = new URL(endpoint);
+      originPattern = `${parsed.protocol}//${parsed.host}/*`;
+    } catch {
+      return payload;
+    }
+    const granted = await mcpToolsController.requestHostPermission([originPattern]);
+    if (!granted) return payload;
+
     const detection = await detectMcpOAuthRequirement({
       transport: payload.transport,
       oauth: payload.oauth,

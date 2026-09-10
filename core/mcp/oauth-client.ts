@@ -3,10 +3,7 @@ import {
   type SyncIdentityPort,
 } from '../sync/identity-port';
 import type { McpOAuthConfig, McpServerConfig, McpServerId } from './types';
-import {
-  ensureMcpServerOriginPermission,
-  getMcpEndpointUrl,
-} from './transports/common';
+import { getMcpEndpointUrl } from './transports/common';
 
 /**
  * MCP OAuth 2.1 (+ PKCE) client.
@@ -579,42 +576,15 @@ export async function detectMcpOAuthRequirement(
       reason: error instanceof Error ? error.message : String(error),
     };
   }
-  try {
-    await ensureMcpServerOriginPermission(server);
-  } catch (error) {
-    return {
-      requiresOAuth: false,
-      metadataDetected: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+  const probe = await probeMcpOAuthChallenge(url.toString(), options.signal);
+  if (probe.error) {
+    return { requiresOAuth: false, metadataDetected: false, reason: probe.error };
   }
-
-  const probe: Response | Error = await fetchWithTimeout(url.toString(), {
-    method: 'POST',
-    credentials: 'omit',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'oauth-probe',
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'DeepSeek++', version: '0.0.0' },
-      },
-    }),
-  }, options.signal).catch((error: unknown) => error as Error);
-
-  if (probe instanceof Error) {
-    return { requiresOAuth: false, metadataDetected: false, reason: probe.message };
-  }
-  if (probe.status !== 401) {
-    await probe.body?.cancel().catch(() => undefined);
+  if (!probe.unauthorized) {
     return { requiresOAuth: false, metadataDetected: false };
   }
 
-  const challenge = probe.headers.get('www-authenticate') ?? undefined;
-  await probe.body?.cancel().catch(() => undefined);
+  const challenge = probe.challenge;
   const base: McpOAuthDetection = {
     requiresOAuth: true,
     metadataDetected: false,
@@ -651,6 +621,65 @@ export async function detectMcpOAuthRequirement(
   } catch (error) {
     return { ...base, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * Probe an MCP endpoint for an OAuth challenge.
+ *
+ * MCP streamable-HTTP servers answer an unauthenticated request with 401 and a
+ * Bearer `WWW-Authenticate` challenge. Different servers police the request
+ * shape differently, so we send a real `initialize` POST with the same headers
+ * the transport uses (`accept: application/json, text/event-stream`) and fall
+ * back to a bare GET when that does not produce a challenge. A 401 from either
+ * attempt means the endpoint is OAuth-protected.
+ */
+async function probeMcpOAuthChallenge(
+  endpoint: string,
+  signal?: AbortSignal,
+): Promise<{ unauthorized: boolean; challenge?: string; error?: string }> {
+  const initBody = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 'oauth-probe',
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'DeepSeek++', version: '0.0.0' },
+    },
+  });
+
+  const attempts: RequestInit[] = [
+    {
+      method: 'POST',
+      credentials: 'omit',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: initBody,
+    },
+    {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { accept: 'application/json, text/event-stream' },
+    },
+  ];
+
+  let lastError: string | undefined;
+  for (const init of attempts) {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(endpoint, init, signal);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      continue;
+    }
+    const challenge = response.headers.get('www-authenticate') ?? undefined;
+    const unauthorized = response.status === 401;
+    await response.body?.cancel().catch(() => undefined);
+    if (unauthorized) return { unauthorized: true, challenge };
+  }
+  return { unauthorized: false, error: lastError };
 }
 
 /** Extract the `resource_metadata` URL from a Bearer WWW-Authenticate header. */
