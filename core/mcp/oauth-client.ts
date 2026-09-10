@@ -34,7 +34,6 @@ export type McpOAuthErrorCode =
   | 'mcp_oauth_registration_failed'
   | 'mcp_oauth_authorization_required'
   | 'mcp_oauth_authorization_cancelled'
-  | 'mcp_oauth_launch_failed'
   | 'mcp_oauth_provider_error'
   | 'mcp_oauth_missing_code'
   | 'mcp_oauth_token_exchange_failed'
@@ -242,20 +241,7 @@ async function runInteractiveAuthorization(
   if (metadata.scopes.length > 0) authUrl.searchParams.set('scope', metadata.scopes.join(' '));
   if (metadata.resource) authUrl.searchParams.set('resource', metadata.resource);
 
-  let redirectUrl: string | undefined;
-  try {
-    redirectUrl = await identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
-  } catch (error) {
-    // Chrome rejects with messages like "Authorization page could not be loaded."
-    // when the provider finishes consent but redirects somewhere the web-auth
-    // window cannot read instead of the extension redirect URI. Surface the
-    // redirect URI and authorization host so the mismatch is diagnosable.
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new McpOAuthError(
-      'mcp_oauth_launch_failed',
-      `OAuth authorization window failed: ${detail} (redirect_uri: ${redirectUri}, authorization URL: ${authUrl.toString()})`,
-    );
-  }
+  const redirectUrl = await identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
   if (!redirectUrl) {
     throw new McpOAuthError('mcp_oauth_authorization_cancelled', 'MCP OAuth authorization was cancelled.');
   }
