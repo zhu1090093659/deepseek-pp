@@ -3,6 +3,10 @@ import {
   type SyncIdentityPort,
 } from '../sync/identity-port';
 import type { McpOAuthConfig, McpServerConfig, McpServerId } from './types';
+import {
+  ensureMcpServerOriginPermission,
+  getMcpEndpointUrl,
+} from './transports/common';
 
 /**
  * MCP OAuth 2.1 (+ PKCE) client.
@@ -46,6 +50,30 @@ export class McpOAuthError extends Error {
     this.code = code;
     this.retryable = options?.retryable ?? false;
   }
+}
+
+/**
+ * Result of probing an MCP endpoint to decide whether it requires OAuth.
+ *
+ * MCP servers that need OAuth answer an unauthenticated request with 401 and
+ * a `WWW-Authenticate: Bearer` challenge (RFC 9728). When the challenge names
+ * a `resource_metadata` document we also resolve the authorization server so
+ * the caller can enable OAuth and start the flow without further discovery.
+ */
+export interface McpOAuthDetection {
+  /** True when the endpoint answered 401 with a Bearer challenge. */
+  requiresOAuth: boolean;
+  /** True when protected-resource / authorization-server metadata was resolved. */
+  metadataDetected: boolean;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+  scopes?: string[];
+  resource?: string;
+  /** Raw `WWW-Authenticate` header value, when present. */
+  challenge?: string;
+  /** Non-fatal explanation when detection could not complete. */
+  reason?: string;
 }
 
 export interface McpOAuthStatus {
@@ -534,4 +562,110 @@ async function fingerprintCredentials(oauth: McpOAuthConfig | undefined): Promis
   const material = `${oauth?.clientId ?? ''}\u0000${oauth?.clientSecret ?? ''}`;
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Probe an MCP HTTP endpoint to determine whether it requires OAuth.
+ *
+ * Sends a minimal `initialize` request without credentials and inspects the
+ * response. A 401 with a Bearer challenge means the server is OAuth-protected;
+ * when the challenge advertises a `resource_metadata` document we resolve the
+ * authorization server endpoints so OAuth can be enabled immediately.
+ */
+export async function detectMcpOAuthRequirement(
+  server: McpServerConfig,
+  options: { signal?: AbortSignal } = {},
+): Promise<McpOAuthDetection> {
+  if (!isMcpOAuthTransportSupported(server)) {
+    return { requiresOAuth: false, metadataDetected: false, reason: 'unsupported_transport' };
+  }
+  let url: URL;
+  try {
+    url = getMcpEndpointUrl(server);
+  } catch (error) {
+    return {
+      requiresOAuth: false,
+      metadataDetected: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  try {
+    await ensureMcpServerOriginPermission(server);
+  } catch (error) {
+    return {
+      requiresOAuth: false,
+      metadataDetected: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const probe: Response | Error = await fetchWithTimeout(url.toString(), {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'oauth-probe',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'DeepSeek++', version: '0.0.0' },
+      },
+    }),
+  }, options.signal).catch((error: unknown) => error as Error);
+
+  if (probe instanceof Error) {
+    return { requiresOAuth: false, metadataDetected: false, reason: probe.message };
+  }
+  if (probe.status !== 401) {
+    await probe.body?.cancel().catch(() => undefined);
+    return { requiresOAuth: false, metadataDetected: false };
+  }
+
+  const challenge = probe.headers.get('www-authenticate') ?? undefined;
+  await probe.body?.cancel().catch(() => undefined);
+  const base: McpOAuthDetection = {
+    requiresOAuth: true,
+    metadataDetected: false,
+    challenge,
+  };
+
+  const resourceMetadataUrl = parseResourceMetadataUrl(challenge);
+  if (!resourceMetadataUrl) return base;
+
+  const resource = server.oauth?.resource ?? url.toString();
+  try {
+    const protectedResource = await fetchJson(resourceMetadataUrl, options.signal);
+    const authorizationServer = Array.isArray(protectedResource?.authorization_servers)
+      ? protectedResource.authorization_servers.find((value): value is string => typeof value === 'string')
+      : undefined;
+    if (!authorizationServer) return base;
+    const metadata = await fetchJson(
+      new URL('/.well-known/oauth-authorization-server', authorizationServer).toString(),
+      options.signal,
+    );
+    const authorizationUrl = pickString(metadata?.authorization_endpoint);
+    const tokenUrl = pickString(metadata?.token_endpoint);
+    return {
+      ...base,
+      metadataDetected: Boolean(authorizationUrl && tokenUrl),
+      authorizationUrl,
+      tokenUrl,
+      registrationUrl: pickString(metadata?.registration_endpoint),
+      scopes: parseScopes(protectedResource?.scopes_supported)
+        ?? parseScopes(metadata?.scopes_supported)
+        ?? [],
+      resource,
+    };
+  } catch (error) {
+    return { ...base, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Extract the `resource_metadata` URL from a Bearer WWW-Authenticate header. */
+function parseResourceMetadataUrl(challenge: string | undefined): string | undefined {
+  if (!challenge) return undefined;
+  const match = /resource_metadata="([^"]+)"/i.exec(challenge);
+  return match?.[1];
 }

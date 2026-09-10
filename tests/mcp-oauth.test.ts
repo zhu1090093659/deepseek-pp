@@ -7,6 +7,7 @@ import {
   isMcpOAuthEnabled,
   isMcpOAuthTransportSupported,
   resolveMcpOAuthAuthorization,
+  detectMcpOAuthRequirement,
 } from '../core/mcp/oauth-client';
 import {
   authorizeMcpOAuthServer,
@@ -506,5 +507,76 @@ describe('OAuth storage codec', () => {
 
     const decoded = decodeMcpStorageState(raw);
     expect(encodeMcpStorageState(decoded)).toEqual(raw);
+  });
+});
+
+describe('detectMcpOAuthRequirement', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('reports no OAuth when the endpoint answers without a 401', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ jsonrpc: '2.0', id: 'oauth-probe', result: {} })));
+    const detection = await detectMcpOAuthRequirement(createServer());
+    expect(detection.requiresOAuth).toBe(false);
+    expect(detection.metadataDetected).toBe(false);
+  });
+
+  it('flags a 401 Bearer challenge as requiring OAuth', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', {
+      status: 401,
+      headers: { 'www-authenticate': 'Bearer realm="mcp"' },
+    })));
+    const detection = await detectMcpOAuthRequirement(createServer());
+    expect(detection.requiresOAuth).toBe(true);
+    expect(detection.challenge).toContain('Bearer');
+    expect(detection.metadataDetected).toBe(false);
+  });
+
+  it('resolves authorization-server metadata from the challenge', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const target = String(input);
+      if (target === 'https://mcp.example.com/mcp') {
+        return new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate': 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+          },
+        });
+      }
+      if (target === 'https://mcp.example.com/.well-known/oauth-protected-resource') {
+        return jsonResponse({
+          authorization_servers: ['https://auth.example.com'],
+          scopes_supported: ['mcp.read'],
+        });
+      }
+      if (target === 'https://auth.example.com/.well-known/oauth-authorization-server') {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+          registration_endpoint: 'https://auth.example.com/register',
+        });
+      }
+      throw new Error('Unexpected fetch: ' + target);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const detection = await detectMcpOAuthRequirement(createServer({ oauth: undefined }));
+    expect(detection.requiresOAuth).toBe(true);
+    expect(detection.metadataDetected).toBe(true);
+    expect(detection.authorizationUrl).toBe('https://auth.example.com/authorize');
+    expect(detection.tokenUrl).toBe('https://auth.example.com/token');
+    expect(detection.registrationUrl).toBe('https://auth.example.com/register');
+  });
+
+  it('skips detection for non-HTTP transports', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const detection = await detectMcpOAuthRequirement(createServer({
+      transport: { kind: 'native_messaging', nativeHost: 'com.example.host' },
+    }));
+    expect(detection.requiresOAuth).toBe(false);
+    expect(detection.reason).toBe('unsupported_transport');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
