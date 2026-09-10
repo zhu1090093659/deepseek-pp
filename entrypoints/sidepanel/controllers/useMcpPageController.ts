@@ -30,6 +30,12 @@ import {
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
+function isOAuthHttpServer(server: McpServerConfig): boolean {
+  const kind = server.transport.kind;
+  const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
+  return httpBased && server.oauth?.enabled === true;
+}
+
 type Confirm = (options: {
   title: string;
   message: string;
@@ -182,20 +188,47 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
       ? { ...payload, allowlist: editingServer.allowlist }
       : payload;
     try {
+      let saved: McpServerConfig | null;
       if (editingServer) {
-        const saved = await mcpToolsController.updateServer(editingServer, requestPayload);
+        saved = await mcpToolsController.updateServer(editingServer, requestPayload);
         if (!saved) throw new Error('MCP server no longer exists.');
       } else {
-        await mcpToolsController.createServer(requestPayload);
+        saved = await mcpToolsController.createServer(requestPayload);
       }
       setShowForm(false);
       setEditing(null);
       clearBanner();
       await load();
+      // When a server enables OAuth, run the interactive authorization flow
+      // immediately after saving so the user does not have to click Authorize
+      // separately. A failure here is surfaced as a banner but does not undo
+      // the save.
+      if (saved && isOAuthHttpServer(saved)) {
+        setSelectedId(saved.id);
+        setBusy((current) => ({ ...current, [saved.id]: 'oauth' }));
+        try {
+          const result = await mcpToolsController.authorizeMcpOAuth(saved.id);
+          if (result.ok) {
+            setOauthStatus((current) => ({ ...current, [saved.id]: result.status }));
+            showBanner('success', t('sidepanel.mcpPage.oauth.authorizeSuccess'));
+            await load();
+          } else {
+            showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+              error: result.error,
+            }));
+          }
+        } catch (error) {
+          showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+            error: getRuntimeErrorMessage(error),
+          }));
+        } finally {
+          setBusy((current) => ({ ...current, [saved.id]: null }));
+        }
+      }
     } catch {
       showBanner('error', t('sidepanel.mcpPage.messages.saveFailed'));
     }
-  }, [clearBanner, editing, load, servers, showBanner, t]);
+  }, [clearBanner, editing, load, servers, setOauthStatus, showBanner, t]);
 
   const removeServer = useCallback(async (server: McpServerConfig) => {
     const approved = await confirm({
