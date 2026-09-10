@@ -43,7 +43,12 @@ export async function authorizeMcpOAuthServer(
       },
     });
     if (!saved) return { ok: false, error: 'mcp_server_not_found' };
-    return { ok: true, status: getMcpOAuthStatus(saved) };
+    // updateMcpServer returns a sanitized config (refresh token replaced by
+    // the redaction placeholder). Read the secrets-included copy so the status
+    // reflects the refresh token we just stored instead of reporting the
+    // server as unauthorized right after a successful consent.
+    const persisted = await getMcpServerById(serverId, { includeSecrets: true });
+    return { ok: true, status: getMcpOAuthStatus(persisted ?? saved) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }

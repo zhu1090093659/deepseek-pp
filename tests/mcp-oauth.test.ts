@@ -723,7 +723,7 @@ describe('OAuth redaction sentinel handling', () => {
   });
 
   it('omits a redacted client secret from the refresh request', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
       access_token: 'refreshed-without-secret',
       token_type: 'Bearer',
       expires_in: 3_600,
