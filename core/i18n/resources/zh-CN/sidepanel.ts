@@ -645,6 +645,8 @@ export const sidepanel = {
       section: 'OAuth 2.1',
       hint: '为 OAuth 服务自动检测。密钥保存在本地。',
       enable: '为此服务启用 OAuth',
+      autoDetect: '自动检测 OAuth',
+      autoDetectHint: '保存时探测端点，若服务需要则自动启用 OAuth。',
       clientId: 'Client ID',
       clientIdHint: '留空则使用动态客户端注册。',
       clientSecret: 'Client Secret',

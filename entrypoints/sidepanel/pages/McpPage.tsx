@@ -63,6 +63,7 @@ type FormState = {
   maxToolCount: string;
   executionEnabled: boolean;
   executionMode: ToolExecutionMode;
+  oauthAutoDetect: boolean;
   oauthEnabled: boolean;
   oauthClientId: string;
   oauthClientSecret: string;
@@ -98,6 +99,7 @@ const DEFAULT_FORM: FormState = {
   maxToolCount: '128',
   executionEnabled: true,
   executionMode: 'auto',
+  oauthAutoDetect: true,
   oauthEnabled: false,
   oauthClientId: '',
   oauthClientSecret: '',
@@ -385,7 +387,7 @@ function McpServerForm({
 }: {
   initial: McpServerConfig | null;
   platform: PlatformEnvironment | null;
-  onSave: (payload: McpServerCreateInput) => Promise<void>;
+  onSave: (payload: McpServerCreateInput, options?: { autoDetectOAuth?: boolean }) => Promise<void>;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -422,7 +424,7 @@ function McpServerForm({
       return;
     }
     setError('');
-    await onSave(result.payload);
+    await onSave(result.payload, { autoDetectOAuth: form.oauthAutoDetect });
   };
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -553,67 +555,6 @@ function McpServerForm({
         </SettingsSection>
       )}
 
-      {isHttpTransportKind(form.transportKind) && (
-        <SettingsSection title={t('sidepanel.mcpPage.oauth.section')}>
-          <ToggleRow
-            title={t('sidepanel.mcpPage.oauth.enable')}
-            description={t('sidepanel.mcpPage.oauth.hint')}
-            enabled={form.oauthEnabled}
-            onToggle={(next) => update('oauthEnabled', next)}
-          />
-          {form.oauthEnabled && (
-            <>
-              <Field
-                label={t('sidepanel.mcpPage.oauth.clientId')}
-                hint={t('sidepanel.mcpPage.oauth.clientIdHint')}
-              >
-                <input
-                  value={form.oauthClientId}
-                  onChange={(event) => update('oauthClientId', event.target.value)}
-                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
-                  placeholder="client-id"
-                />
-              </Field>
-              <Field
-                label={t('sidepanel.mcpPage.oauth.clientSecret')}
-                hint={t('sidepanel.mcpPage.oauth.clientSecretHint')}
-              >
-                <input
-                  type="password"
-                  value={form.oauthClientSecret}
-                  onChange={(event) => update('oauthClientSecret', event.target.value)}
-                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
-                  placeholder="********"
-                />
-              </Field>
-              <Field
-                label={t('sidepanel.mcpPage.oauth.scopes')}
-                hint={t('sidepanel.mcpPage.oauth.scopesHint')}
-              >
-                <input
-                  value={form.oauthScopes}
-                  onChange={(event) => update('oauthScopes', event.target.value)}
-                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
-                  placeholder="mcp.read mcp.write"
-                />
-              </Field>
-              <Field
-                label={t('sidepanel.mcpPage.oauth.redirectUri')}
-                hint={t('sidepanel.mcpPage.oauth.redirectUriHint')}
-              >
-                <input
-                  readOnly
-                  value={oauthRedirectUri}
-                  onFocus={(event) => event.target.select()}
-                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
-                  style={{ fontFamily: 'monospace' }}
-                />
-              </Field>
-            </>
-          )}
-        </SettingsSection>
-      )}
-
       <div>
         <button
           type="button"
@@ -671,6 +612,76 @@ function McpServerForm({
                 <option value="disabled">{t('sidepanel.mcpPage.form.modeDisabled')}</option>
               </select>
             </div>
+
+            <div className="ds-surface-panel rounded-lg p-3 space-y-2">
+              <ToggleRow
+                title={t('sidepanel.mcpPage.oauth.autoDetect')}
+                description={t('sidepanel.mcpPage.oauth.autoDetectHint')}
+                enabled={form.oauthAutoDetect}
+                onToggle={(next) => update('oauthAutoDetect', next)}
+              />
+            </div>
+          {isHttpTransportKind(form.transportKind) && (
+            <SettingsSection title={t('sidepanel.mcpPage.oauth.section')}>
+              <ToggleRow
+                title={t('sidepanel.mcpPage.oauth.enable')}
+                description={t('sidepanel.mcpPage.oauth.hint')}
+                enabled={form.oauthEnabled}
+                onToggle={(next) => update('oauthEnabled', next)}
+              />
+              {form.oauthEnabled && (
+                <>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.clientId')}
+                    hint={t('sidepanel.mcpPage.oauth.clientIdHint')}
+                  >
+                    <input
+                      value={form.oauthClientId}
+                      onChange={(event) => update('oauthClientId', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="client-id"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.clientSecret')}
+                    hint={t('sidepanel.mcpPage.oauth.clientSecretHint')}
+                  >
+                    <input
+                      type="password"
+                      value={form.oauthClientSecret}
+                      onChange={(event) => update('oauthClientSecret', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="********"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.scopes')}
+                    hint={t('sidepanel.mcpPage.oauth.scopesHint')}
+                  >
+                    <input
+                      value={form.oauthScopes}
+                      onChange={(event) => update('oauthScopes', event.target.value)}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      placeholder="mcp.read mcp.write"
+                    />
+                  </Field>
+                  <Field
+                    label={t('sidepanel.mcpPage.oauth.redirectUri')}
+                    hint={t('sidepanel.mcpPage.oauth.redirectUriHint')}
+                  >
+                    <input
+                      readOnly
+                      value={oauthRedirectUri}
+                      onFocus={(event) => event.target.select()}
+                      className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                      style={{ fontFamily: 'monospace' }}
+                    />
+                  </Field>
+                </>
+              )}
+            </SettingsSection>
+          )}
+
           </div>
         )}
       </div>
@@ -1282,6 +1293,7 @@ function formFromServer(server: McpServerConfig): FormState {
     maxToolCount: String(server.limits.maxToolCount),
     executionEnabled: server.execution.enabled,
     executionMode: server.execution.mode,
+    oauthAutoDetect: true,
     oauthEnabled: server.oauth?.enabled ?? false,
     oauthClientId: server.oauth?.clientId ?? '',
     oauthClientSecret: server.oauth?.clientSecret ?? '',

@@ -31,7 +31,11 @@ import {
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
-async function withDetectedOAuth(payload: McpServerCreateInput): Promise<McpServerCreateInput> {
+export async function withDetectedOAuth(
+  payload: McpServerCreateInput,
+  options: { autoDetect?: boolean } = {},
+): Promise<McpServerCreateInput> {
+  if (options.autoDetect === false) return payload;
   const kind = payload.transport.kind;
   const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
   if (!httpBased || payload.oauth?.enabled) return payload;
@@ -223,7 +227,10 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     }
   }, [clearBanner, load, platform, servers, showBanner, t]);
 
-  const saveServer = useCallback(async (payload: McpServerCreateInput) => {
+  const saveServer = useCallback(async (
+    payload: McpServerCreateInput,
+    options: { autoDetectOAuth?: boolean } = {},
+  ) => {
     const editingServer = editing
       ? servers.find((server) => server.id === editing.id) ?? editing
       : null;
@@ -231,7 +238,9 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
       ? { ...payload, allowlist: editingServer.allowlist }
       : payload;
     try {
-      requestPayload = await withDetectedOAuth(requestPayload);
+      requestPayload = await withDetectedOAuth(requestPayload, {
+        autoDetect: options.autoDetectOAuth,
+      });
       let saved: McpServerConfig | null;
       if (editingServer) {
         saved = await mcpToolsController.updateServer(editingServer, requestPayload);

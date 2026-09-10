@@ -645,6 +645,8 @@ export const sidepanel = {
       section: 'OAuth 2.1',
       hint: 'Detected automatically for OAuth servers. Secrets are stored locally.',
       enable: 'Use OAuth for this server',
+      autoDetect: 'Automatically detect OAuth',
+      autoDetectHint: 'Probe the endpoint when saving and enable OAuth if the server requires it.',
       clientId: 'Client ID',
       clientIdHint: 'Empty uses dynamic client registration.',
       clientSecret: 'Client secret',
