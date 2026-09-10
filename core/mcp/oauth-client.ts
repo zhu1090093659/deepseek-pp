@@ -572,10 +572,14 @@ async function fingerprintCredentials(oauth: McpOAuthConfig | undefined): Promis
  * when the challenge advertises a `resource_metadata` document we resolve the
  * authorization server endpoints so OAuth can be enabled immediately.
  */
+export type McpOAuthDetectionInput = Pick<McpServerConfig, 'transport' | 'oauth'>
+  & Partial<Pick<McpServerConfig, 'timeouts'>>;
+
 export async function detectMcpOAuthRequirement(
-  server: McpServerConfig,
+  input: McpOAuthDetectionInput,
   options: { signal?: AbortSignal } = {},
 ): Promise<McpOAuthDetection> {
+  const server = input as McpServerConfig;
   if (!isMcpOAuthTransportSupported(server)) {
     return { requiresOAuth: false, metadataDetected: false, reason: 'unsupported_transport' };
   }

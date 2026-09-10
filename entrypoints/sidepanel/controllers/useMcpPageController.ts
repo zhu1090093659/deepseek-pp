@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LocaleMessageKey, MessageParams } from '../../../core/i18n';
 import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
+import { detectMcpOAuthRequirement } from '../../../core/mcp/oauth-client';
 import type {
   McpCapabilityExposureMode,
   McpCapabilitySettings,
@@ -30,6 +31,33 @@ import {
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
+async function withDetectedOAuth(payload: McpServerCreateInput): Promise<McpServerCreateInput> {
+  const kind = payload.transport.kind;
+  const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
+  if (!httpBased || payload.oauth?.enabled) return payload;
+  try {
+    const detection = await detectMcpOAuthRequirement({
+      transport: payload.transport,
+      oauth: payload.oauth,
+    });
+    if (!detection.requiresOAuth) return payload;
+    return {
+      ...payload,
+      oauth: {
+        enabled: true,
+        ...(payload.oauth ?? {}),
+        authorizationUrl: payload.oauth?.authorizationUrl ?? detection.authorizationUrl,
+        tokenUrl: payload.oauth?.tokenUrl ?? detection.tokenUrl,
+        registrationUrl: payload.oauth?.registrationUrl ?? detection.registrationUrl,
+        scopes: payload.oauth?.scopes?.length ? payload.oauth.scopes : detection.scopes,
+        resource: payload.oauth?.resource ?? detection.resource,
+      },
+    };
+  } catch {
+    return payload;
+  }
+}
+
 function isOAuthHttpServer(server: McpServerConfig): boolean {
   const kind = server.transport.kind;
   const httpBased = kind === 'http' || kind === 'sse' || kind === 'streamable_http';
@@ -184,10 +212,11 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     const editingServer = editing
       ? servers.find((server) => server.id === editing.id) ?? editing
       : null;
-    const requestPayload = editingServer
+    let requestPayload = editingServer
       ? { ...payload, allowlist: editingServer.allowlist }
       : payload;
     try {
+      requestPayload = await withDetectedOAuth(requestPayload);
       let saved: McpServerConfig | null;
       if (editingServer) {
         saved = await mcpToolsController.updateServer(editingServer, requestPayload);
