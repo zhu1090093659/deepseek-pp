@@ -212,8 +212,15 @@ describe('resolveMcpOAuthAuthorization', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('asks for authorization when the refresh fails non-interactively', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: 'invalid_grant' }, 400)));
+  it('reports the real refresh failure instead of masking it as authorization_required', async () => {
+    // Regression: a server with a stored refresh token has already been
+    // authorized. A rejected refresh (invalid_grant) is a token problem, not a
+    // missing authorization, and must not resurrect the "Authorize this server"
+    // prompt after the user completed the flow.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(
+      { error: 'invalid_grant', error_description: 'refresh token expired' },
+      400,
+    )));
     const server = createServer({
       oauth: {
         enabled: true,
@@ -224,9 +231,11 @@ describe('resolveMcpOAuthAuthorization', () => {
       },
     });
 
-    await expect(resolveMcpOAuthAuthorization(server)).rejects.toMatchObject({
-      code: 'mcp_oauth_authorization_required',
-    });
+    const rejection = await resolveMcpOAuthAuthorization(server).catch((error) => error);
+    expect(rejection).toBeInstanceOf(McpOAuthError);
+    expect(rejection).toMatchObject({ code: 'mcp_oauth_refresh_failed' });
+    expect(rejection.code).not.toBe('mcp_oauth_authorization_required');
+    expect(rejection.message).toContain('invalid_grant');
     expect(getMcpOAuthStatus(server).authorized).toBe(false);
   });
 
@@ -444,6 +453,98 @@ describe('background OAuth orchestration', () => {
   });
 });
 
+describe('MCP OAuth refresh resilience', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('reuses a cached access token even when the config was read sanitized', async () => {
+    // Regression: sanitized reads redact clientSecret to '********'. Hashing
+    // that placeholder changed the credential fingerprint, so a fresh access
+    // token looked stale and every Refresh fell into a refresh attempt that
+    // could not present the real secret.
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'sanitized-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+      refresh_token: 'rotation-1',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { identity } = createIdentity();
+    const secretServer = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: 'real-secret',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+    await authorizeMcpServer(secretServer, { identity });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const sanitized = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: '********',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+    await expect(resolveMcpOAuthAuthorization(sanitized)).resolves.toBe('Bearer sanitized-access');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives an idle service worker by persisting the discovered client id and endpoints', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/token')) {
+        const body = String(init?.body ?? '');
+        if (body.includes('grant_type=refresh_token')) {
+          return jsonResponse({
+            access_token: 'refreshed-after-idle',
+            token_type: 'Bearer',
+            expires_in: 3_600,
+          });
+        }
+        return jsonResponse({
+          access_token: 'first-access',
+          token_type: 'Bearer',
+          expires_in: 3_600,
+          refresh_token: 'durable-after-idle',
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const created = await createMcpServer({
+      displayName: 'Idle Worker Server',
+      transport: { kind: 'http', url: 'https://idle.example.com/mcp' },
+      oauth: {
+        enabled: true,
+        clientId: 'client-idle',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+      },
+    });
+
+    const authorized = await authorizeMcpOAuthServer(created.id);
+    expect(authorized.ok).toBe(true);
+
+    const persisted = await getMcpServerById(created.id, { includeSecrets: true });
+    expect(persisted?.oauth?.refreshToken).toBe('durable-after-idle');
+    expect(persisted?.oauth?.clientId).toBe('client-idle');
+    expect(persisted?.oauth?.tokenUrl).toBe('https://auth.example.com/token');
+
+    invalidateMcpOAuthToken(created.id);
+    const raw = await getMcpServerById(created.id, { includeSecrets: true });
+    if (!raw) throw new Error('Missing server.');
+    await expect(resolveMcpOAuthAuthorization(raw)).resolves.toBe('Bearer refreshed-after-idle');
+  });
+});
+
 describe('OAuth config redaction', () => {
   beforeEach(() => {
     stubChromeStorage();
@@ -578,5 +679,70 @@ describe('detectMcpOAuthRequirement', () => {
     expect(detection.requiresOAuth).toBe(false);
     expect(detection.reason).toBe('unsupported_transport');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('OAuth redaction sentinel handling', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('does not treat a redacted refresh token as authorization', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: '********',
+        scopes: [],
+      },
+    });
+    const status = getMcpOAuthStatus(server);
+    expect(status.hasRefreshToken).toBe(false);
+    expect(status.authorized).toBe(false);
+  });
+
+  it('asks for authorization instead of refreshing a redacted refresh token', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: '********',
+        scopes: [],
+      },
+    });
+    const rejection = await resolveMcpOAuthAuthorization(server).catch((error) => error);
+    expect(rejection).toBeInstanceOf(McpOAuthError);
+    expect(rejection).toMatchObject({ code: 'mcp_oauth_authorization_required' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('omits a redacted client secret from the refresh request', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      access_token: 'refreshed-without-secret',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        clientSecret: '********',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        scopes: [],
+      },
+    });
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer refreshed-without-secret');
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain('grant_type=refresh_token');
+    expect(body).not.toContain('client_secret');
   });
 });

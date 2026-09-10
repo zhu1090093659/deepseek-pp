@@ -11,7 +11,7 @@ import type {
   McpServerUpdateInput,
   McpToolCacheEntry,
 } from './types';
-import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS } from './constants';
+import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS, MCP_REDACTED_SECRET_VALUE } from './constants';
 import { getMcpRequestTimeoutMs } from './config';
 import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 import {
@@ -22,7 +22,7 @@ import {
   migrateMcpStorageState,
 } from './storage-codec';
 
-const REDACTED_SECRET_VALUE = '********';
+const REDACTED_SECRET_VALUE = MCP_REDACTED_SECRET_VALUE;
 const mcpStorageOperations = createSerialOperationQueue();
 
 export class McpDiscoveryConfigChangedError extends Error {

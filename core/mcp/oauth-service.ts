@@ -19,7 +19,7 @@ import type { McpServerId } from './types';
 export async function getMcpOAuthStatusForServer(
   serverId: McpServerId,
 ): Promise<McpOAuthStatus | null> {
-  const server = await getMcpServerById(serverId);
+  const server = await getMcpServerById(serverId, { includeSecrets: true });
   if (!server) return null;
   return getMcpOAuthStatus(server);
 }
@@ -33,14 +33,17 @@ export async function authorizeMcpOAuthServer(
 
   try {
     const token = await runInteractiveAuthorization(server);
-    if (token.refreshToken) {
-      const saved = await updateMcpServer(serverId, {
-        oauth: { ...server.oauth, refreshToken: token.refreshToken },
-      });
-      if (!saved) return { ok: false, error: 'mcp_server_not_found' };
-      return { ok: true, status: getMcpOAuthStatus(saved) };
-    }
-    return { ok: true, status: getMcpOAuthStatus(server) };
+    // Persist the refresh token *and* the endpoints / client id discovered
+    // during the flow, so a later refresh survives an idle service worker.
+    const saved = await updateMcpServer(serverId, {
+      oauth: {
+        ...server.oauth,
+        ...token.oauthPatch,
+        ...(token.refreshToken ? { refreshToken: token.refreshToken } : {}),
+      },
+    });
+    if (!saved) return { ok: false, error: 'mcp_server_not_found' };
+    return { ok: true, status: getMcpOAuthStatus(saved) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }

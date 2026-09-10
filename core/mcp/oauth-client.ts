@@ -4,6 +4,7 @@ import {
 } from '../sync/identity-port';
 import type { McpOAuthConfig, McpServerConfig, McpServerId } from './types';
 import { getMcpEndpointUrl } from './transports/common';
+import { hasRealMcpSecret } from './constants';
 
 /**
  * MCP OAuth 2.1 (+ PKCE) client.
@@ -121,7 +122,7 @@ export function getMcpOAuthStatus(server: McpServerConfig): McpOAuthStatus {
     enabled,
     authorized: Boolean(cached && isTokenFresh(cached)),
     expiresAt: cached?.expiresAt ?? null,
-    hasRefreshToken: Boolean(server.oauth?.refreshToken),
+    hasRefreshToken: hasRealMcpSecret(server.oauth?.refreshToken),
     scopes: server.oauth?.scopes ?? [],
     authorizationUrl: server.oauth?.authorizationUrl ?? null,
   };
@@ -158,20 +159,22 @@ export async function resolveMcpOAuthAuthorization(
   }
 
   // Try a transparent refresh when a durable refresh token exists.
-  const refreshToken = server.oauth?.refreshToken;
+  const refreshToken = hasRealMcpSecret(server.oauth?.refreshToken) ? server.oauth.refreshToken : undefined;
   if (refreshToken) {
     try {
       const refreshed = await refreshAccessToken(server, refreshToken, fingerprint, options.signal);
       tokenCache.set(server.id, refreshed);
       return `${refreshed.tokenType || 'Bearer'} ${refreshed.accessToken}`;
     } catch (error) {
+      invalidateMcpOAuthToken(server.id);
       if (!options.interactive) {
-        invalidateMcpOAuthToken(server.id);
-        throw new McpOAuthError(
-          'mcp_oauth_authorization_required',
-          'MCP OAuth authorization is required. Authorize this server, then retry.',
-          { retryable: true },
-        );
+        // A stored refresh token means the user already authorized, so a failed
+        // refresh is a token/transport problem (expired or rotated grant,
+        // unreachable endpoint, rejected client), never a missing
+        // authorization. Preserve the real cause instead of masking it as
+        // mcp_oauth_authorization_required, which made a completed consent look
+        // like it never happened.
+        throw asRefreshFailure(error);
       }
       // Fall through to a fresh interactive authorization.
     }
@@ -185,7 +188,7 @@ export async function resolveMcpOAuthAuthorization(
     );
   }
 
-  const authorized = await runInteractiveAuthorization(server, options);
+  const { token: authorized } = await runInteractiveAuthorization(server, options);
   return `${authorized.tokenType || 'Bearer'} ${authorized.accessToken}`;
 }
 
@@ -194,26 +197,42 @@ export async function resolveMcpOAuthAuthorization(
  * The caller is responsible for persisting the returned refresh token onto the
  * server config; this module never writes storage itself.
  */
+export interface DiscoveredOAuthConfig {
+  clientId?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+  scopes?: string[];
+  resource?: string;
+}
+
 export async function authorizeMcpServer(
   server: McpServerConfig,
   options: { signal?: AbortSignal; identity?: SyncIdentityPort | null } = {},
-): Promise<{ accessToken: string; refreshToken?: string; expiresAt: number | null; scope?: string }> {
+): Promise<{
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number | null;
+  scope?: string;
+  oauthPatch: DiscoveredOAuthConfig;
+}> {
   if (!server.oauth?.enabled) {
     throw new McpOAuthError('mcp_oauth_not_configured', 'OAuth is not enabled for this MCP server.');
   }
-  const token = await runInteractiveAuthorization(server, options);
+  const { token, oauthPatch } = await runInteractiveAuthorization(server, options);
   return {
     accessToken: token.accessToken,
     refreshToken: token.refreshToken,
     expiresAt: token.expiresAt,
     scope: token.scope,
+    oauthPatch,
   };
 }
 
 async function runInteractiveAuthorization(
   server: McpServerConfig,
   options: { signal?: AbortSignal; identity?: SyncIdentityPort | null },
-): Promise<CachedOAuthToken> {
+): Promise<{ token: CachedOAuthToken; oauthPatch: DiscoveredOAuthConfig }> {
   const identity = options.identity ?? getCurrentSyncIdentityPort();
   if (!identity) {
     throw new McpOAuthError(
@@ -266,7 +285,20 @@ async function runInteractiveAuthorization(
   });
   const entry: CachedOAuthToken = { ...token, credentialFingerprint: fingerprint };
   tokenCache.set(server.id, entry);
-  return entry;
+  // Persist what we discovered during the interactive flow. Access tokens live
+  // only in memory and vanish when the MV3 service worker idles, so a later
+  // refresh must reach the token endpoint again and reuse the same client id
+  // instead of re-registering a brand-new one (which invalidates the stored
+  // refresh token).
+  const oauthPatch: DiscoveredOAuthConfig = {
+    clientId,
+    authorizationUrl: metadata.authorizationUrl,
+    tokenUrl: metadata.tokenUrl,
+    registrationUrl: metadata.registrationUrl,
+    scopes: metadata.scopes,
+    resource: metadata.resource,
+  };
+  return { token: entry, oauthPatch };
 }
 
 async function refreshAccessToken(
@@ -282,10 +314,10 @@ async function refreshAccessToken(
     refresh_token: refreshToken,
     client_id: clientId,
   });
-  if (server.oauth?.clientSecret) body.set('client_secret', server.oauth.clientSecret);
+  if (hasRealMcpSecret(server.oauth?.clientSecret)) body.set('client_secret', server.oauth.clientSecret);
   if (metadata.resource) body.set('resource', metadata.resource);
 
-  const payload = await postForm(metadata.tokenUrl, body, signal);
+  const payload = await postTokenForm(metadata.tokenUrl, body, 'mcp_oauth_refresh_failed', signal);
   if (!payload?.access_token) {
     throw new McpOAuthError(
       'mcp_oauth_refresh_failed',
@@ -315,10 +347,10 @@ async function exchangeCodeForToken(
     redirect_uri: input.redirectUri,
     client_id: input.clientId,
   });
-  if (server.oauth?.clientSecret) body.set('client_secret', server.oauth.clientSecret);
+  if (hasRealMcpSecret(server.oauth?.clientSecret)) body.set('client_secret', server.oauth.clientSecret);
   if (metadata.resource) body.set('resource', metadata.resource);
 
-  const payload = await postForm(metadata.tokenUrl, body, input.signal);
+  const payload = await postTokenForm(metadata.tokenUrl, body, 'mcp_oauth_token_exchange_failed', input.signal);
   if (!payload?.access_token) {
     throw new McpOAuthError(
       'mcp_oauth_token_exchange_failed',
@@ -444,6 +476,66 @@ async function postForm(
   return readJsonBody(response);
 }
 
+/**
+ * Token-endpoint POST. Unlike the discovery helpers this reports the provider's
+ * `error` / `error_description` and never downgrades an HTTP failure to a
+ * generic metadata error, so a refresh failure keeps its real cause.
+ */
+async function postTokenForm(
+  url: string,
+  body: URLSearchParams,
+  failureCode: McpOAuthErrorCode,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: body.toString(),
+    signal,
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      const error = typeof payload?.error === 'string' ? payload.error : undefined;
+      const description = typeof payload?.error_description === 'string'
+        ? payload.error_description
+        : undefined;
+      if (error) detail = description ? `${error}: ${description}` : error;
+    } catch {
+      // Non-JSON error body; keep the status-only detail.
+    }
+    throw new McpOAuthError(
+      failureCode,
+      `MCP OAuth token endpoint rejected the request (${detail}).`,
+      { retryable: response.status >= 500 },
+    );
+  }
+  try {
+    const value = await response.json();
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wrap any refresh-path failure while preserving its cause. Only a *missing*
+ * refresh token is treated as "authorization required"; a present-but-rejected
+ * token stays a refresh failure so callers can show what actually went wrong.
+ */
+function asRefreshFailure(error: unknown): McpOAuthError {
+  if (error instanceof McpOAuthError && error.code === 'mcp_oauth_refresh_failed') {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new McpOAuthError(
+    'mcp_oauth_refresh_failed',
+    `MCP OAuth token refresh failed: ${message}`,
+    { retryable: true },
+  );
+}
+
 async function postJson(
   url: string,
   body: Record<string, unknown>,
@@ -541,8 +633,17 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/**
+ * Fingerprint the stable, non-redacted part of the OAuth client identity.
+ *
+ * Only `clientId` qualifies: it is never redacted, so the fingerprint stays
+ * stable between a raw config and a sanitized one. `clientSecret` is redacted
+ * to '********' on every sanitized read, so including it would make the
+ * fingerprint impossible to reproduce and a still-valid cached access token
+ * would look like it belonged to different credentials.
+ */
 async function fingerprintCredentials(oauth: McpOAuthConfig | undefined): Promise<string> {
-  const material = `${oauth?.clientId ?? ''}\u0000${oauth?.clientSecret ?? ''}`;
+  const material = oauth?.clientId ?? '';
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
