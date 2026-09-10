@@ -605,6 +605,9 @@ export type MessageAction =
   | { type: 'DELETE_MCP_SERVER'; payload: { id: McpServerId } }
   | { type: 'GET_MCP_TOOL_CACHE'; payload: { serverId: McpServerId } }
   | { type: 'REFRESH_MCP_SERVER_TOOLS'; payload: { serverId: McpServerId } }
+  | { type: 'GET_MCP_OAUTH_STATUS'; payload: { serverId: McpServerId } }
+  | { type: 'AUTHORIZE_MCP_SERVER'; payload: { serverId: McpServerId } }
+  | { type: 'DISCONNECT_MCP_OAUTH'; payload: { serverId: McpServerId } }
   | { type: 'GET_MULTIMODAL_SETTINGS_STATUS' }
   | { type: 'SAVE_MULTIMODAL_SETTINGS'; payload: MultimodalSettingsPatchType }
   | { type: 'CLEAR_MULTIMODAL_SETTINGS' }

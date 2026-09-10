@@ -1,4 +1,3 @@
-import { buildMcpRequestHeaders } from '../store';
 import type {
   McpJsonRpcNotification,
   McpJsonRpcRequest,
@@ -13,6 +12,7 @@ import {
   getMcpEndpointUrl,
   readJsonRpcResponse,
 } from './common';
+import { resolveMcpRequestHeaders, shouldRetryMcpUnauthorized } from './auth';
 
 interface McpHttpTransportState {
   protocolVersion?: string;
@@ -72,15 +72,23 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
 ): Promise<McpJsonRpcResponse<TResult>> {
   const timeoutMs = options.timeoutMs ?? server.timeouts.requestMs;
   const maxResponseBytes = options.maxResponseBytes ?? server.limits.maxResultBytes;
+  const streamableSession = options.streamableSession ?? false;
   await ensureMcpServerOriginPermission(server);
   const url = getMcpEndpointUrl(server);
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    credentials: 'omit',
-    headers: createRequestHeaders(server, options.session, options.streamableSession ?? false),
-    body: JSON.stringify(message),
+
+  const post = () => postHttpMessage(server, url, message, {
+    timeoutMs,
+    session: options.session,
+    streamableSession,
     signal: options.signal,
-  }, timeoutMs);
+  });
+
+  let response = await post();
+  if (shouldRetryMcpUnauthorized(server, response.status)) {
+    await response.body?.cancel().catch(() => undefined);
+    response = await post();
+  }
+
   const rpcResponse = await readJsonRpcResponse<TResult>(
     response,
     message,
@@ -91,9 +99,30 @@ async function sendHttpMessage<TParams extends Record<string, unknown> | undefin
     response,
     message,
     rpcResponse,
-    options.streamableSession ?? false,
+    streamableSession,
   );
   return rpcResponse;
+}
+
+async function postHttpMessage(
+  server: McpServerConfig,
+  url: URL,
+  body: unknown,
+  options: {
+    timeoutMs: number;
+    session?: McpHttpTransportState;
+    streamableSession: boolean;
+    signal?: AbortSignal;
+  },
+): Promise<Response> {
+  const authHeaders = await resolveMcpRequestHeaders(server, { signal: options.signal });
+  return fetchWithTimeout(url, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: createRequestHeaders(authHeaders, options.session, options.streamableSession),
+    body: JSON.stringify(body),
+    signal: options.signal,
+  }, options.timeoutMs);
 }
 
 async function sendHttpNotification(
@@ -108,13 +137,19 @@ async function sendHttpNotification(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? server.timeouts.requestMs;
   await ensureMcpServerOriginPermission(server);
-  const response = await fetchWithTimeout(getMcpEndpointUrl(server), {
-    method: 'POST',
-    credentials: 'omit',
-    headers: createRequestHeaders(server, options.session, options.streamableSession ?? false),
-    body: JSON.stringify(notification),
+  const url = getMcpEndpointUrl(server);
+  const send = () => postHttpMessage(server, url, notification, {
+    timeoutMs,
+    session: options.session,
+    streamableSession: options.streamableSession ?? false,
     signal: options.signal,
-  }, timeoutMs);
+  });
+
+  let response = await send();
+  if (shouldRetryMcpUnauthorized(server, response.status)) {
+    await response.body?.cancel().catch(() => undefined);
+    response = await send();
+  }
 
   try {
     if (!response.ok) {
@@ -130,18 +165,14 @@ async function sendHttpNotification(
 }
 
 function createRequestHeaders(
-  server: McpServerConfig,
+  base: Record<string, string>,
   session: McpHttpTransportState | undefined,
   includeStreamableSession: boolean,
 ): Record<string, string> {
-  const headers = {
+  return {
     accept: 'application/json, text/event-stream',
     'content-type': 'application/json',
-    ...buildMcpRequestHeaders(server),
-  };
-
-  return {
-    ...headers,
+    ...base,
     ...(session?.protocolVersion ? { 'MCP-Protocol-Version': session.protocolVersion } : {}),
     ...(includeStreamableSession && session?.sessionId ? { 'Mcp-Session-Id': session.sessionId } : {}),
   };

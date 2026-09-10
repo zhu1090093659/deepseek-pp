@@ -155,6 +155,27 @@ export const TOOL_RUNTIME_PAYLOAD_DECODERS: ToolRuntimePayloadDecoderMap = {
       'serverId',
     );
   },
+  GET_MCP_OAUTH_STATUS(value) {
+    return decodeStringFieldPayload<'GET_MCP_OAUTH_STATUS'>(
+      value,
+      'GET_MCP_OAUTH_STATUS.payload',
+      'serverId',
+    );
+  },
+  AUTHORIZE_MCP_SERVER(value) {
+    return decodeStringFieldPayload<'AUTHORIZE_MCP_SERVER'>(
+      value,
+      'AUTHORIZE_MCP_SERVER.payload',
+      'serverId',
+    );
+  },
+  DISCONNECT_MCP_OAUTH(value) {
+    return decodeStringFieldPayload<'DISCONNECT_MCP_OAUTH'>(
+      value,
+      'DISCONNECT_MCP_OAUTH.payload',
+      'serverId',
+    );
+  },
   SET_WEB_TOOL_SETTING(value) {
     const payload = recordValue(value, 'SET_WEB_TOOL_SETTING.payload');
     enumValue(payload.name, WEB_SEARCH_TOOL_NAMES, 'SET_WEB_TOOL_SETTING.payload.name');

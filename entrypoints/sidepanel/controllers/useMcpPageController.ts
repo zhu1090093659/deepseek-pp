@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LocaleMessageKey, MessageParams } from '../../../core/i18n';
+import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
 import type {
   McpCapabilityExposureMode,
   McpCapabilitySettings,
@@ -27,7 +28,7 @@ import {
 } from './mcp-tools-controller';
 
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
-type BusyAction = 'refresh' | 'test' | 'permission';
+type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Banner = { tone: 'success' | 'error' | 'info'; text: string };
 type Confirm = (options: {
   title: string;
@@ -48,6 +49,7 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
   const [busy, setBusy] = useState<Record<string, BusyAction | null>>({});
   const [banner, setBanner] = useState<Banner | null>(null);
   const [platform, setPlatform] = useState<PlatformEnvironment | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<Record<string, McpOAuthStatus | null>>({});
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectionInitialized = useRef(false);
   const requestFence = useRef(createRequestGenerationFence());
@@ -77,6 +79,13 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
       setCaches(snapshot.caches);
       setHistory(snapshot.history);
       setCapabilitySettings(snapshot.capabilitySettings);
+      const oauthEntries = await Promise.all(snapshot.servers
+        .filter((server) => server.oauth?.enabled)
+        .map(async (server) => (
+          [server.id, await mcpToolsController.getMcpOAuthStatus(server.id)] as const
+        )));
+      if (!requestFence.current.isCurrent(generation)) return;
+      setOauthStatus(Object.fromEntries(oauthEntries));
       const shouldSelectInitialServer = !selectionInitialized.current
         && snapshot.servers.length > 0;
       if (shouldSelectInitialServer) selectionInitialized.current = true;
@@ -274,6 +283,42 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     }
   }, [clearBanner, load, setBusyState, showBanner, t]);
 
+  const authorizeOAuth = useCallback(async (server: McpServerConfig) => {
+    setBusyState(server.id, 'oauth');
+    clearBanner();
+    try {
+      const result = await mcpToolsController.authorizeMcpOAuth(server.id);
+      if (result.ok) {
+        setOauthStatus((current) => ({ ...current, [server.id]: result.status }));
+        showBanner('success', t('sidepanel.mcpPage.oauth.authorizeSuccess'));
+        await load();
+      } else {
+        showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', { error: result.error }));
+      }
+    } catch (error) {
+      showBanner('error', t('sidepanel.mcpPage.oauth.authorizeFailed', {
+        error: getRuntimeErrorMessage(error),
+      }));
+    } finally {
+      setBusyState(server.id, null);
+    }
+  }, [clearBanner, load, setBusyState, showBanner, t]);
+
+  const disconnectOAuth = useCallback(async (server: McpServerConfig) => {
+    setBusyState(server.id, 'oauth');
+    clearBanner();
+    try {
+      await mcpToolsController.disconnectMcpOAuth(server.id);
+      setOauthStatus((current) => ({ ...current, [server.id]: null }));
+      showBanner('success', t('sidepanel.mcpPage.oauth.disconnectSuccess'));
+      await load();
+    } catch (error) {
+      showBanner('error', getRuntimeErrorMessage(error));
+    } finally {
+      setBusyState(server.id, null);
+    }
+  }, [clearBanner, load, setBusyState, showBanner, t]);
+
   const toggleTool = useCallback(async (server: McpServerConfig, tool: ToolDescriptor) => {
     const selected = isMcpToolSelected(server, tool);
     await patchServer(server, {
@@ -352,6 +397,9 @@ export function useMcpPageController(t: Translator, confirm: Confirm) {
     patchServer,
     requestPermission,
     refreshServer: connectServer,
+    oauthStatus,
+    authorizeOAuth,
+    disconnectOAuth,
     toggleTool,
     updateCapabilitySettings,
     setServerExposure,

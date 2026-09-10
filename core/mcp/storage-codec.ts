@@ -160,6 +160,21 @@ function validateServer(raw: unknown, path: string): McpServerConfig {
     requireString(value.value, `${path}.secrets[${index}].value`);
   });
 
+  if (server.oauth !== undefined) {
+    const oauth = requireRecord(server.oauth, `${path}.oauth`);
+    requireBoolean(oauth.enabled, `${path}.oauth.enabled`);
+    requireOptionalNonEmptyString(oauth.clientId, `${path}.oauth.clientId`);
+    requireOptionalString(oauth.clientSecret, `${path}.oauth.clientSecret`);
+    requireOptionalString(oauth.refreshToken, `${path}.oauth.refreshToken`);
+    requireOptionalString(oauth.authorizationUrl, `${path}.oauth.authorizationUrl`);
+    requireOptionalString(oauth.tokenUrl, `${path}.oauth.tokenUrl`);
+    requireOptionalString(oauth.registrationUrl, `${path}.oauth.registrationUrl`);
+    if (oauth.scopes !== undefined) {
+      requireStringArray(oauth.scopes, `${path}.oauth.scopes`);
+    }
+    requireOptionalString(oauth.resource, `${path}.oauth.resource`);
+  }
+
   const timeouts = requireRecord(server.timeouts, `${path}.timeouts`);
   requirePositiveNumber(timeouts.connectMs, `${path}.timeouts.connectMs`);
   requirePositiveNumber(timeouts.requestMs, `${path}.timeouts.requestMs`);

@@ -61,6 +61,23 @@ export interface McpServerExecutionDefaults {
   enabled: boolean;
 }
 
+export interface McpOAuthConfig {
+  enabled: boolean;
+  /** Static client id. When absent, dynamic client registration is attempted. */
+  clientId?: string;
+  /** Static client secret (confidential clients only). Redacted in sanitized configs. */
+  clientSecret?: string;
+  /** Durable refresh token. Secret; redacted in sanitized configs and never logged. */
+  refreshToken?: string;
+  /** Pre-known endpoints; discovered from the service when omitted. */
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  registrationUrl?: string;
+  scopes?: string[];
+  /** RFC 8707 resource indicator; defaults to the service URL. */
+  resource?: string;
+}
+
 export interface McpServerConfig {
   version: McpServerConfigVersion;
   id: McpServerId;
@@ -69,6 +86,7 @@ export interface McpServerConfig {
   transport: McpServerTransportConfig;
   headers: McpHeaderValue[];
   secrets: McpSecretValue[];
+  oauth?: McpOAuthConfig;
   timeouts: McpServerTimeouts;
   limits: McpServerResultLimits;
   allowlist: McpToolAllowlist;
@@ -87,7 +105,7 @@ export type McpServerCreateInput = Pick<
   Partial<
     Pick<
       McpServerConfig,
-      'enabled' | 'headers' | 'secrets' | 'timeouts' | 'limits' | 'allowlist' | 'execution'
+      'enabled' | 'headers' | 'secrets' | 'oauth' | 'timeouts' | 'limits' | 'allowlist' | 'execution'
     >
   >;
 
@@ -99,6 +117,7 @@ export type McpServerUpdateInput = Partial<
     | 'transport'
     | 'headers'
     | 'secrets'
+    | 'oauth'
     | 'timeouts'
     | 'limits'
     | 'allowlist'

@@ -3,8 +3,10 @@ import {
   type RuntimeCommandHandler,
 } from '../../core/messaging/runtime-command-registry';
 import type {
+  McpOAuthAuthorizationResponse,
   McpServerPermissionResponse,
 } from '../../core/messaging/tool-runtime-contracts';
+import type { McpOAuthStatus } from '../../core/mcp/oauth-client';
 import type {
   McpServerConfig,
   McpServerCreateInput,
@@ -33,6 +35,9 @@ export interface McpRuntimeHandlerDependencies {
   deleteMcpServer(id: string): Promise<void>;
   getMcpToolCache(serverId: string): Promise<McpToolCacheEntry | null>;
   refreshMcpServerDiscovery(serverId: string): Promise<McpToolCacheEntry>;
+  getMcpOAuthStatusForServer(serverId: string): Promise<McpOAuthStatus | null>;
+  authorizeMcpOAuthServer(serverId: string): Promise<McpOAuthAuthorizationResponse>;
+  disconnectMcpOAuthServer(serverId: string): Promise<{ ok: true }>;
   getMcpOriginPattern(server: McpServerConfig): string;
   hasMcpServerOriginPermission(server: McpServerConfig): Promise<boolean>;
   broadcastMcpServersUpdate(excludeTabId?: number): Promise<void>;
@@ -115,6 +120,21 @@ export function createMcpRuntimeHandlers(
         cache,
         health: cache.health,
       };
+    }),
+    // The Side Panel must re-render the authorize/disconnect affordance after
+    // OAuth state changes, so both mutations broadcast the server list.
+    defineToolPayloadRuntimeCommandHandler('GET_MCP_OAUTH_STATUS', (payload) => (
+      dependencies.getMcpOAuthStatusForServer(payload.serverId)
+    )),
+    defineToolPayloadRuntimeCommandHandler('AUTHORIZE_MCP_SERVER', async (payload, context) => {
+      const result = await dependencies.authorizeMcpOAuthServer(payload.serverId);
+      if (result.ok) await notifyMcpAndTools(context.tabId);
+      return result;
+    }),
+    defineToolPayloadRuntimeCommandHandler('DISCONNECT_MCP_OAUTH', async (payload, context) => {
+      const result = await dependencies.disconnectMcpOAuthServer(payload.serverId);
+      await notifyMcpAndTools(context.tabId);
+      return result;
     }),
   ]);
 }

@@ -13,6 +13,22 @@ export type {
 } from './native-contract';
 
 export {
+  McpOAuthError,
+  authorizeMcpServer,
+  getMcpOAuthStatus,
+  invalidateMcpOAuthToken,
+  isMcpOAuthEnabled,
+  isMcpOAuthTransportSupported,
+  resolveMcpOAuthAuthorization,
+} from './oauth-client';
+
+export {
+  authorizeMcpOAuthServer,
+  disconnectMcpOAuthServer,
+  getMcpOAuthStatusForServer,
+} from './oauth-service';
+
+export {
   McpProtocolError,
   callMcpTool,
   createMcpNotification,
@@ -136,6 +152,12 @@ export type {
 } from './transports';
 
 export type {
+  McpOAuthErrorCode,
+  McpOAuthStatus,
+} from './oauth-client';
+
+export type {
+  McpOAuthConfig,
   McpCallToolOptions,
   McpCallToolResult,
   McpClientInfo,

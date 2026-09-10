@@ -19,6 +19,7 @@ import type {
   ToolExecutionMode,
   PlatformEnvironment,
 } from '../../../core/types';
+import type { McpOAuthStatus } from '../../../core/mcp/oauth-client';
 import PageIntro from '../components/PageIntro';
 import { useI18n } from '../i18n';
 import {
@@ -40,7 +41,7 @@ import {
 } from '../components/settings/primitives';
 
 type McpTransportKind = McpServerTransportConfig['kind'];
-type BusyAction = 'refresh' | 'test' | 'permission';
+type BusyAction = 'refresh' | 'test' | 'permission' | 'oauth';
 type Translator = (key: LocaleMessageKey, params?: MessageParams) => string;
 
 type FormState = {
@@ -123,6 +124,9 @@ export default function McpPage() {
     patchServer,
     requestPermission,
     refreshServer,
+    oauthStatus,
+    authorizeOAuth,
+    disconnectOAuth,
     toggleTool,
     updateCapabilitySettings,
     setServerExposure,
@@ -260,6 +264,9 @@ export default function McpPage() {
                     onRequestPermission={() => requestPermission(server)}
                     onRefresh={() => refreshServer(server, 'refresh')}
                     onTest={() => refreshServer(server, 'test')}
+                    oauthStatus={oauthStatus[server.id] ?? null}
+                    onAuthorizeOAuth={() => authorizeOAuth(server)}
+                    onDisconnectOAuth={() => disconnectOAuth(server)}
                     onToggleTool={(tool) => toggleTool(server, tool)}
                     onTogglePinned={(tool) => togglePinnedTool(server, tool)}
                     t={t}
@@ -786,6 +793,9 @@ function ServerDetail({
   onRequestPermission,
   onRefresh,
   onTest,
+  oauthStatus,
+  onAuthorizeOAuth,
+  onDisconnectOAuth,
   onToggleTool,
   onTogglePinned,
   t,
@@ -802,6 +812,9 @@ function ServerDetail({
   onRequestPermission: () => void;
   onRefresh: () => void;
   onTest: () => void;
+  oauthStatus: McpOAuthStatus | null;
+  onAuthorizeOAuth: () => void;
+  onDisconnectOAuth: () => void;
   onToggleTool: (tool: ToolDescriptor) => void;
   onTogglePinned: (tool: ToolDescriptor) => void;
   t: Translator;
@@ -842,6 +855,63 @@ function ServerDetail({
       {(cache?.health.error || server.lastError) && (
         <div className="rounded-lg px-3 py-2 text-xs" style={{ color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)', border: '1px solid var(--ds-danger-border)' }}>
           {cache?.health.error ?? server.lastError}
+        </div>
+      )}
+
+      {oauthStatus?.enabled && (
+        <div className="ds-card rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-medium" style={{ color: 'var(--ds-text)' }}>
+                {t('sidepanel.mcpPage.oauth.section')}
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--ds-text-tertiary)' }}>
+                {t('sidepanel.mcpPage.oauth.hint')}
+              </div>
+            </div>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+              style={{
+                color: oauthStatus.authorized ? 'var(--ds-success)' : 'var(--ds-text-tertiary)',
+                background: oauthStatus.authorized ? 'var(--ds-success-bg)' : 'var(--ds-surface)',
+              }}
+            >
+              {oauthStatus.authorized
+                ? t('sidepanel.mcpPage.oauth.authorized')
+                : t('sidepanel.mcpPage.oauth.notAuthorized')}
+            </span>
+          </div>
+          <div className="text-[11px]" style={{ color: 'var(--ds-text-tertiary)' }}>
+            {oauthStatus.expiresAt
+              ? t('sidepanel.mcpPage.oauth.expiresAt', {
+                time: formatTime(oauthStatus.expiresAt, locale),
+              })
+              : t('sidepanel.mcpPage.oauth.noExpiry')}
+          </div>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={onAuthorizeOAuth}
+              disabled={busy !== null}
+              className="ds-btn-primary px-2.5 py-1 text-[11px] font-medium text-white rounded-md disabled:opacity-50"
+            >
+              {busy === 'oauth'
+                ? t('sidepanel.mcpPage.row.testing')
+                : oauthStatus.hasRefreshToken
+                  ? t('sidepanel.mcpPage.oauth.reauthorize')
+                  : t('sidepanel.mcpPage.oauth.authorize')}
+            </button>
+            {oauthStatus.hasRefreshToken && (
+              <button
+                type="button"
+                onClick={onDisconnectOAuth}
+                disabled={busy !== null}
+                className="ds-btn-secondary px-2.5 py-1 text-[11px] rounded-md disabled:opacity-50"
+              >
+                {t('sidepanel.mcpPage.oauth.disconnect')}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

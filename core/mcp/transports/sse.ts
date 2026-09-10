@@ -1,4 +1,8 @@
-import { buildMcpRequestHeaders } from '../store';
+import {
+  invalidateMcpOAuthToken,
+  isMcpOAuthEnabled,
+} from '../oauth-client';
+import { resolveMcpRequestHeaders } from './auth';
 import type {
   McpJsonRpcNotification,
   McpJsonRpcRequest,
@@ -48,15 +52,24 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
   signal?: AbortSignal,
 ): Promise<McpJsonRpcResponse<TResult>> {
   await ensureMcpServerOriginPermission(server);
-  const sseResponse = await fetchWithTimeout(getMcpEndpointUrl(server), {
+  let authHeaders = await resolveMcpRequestHeaders(server, { signal });
+  const connect = (headers: Record<string, string>) => fetchWithTimeout(getMcpEndpointUrl(server), {
     method: 'GET',
     credentials: 'omit',
     headers: {
       accept: 'text/event-stream',
-      ...buildMcpRequestHeaders(server),
+      ...headers,
     },
     signal,
   }, timeoutMs);
+
+  let sseResponse = await connect(authHeaders);
+  if (sseResponse.status === 401 && isMcpOAuthEnabled(server)) {
+    await sseResponse.body?.cancel().catch(() => undefined);
+    invalidateMcpOAuthToken(server.id);
+    authHeaders = await resolveMcpRequestHeaders(server, { signal });
+    sseResponse = await connect(authHeaders);
+  }
 
   if (!sseResponse.ok || !sseResponse.body) {
     throw new McpTransportError('mcp_sse_connect_failed', `MCP SSE connect failed with HTTP ${sseResponse.status}.`);
@@ -65,7 +78,7 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
   const reader = sseResponse.body.getReader();
   const decoder = new TextDecoder();
   const postUrl = await readSseEndpoint(server, reader, decoder, timeoutMs, maxResponseBytes, signal);
-  await postSseMessage(server, postUrl, message, timeoutMs, signal);
+  await postSseMessage(server, postUrl, authHeaders, message, timeoutMs, signal);
 
   if (!('id' in message)) {
     reader.cancel().catch(() => undefined);
@@ -155,20 +168,28 @@ function validateSsePostEndpoint(data: string, server: McpServerConfig): URL {
 async function postSseMessage(
   server: McpServerConfig,
   postUrl: URL,
+  authHeaders: Record<string, string>,
   message: McpJsonRpcRequest<any> | McpJsonRpcNotification,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetchWithTimeout(postUrl, {
+  const send = (headers: Record<string, string>) => fetchWithTimeout(postUrl, {
     method: 'POST',
     credentials: 'omit',
     headers: {
       'content-type': 'application/json',
-      ...buildMcpRequestHeaders(server),
+      ...headers,
     },
     body: JSON.stringify(message),
     signal,
   }, timeoutMs);
+
+  let response = await send(authHeaders);
+  if (response.status === 401 && isMcpOAuthEnabled(server)) {
+    await response.body?.cancel().catch(() => undefined);
+    invalidateMcpOAuthToken(server.id);
+    response = await send(await resolveMcpRequestHeaders(server, { signal }));
+  }
 
   if (!response.ok) {
     throw new McpTransportError('mcp_sse_post_failed', `MCP SSE POST failed with HTTP ${response.status}.`);

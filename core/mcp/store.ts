@@ -1,6 +1,7 @@
 import type {
   McpHeaderValue,
   McpServerSecretKind,
+  McpOAuthConfig,
   McpSecretValue,
   McpServerConfig,
   McpServerCreateInput,
@@ -70,6 +71,7 @@ export async function createMcpServer(input: McpServerCreateInput): Promise<McpS
       transport: input.transport,
       headers: input.headers ?? [],
       secrets: input.secrets ?? [],
+      oauth: input.oauth,
       timeouts: input.timeouts ?? { ...MCP_DEFAULT_TIMEOUTS, requestMs: defaultRequestMs },
       limits: input.limits ?? MCP_DEFAULT_LIMITS,
       allowlist: input.allowlist ?? {
@@ -107,9 +109,12 @@ export async function updateMcpServer(
     const defaultRequestMs = await getMcpRequestTimeoutMs();
     const servers = state.servers.map((server) => {
       if (server.id !== id) return server;
-      const nextPatch: McpServerUpdateInput = patch.secrets
+      let nextPatch: McpServerUpdateInput = patch.secrets
         ? { ...patch, secrets: mergeRedactedSecrets(server.secrets, patch.secrets) }
         : patch;
+      if (patch.oauth !== undefined) {
+        nextPatch = { ...nextPatch, oauth: mergeRedactedOauth(server.oauth, patch.oauth) };
+      }
       const nextServer = normalizeServerForMutation({
         ...server,
         ...nextPatch,
@@ -250,6 +255,7 @@ export function sanitizeMcpServerConfig(server: McpServerConfig): McpServerConfi
   return {
     ...server,
     secrets: server.secrets.map(redactSecret),
+    ...(server.oauth ? { oauth: redactOauth(server.oauth) } : {}),
   };
 }
 
@@ -306,6 +312,7 @@ function normalizeServerForMutation(
     },
     headers: headerArrayValue(value.headers),
     secrets: secretArrayValue(value.secrets),
+    oauth: oauthValue(value.oauth),
     timeouts: {
       connectMs: positiveNumber(value.timeouts?.connectMs, MCP_DEFAULT_TIMEOUTS.connectMs),
       // Servers that do not explicitly set requestMs fall back to the globally
@@ -374,6 +381,53 @@ function normalizeServerStatus(
 ): McpServerStatus {
   if (!enabled) return 'disabled';
   return status && status !== 'disabled' ? status : 'unknown';
+}
+
+function oauthValue(value: unknown): McpOAuthConfig | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const scopes = Array.isArray(record.scopes)
+    ? record.scopes.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : undefined;
+  return {
+    enabled: record.enabled === true,
+    clientId: optionalOAuthString(record.clientId),
+    clientSecret: optionalOAuthString(record.clientSecret),
+    refreshToken: optionalOAuthString(record.refreshToken),
+    authorizationUrl: optionalOAuthString(record.authorizationUrl),
+    tokenUrl: optionalOAuthString(record.tokenUrl),
+    registrationUrl: optionalOAuthString(record.registrationUrl),
+    scopes,
+    resource: optionalOAuthString(record.resource),
+  };
+}
+
+function optionalOAuthString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function redactOauth(oauth: McpOAuthConfig): McpOAuthConfig {
+  return {
+    ...oauth,
+    ...(oauth.clientSecret ? { clientSecret: REDACTED_SECRET_VALUE } : {}),
+    ...(oauth.refreshToken ? { refreshToken: REDACTED_SECRET_VALUE } : {}),
+  };
+}
+
+function restoreRedacted(value: string | undefined, previous: string | undefined): string | undefined {
+  return value === REDACTED_SECRET_VALUE ? previous : value;
+}
+
+function mergeRedactedOauth(
+  previous: McpOAuthConfig | undefined,
+  next: McpOAuthConfig | undefined,
+): McpOAuthConfig | undefined {
+  if (!next) return next;
+  return {
+    ...next,
+    clientSecret: restoreRedacted(next.clientSecret, previous?.clientSecret),
+    refreshToken: restoreRedacted(next.refreshToken, previous?.refreshToken),
+  };
 }
 
 function redactSecret(secret: McpSecretValue): McpSecretValue {
@@ -450,6 +504,15 @@ function mcpDiscoveryFingerprint(server: McpServerConfig): string {
       username: secret.username ?? '',
       value: secret.value,
     })),
+    // OAuth identity changes (client id, resource, scopes, enabled) alter the
+    // connection; the durable refresh token and client secret do not, so
+    // authorizing a server never drops the tool cache it just discovered.
+    oauth: {
+      enabled: server.oauth?.enabled ?? false,
+      clientId: server.oauth?.clientId ?? '',
+      resource: server.oauth?.resource ?? '',
+      scopes: server.oauth?.scopes ?? [],
+    },
     timeouts: server.timeouts,
     limits: server.limits,
   });
