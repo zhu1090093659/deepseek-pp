@@ -76,6 +76,9 @@ export function createManifest(env: ConfigEnv): UserManifest {
       // DeepSeek + Bing: core extension hosts.
       '*://chat.deepseek.com/*',
       'https://api.deepseek.com/*',
+      // MiniMax global and China OpenAI-compatible / Anthropic endpoints.
+      'https://api.minimax.io/*',
+      'https://api.minimaxi.com/*',
       '*://cn.bing.com/*',
       '*://www.bing.com/*',
       // Cloud sync OAuth providers — required (not optional) because their API
