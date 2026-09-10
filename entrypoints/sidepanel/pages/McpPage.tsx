@@ -63,6 +63,12 @@ type FormState = {
   maxToolCount: string;
   executionEnabled: boolean;
   executionMode: ToolExecutionMode;
+  oauthEnabled: boolean;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthScopes: string;
+  oauthAuthorizationUrl: string;
+  oauthTokenUrl: string;
 };
 
 const TRANSPORT_OPTIONS: { kind: McpTransportKind; label: string; hintKey: LocaleMessageKey }[] = [
@@ -92,6 +98,12 @@ const DEFAULT_FORM: FormState = {
   maxToolCount: '128',
   executionEnabled: true,
   executionMode: 'auto',
+  oauthEnabled: false,
+  oauthClientId: '',
+  oauthClientSecret: '',
+  oauthScopes: '',
+  oauthAuthorizationUrl: '',
+  oauthTokenUrl: '',
 };
 
 export default function McpPage() {
@@ -531,6 +543,55 @@ function McpServerForm({
               placeholder={'KEY=value\nTOKEN=...'}
             />
           </Field>
+        </SettingsSection>
+      )}
+
+      {isHttpTransportKind(form.transportKind) && (
+        <SettingsSection title={t('sidepanel.mcpPage.oauth.section')}>
+          <ToggleRow
+            title={t('sidepanel.mcpPage.oauth.enable')}
+            description={t('sidepanel.mcpPage.oauth.hint')}
+            enabled={form.oauthEnabled}
+            onToggle={(next) => update('oauthEnabled', next)}
+          />
+          {form.oauthEnabled && (
+            <>
+              <Field
+                label={t('sidepanel.mcpPage.oauth.clientId')}
+                hint={t('sidepanel.mcpPage.oauth.clientIdHint')}
+              >
+                <input
+                  value={form.oauthClientId}
+                  onChange={(event) => update('oauthClientId', event.target.value)}
+                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                  placeholder="client-id"
+                />
+              </Field>
+              <Field
+                label={t('sidepanel.mcpPage.oauth.clientSecret')}
+                hint={t('sidepanel.mcpPage.oauth.clientSecretHint')}
+              >
+                <input
+                  type="password"
+                  value={form.oauthClientSecret}
+                  onChange={(event) => update('oauthClientSecret', event.target.value)}
+                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                  placeholder="********"
+                />
+              </Field>
+              <Field
+                label={t('sidepanel.mcpPage.oauth.scopes')}
+                hint={t('sidepanel.mcpPage.oauth.scopesHint')}
+              >
+                <input
+                  value={form.oauthScopes}
+                  onChange={(event) => update('oauthScopes', event.target.value)}
+                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                  placeholder="mcp.read mcp.write"
+                />
+              </Field>
+            </>
+          )}
         </SettingsSection>
       )}
 
@@ -1197,6 +1258,12 @@ function formFromServer(server: McpServerConfig): FormState {
     maxToolCount: String(server.limits.maxToolCount),
     executionEnabled: server.execution.enabled,
     executionMode: server.execution.mode,
+    oauthEnabled: server.oauth?.enabled ?? false,
+    oauthClientId: server.oauth?.clientId ?? '',
+    oauthClientSecret: server.oauth?.clientSecret ?? '',
+    oauthScopes: (server.oauth?.scopes ?? []).join(' '),
+    oauthAuthorizationUrl: server.oauth?.authorizationUrl ?? '',
+    oauthTokenUrl: server.oauth?.tokenUrl ?? '',
   };
 }
 
@@ -1230,6 +1297,17 @@ function payloadFromForm(
   const secretsResult = normalizeSecrets(form.secrets, t);
   if ('error' in secretsResult) return secretsResult;
 
+  const oauth = form.oauthEnabled && isHttpTransportKind(form.transportKind)
+    ? {
+      enabled: true,
+      clientId: form.oauthClientId.trim() || undefined,
+      clientSecret: form.oauthClientSecret.trim() || undefined,
+      scopes: form.oauthScopes.split(/\s+/).filter(Boolean),
+      authorizationUrl: form.oauthAuthorizationUrl.trim() || undefined,
+      tokenUrl: form.oauthTokenUrl.trim() || undefined,
+    }
+    : undefined;
+
   return {
     payload: {
       displayName,
@@ -1237,6 +1315,7 @@ function payloadFromForm(
       transport: transportResult.transport,
       headers: headersResult.headers,
       secrets: secretsResult.secrets,
+      oauth,
       timeouts: timeouts as { connectMs: number; requestMs: number; discoveryMs: number },
       limits: limits as { maxResultBytes: number; maxToolCount: number },
       allowlist: {
@@ -1657,6 +1736,10 @@ function nativeSetupMessage(
     return { message: t(`${setupKey}.disabled` as LocaleMessageKey), isError: false };
   }
   return { message: t(`${setupKey}.installFirst` as LocaleMessageKey), isError: false };
+}
+
+function isHttpTransportKind(kind: McpTransportKind): boolean {
+  return kind === 'http' || kind === 'sse' || kind === 'streamable_http';
 }
 
 function transportLabel(kind: McpTransportKind): string {
