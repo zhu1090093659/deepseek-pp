@@ -651,6 +651,8 @@ export const sidepanel = {
       clientSecretHint: '仅机密客户端需要；公共客户端可留空。',
       scopes: 'Scopes',
       scopesHint: '以空格分隔。留空则使用服务声明的作用域。',
+      redirectUri: '重定向 URI',
+      redirectUriHint: '请将此 URI 精确注册到服务方的 OAuth 应用。使用静态 Client ID 时必填；动态客户端注册会自动使用它。',
       authorize: '授权',
       reauthorize: '重新授权',
       disconnect: '断开连接',

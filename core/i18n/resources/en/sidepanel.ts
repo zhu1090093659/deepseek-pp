@@ -651,6 +651,8 @@ export const sidepanel = {
       clientSecretHint: 'Only for confidential clients. Public clients can leave this empty.',
       scopes: 'Scopes',
       scopesHint: 'Space-separated. Leave empty to use the scopes advertised by the server.',
+      redirectUri: 'Redirect URI',
+      redirectUriHint: 'Register this exact URI in the OAuth app. Required with a static client ID; dynamic client registration uses it automatically.',
       authorize: 'Authorize',
       reauthorize: 'Re-authorize',
       disconnect: 'Disconnect',

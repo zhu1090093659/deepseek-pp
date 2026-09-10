@@ -426,6 +426,13 @@ function McpServerForm({
   };
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const oauthRedirectUri = (() => {
+    try {
+      return chrome?.identity?.getRedirectURL?.() ?? '';
+    } catch {
+      return '';
+    }
+  })();
 
   return (
     <div className="ds-form rounded-lg p-3 space-y-3">
@@ -588,6 +595,18 @@ function McpServerForm({
                   onChange={(event) => update('oauthScopes', event.target.value)}
                   className="ds-input w-full rounded-lg px-3 py-2 text-sm"
                   placeholder="mcp.read mcp.write"
+                />
+              </Field>
+              <Field
+                label={t('sidepanel.mcpPage.oauth.redirectUri')}
+                hint={t('sidepanel.mcpPage.oauth.redirectUriHint')}
+              >
+                <input
+                  readOnly
+                  value={oauthRedirectUri}
+                  onFocus={(event) => event.target.select()}
+                  className="ds-input w-full rounded-lg px-3 py-2 text-sm"
+                  style={{ fontFamily: 'monospace' }}
                 />
               </Field>
             </>
