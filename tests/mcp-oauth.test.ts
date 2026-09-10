@@ -16,7 +16,12 @@ import {
 } from '../core/mcp/oauth-service';
 import { createMcpServer, getMcpServerById, updateMcpServer } from '../core/mcp/store';
 import { decodeMcpStorageState, encodeMcpStorageState } from '../core/mcp/storage-codec';
-import { resolveMcpRequestHeaders, shouldRetryMcpUnauthorized } from '../core/mcp/transports/auth';
+import {
+  describeMcpOAuthFailure,
+  resolveMcpRequestHeaders,
+  shouldRetryMcpUnauthorized,
+} from '../core/mcp/transports/auth';
+import { isRecoverableOAuthGrantError } from '../core/mcp/discovery';
 import type { McpServerConfig } from '../core/mcp/types';
 import type { SyncIdentityPort } from '../core/sync/identity-port';
 
@@ -744,5 +749,266 @@ describe('OAuth redaction sentinel handling', () => {
     const body = String(fetchMock.mock.calls[0][1]?.body);
     expect(body).toContain('grant_type=refresh_token');
     expect(body).not.toContain('client_secret');
+  });
+});
+
+describe('OAuth 401 after a successful refresh', () => {
+  beforeEach(() => {
+    stubChromeStorage();
+  });
+
+  it('keeps the granted scopes on the refresh request', async () => {
+    // Regression: a refresh that silently drops `scope` can return a token the
+    // resource server refuses with 401 even though the token endpoint answered
+    // 200. The scopes must be re-requested exactly as granted.
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      access_token: 'scoped-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        resource: 'https://mcp.example.com/mcp',
+        scopes: ['mcp.read', 'mcp.write'],
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer scoped-access');
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain('scope=mcp.read+mcp.write');
+    expect(body).toContain('resource=https%3A%2F%2Fmcp.example.com%2Fmcp');
+  });
+
+  it('describes the OAuth state so a surviving 401 is diagnosable', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        resource: 'https://mcp.example.com/mcp',
+      },
+    });
+
+    const description = describeMcpOAuthFailure(server);
+    expect(description).toContain('oauthEnabled=true');
+    expect(description).toContain('hasRefreshToken=true');
+    expect(description).toContain('tokenUrl=set');
+    expect(description).toContain('clientId=set');
+    expect(description).toContain('resource=https://mcp.example.com/mcp');
+  });
+
+  it('reports a redacted refresh token as absent in the failure description', () => {
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        refreshToken: '********',
+      },
+    });
+
+    const description = describeMcpOAuthFailure(server);
+    expect(description).toContain('hasRefreshToken=false');
+    expect(description).toContain('tokenUrl=unset');
+  });
+});
+
+describe('recoverable OAuth grant failures', () => {
+  it('treats a rejected refresh and a rejected access token as recoverable', () => {
+    // Both mean the stored grant is dead and only a fresh consent helps.
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_refresh_failed' })).toBe(true);
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_invalid_token' })).toBe(true);
+  });
+
+  it('does not treat a missing authorization as a dead grant', () => {
+    // No refresh token at all is a different state: ask the user to authorize,
+    // do not silently relaunch the consent window.
+    expect(isRecoverableOAuthGrantError({ code: 'mcp_oauth_authorization_required' })).toBe(false);
+    expect(isRecoverableOAuthGrantError(null)).toBe(false);
+    expect(isRecoverableOAuthGrantError('boom')).toBe(false);
+  });
+});
+
+describe('refresh token rotation', () => {
+  it('hands a rotated refresh token to the caller for persistence', async () => {
+    // Notion rotates the refresh token on every refresh. If the new token is
+    // not persisted, the next refresh sends a consumed token and the endpoint
+    // answers invalid_grant, which no refresh can recover from.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'rotated-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+      refresh_token: 'rotated-refresh',
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'original-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+    const persisted: string[] = [];
+
+    await expect(resolveMcpOAuthAuthorization(server, {
+      onRefreshTokenRotated: (token) => {
+        persisted.push(token);
+      },
+    })).resolves.toBe('Bearer rotated-access');
+
+    expect(persisted).toEqual(['rotated-refresh']);
+  });
+
+  it('does not report a rotation when the provider keeps the same token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'same-access',
+      token_type: 'Bearer',
+      expires_in: 3_600,
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'original-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+    const onRefreshTokenRotated = vi.fn();
+
+    await resolveMcpOAuthAuthorization(server, { onRefreshTokenRotated });
+
+    expect(onRefreshTokenRotated).not.toHaveBeenCalled();
+  });
+});
+
+describe('authorization fingerprint', () => {
+  it('fingerprint the minting client id so a persisted token is reused, not refreshed', async () => {
+    // Regression: on first authorization the config has no clientId yet
+    // (dynamic registration just created it). Fingerprinting server.oauth at
+    // that moment hashes '' and every later resolve sees a different
+    // fingerprint, forcing a needless refresh right after a successful consent.
+    stubChromeStorage();
+    const identity = createIdentity();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/register')) {
+        return jsonResponse({ client_id: 'registered-client' });
+      }
+      // token endpoint
+      const body = String(init?.body ?? '');
+      if (body.includes('grant_type=authorization_code')) {
+        return jsonResponse({
+          access_token: 'fresh-access',
+          token_type: 'Bearer',
+          expires_in: 3_600,
+          refresh_token: 'fresh-refresh',
+        });
+      }
+      return jsonResponse({ error: 'invalid_grant' }, 400);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // First authorization: no clientId configured yet.
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        registrationUrl: 'https://auth.example.com/register',
+        scopes: ['mcp.read'],
+      },
+    });
+    const authorized = await authorizeMcpServer(server, { identity: identity.identity });
+    expect(authorized.accessToken).toBe('fresh-access');
+    expect(authorized.oauthPatch.clientId).toBe('registered-client');
+
+    // Simulate persisting the discovered config, then resolving headers again.
+    const persisted = createServer({
+      oauth: {
+        enabled: true,
+        ...server.oauth,
+        ...authorized.oauthPatch,
+        refreshToken: authorized.refreshToken,
+      },
+    });
+    const callsAfterAuthorize = fetchMock.mock.calls.length;
+
+    await expect(resolveMcpOAuthAuthorization(persisted)).resolves.toBe('Bearer fresh-access');
+    // No extra refresh: the cached token's fingerprint matches the persisted clientId.
+    expect(fetchMock.mock.calls.length).toBe(callsAfterAuthorize);
+  });
+});
+
+describe('authorization scheme normalization', () => {
+  it('normalizes a lowercase token_type to the Bearer scheme', async () => {
+    // Some providers answer token_type: "bearer". A strict resource server
+    // rejects `Authorization: bearer <token>` with invalid_token, so the header
+    // must always use the RFC 6750 scheme `Bearer`.
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      access_token: 'lowercase-type-token',
+      token_type: 'bearer',
+      expires_in: 3_600,
+    })));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        refreshToken: 'durable-refresh',
+        scopes: ['mcp.read'],
+      },
+    });
+
+    await expect(resolveMcpOAuthAuthorization(server)).resolves.toBe('Bearer lowercase-type-token');
+  });
+
+  it('normalizes a lowercase token_type on the interactive authorization path', async () => {
+    stubChromeStorage();
+    const identity = createIdentity();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = String(init?.body ?? '');
+      if (body.includes('grant_type=authorization_code')) {
+        return jsonResponse({
+          access_token: 'interactive-lowercase',
+          token_type: 'bearer',
+          expires_in: 3_600,
+          refresh_token: 'fresh-refresh',
+        });
+      }
+      return jsonResponse({ error: 'unexpected' }, 400);
+    }));
+    const server = createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        scopes: ['mcp.read'],
+      },
+    });
+
+    const authorized = await authorizeMcpServer(server, { identity: identity.identity });
+    expect(authorized.accessToken).toBe('interactive-lowercase');
+    await expect(resolveMcpOAuthAuthorization(createServer({
+      oauth: {
+        enabled: true,
+        clientId: 'client-123',
+        authorizationUrl: 'https://auth.example.com/authorize',
+        tokenUrl: 'https://auth.example.com/token',
+        scopes: ['mcp.read'],
+      },
+    }))).resolves.toBe('Bearer interactive-lowercase');
   });
 });

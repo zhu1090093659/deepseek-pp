@@ -148,14 +148,25 @@ function isTokenFresh(entry: CachedOAuthToken): boolean {
  */
 export async function resolveMcpOAuthAuthorization(
   server: McpServerConfig,
-  options: { interactive?: boolean; signal?: AbortSignal; identity?: SyncIdentityPort | null } = {},
+  options: {
+    interactive?: boolean;
+    signal?: AbortSignal;
+    identity?: SyncIdentityPort | null;
+    /**
+     * Called when a refresh rotates the refresh token. Authorization servers
+     * that rotate invalidate the previous token, so the caller must persist the
+     * new one or the next refresh sends a consumed token and fails with
+     * `invalid_grant`.
+     */
+    onRefreshTokenRotated?: (refreshToken: string) => void | Promise<void>;
+  } = {},
 ): Promise<string | null> {
   if (!isMcpOAuthEnabled(server)) return null;
 
   const cached = tokenCache.get(server.id);
   const fingerprint = await fingerprintCredentials(server.oauth);
   if (cached && cached.credentialFingerprint === fingerprint && isTokenFresh(cached)) {
-    return `${cached.tokenType || 'Bearer'} ${cached.accessToken}`;
+    return `${toAuthorizationScheme(cached.tokenType)} ${cached.accessToken}`;
   }
 
   // Try a transparent refresh when a durable refresh token exists.
@@ -164,7 +175,13 @@ export async function resolveMcpOAuthAuthorization(
     try {
       const refreshed = await refreshAccessToken(server, refreshToken, fingerprint, options.signal);
       tokenCache.set(server.id, refreshed);
-      return `${refreshed.tokenType || 'Bearer'} ${refreshed.accessToken}`;
+      // Persist a rotated refresh token before returning: otherwise the next
+      // refresh reuses the now-consumed token and the server answers
+      // invalid_grant, which no amount of refreshing can recover from.
+      if (refreshed.refreshToken && refreshed.refreshToken !== refreshToken) {
+        await options.onRefreshTokenRotated?.(refreshed.refreshToken);
+      }
+      return `${toAuthorizationScheme(refreshed.tokenType)} ${refreshed.accessToken}`;
     } catch (error) {
       invalidateMcpOAuthToken(server.id);
       if (!options.interactive) {
@@ -189,7 +206,7 @@ export async function resolveMcpOAuthAuthorization(
   }
 
   const { token: authorized } = await runInteractiveAuthorization(server, options);
-  return `${authorized.tokenType || 'Bearer'} ${authorized.accessToken}`;
+  return `${toAuthorizationScheme(authorized.tokenType)} ${authorized.accessToken}`;
 }
 
 /**
@@ -257,7 +274,19 @@ async function runInteractiveAuthorization(
   if (metadata.scopes.length > 0) authUrl.searchParams.set('scope', metadata.scopes.join(' '));
   if (metadata.resource) authUrl.searchParams.set('resource', metadata.resource);
 
-  const redirectUrl = await identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
+  let redirectUrl: string | undefined;
+  try {
+    redirectUrl = await identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
+  } catch (error) {
+    // chrome.identity throws here when the provider refuses to load the page
+    // (unregistered redirect URI, invalid client id, blocked endpoint). Surface
+    // the concrete URL and redirect URI so the misconfiguration is actionable.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpOAuthError(
+      'mcp_oauth_provider_error',
+      `MCP OAuth authorization page could not be loaded (${detail}). Redirect URI: ${redirectUri}. Authorization URL: ${authUrl.toString()}`,
+    );
+  }
   if (!redirectUrl) {
     throw new McpOAuthError('mcp_oauth_authorization_cancelled', 'MCP OAuth authorization was cancelled.');
   }
@@ -275,7 +304,11 @@ async function runInteractiveAuthorization(
     throw new McpOAuthError('mcp_oauth_missing_code', 'MCP OAuth provider did not return an authorization code.');
   }
 
-  const fingerprint = await fingerprintCredentials(server.oauth);
+  // Fingerprint the client id that actually minted this token. On the first
+  // authorization the config still has no clientId (dynamic registration just
+  // created it), so fingerprinting `server.oauth` would hash '' and every later
+  // resolve would see a different fingerprint and force an unnecessary refresh.
+  const fingerprint = await fingerprintClientId(clientId);
   const token = await exchangeCodeForToken(server, metadata, {
     code: parsed.code,
     codeVerifier,
@@ -315,6 +348,10 @@ async function refreshAccessToken(
     client_id: clientId,
   });
   if (hasRealMcpSecret(server.oauth?.clientSecret)) body.set('client_secret', server.oauth.clientSecret);
+  // Re-request the originally granted scopes. A refresh that silently drops
+  // them can come back with a token the resource server refuses (401) even
+  // though the token endpoint returned 200.
+  if (metadata.scopes.length > 0) body.set('scope', metadata.scopes.join(' '));
   if (metadata.resource) body.set('resource', metadata.resource);
 
   const payload = await postTokenForm(metadata.tokenUrl, body, 'mcp_oauth_refresh_failed', signal);
@@ -401,6 +438,39 @@ async function ensureClientId(
   return payload.client_id;
 }
 
+/**
+ * Fetch authorization-server metadata (RFC 8414). When the issuer carries a
+ * path, the well-known segment is inserted *before* it
+ * (https://host/.well-known/oauth-authorization-server/path). Dropping the path
+ * makes path-based issuers such as GitHub answer 404.
+ */
+async function fetchAuthorizationServerMetadata(
+  authorizationServer: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  let issuer: URL;
+  try {
+    issuer = new URL(authorizationServer);
+  } catch {
+    return null;
+  }
+  const suffix = issuer.pathname.replace(/\/$/, '');
+  const candidates = [
+    `${issuer.origin}/.well-known/oauth-authorization-server${suffix}`,
+    `${issuer.origin}/.well-known/openid-configuration${suffix}`,
+    new URL('/.well-known/oauth-authorization-server', issuer).toString(),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const metadata = await fetchJson(candidate, signal);
+      if (metadata) return metadata;
+    } catch {
+      // try the next well-known shape
+    }
+  }
+  return null;
+}
+
 async function resolveOAuthMetadata(
   server: McpServerConfig,
   signal?: AbortSignal,
@@ -426,11 +496,30 @@ async function resolveOAuthMetadata(
       'MCP OAuth metadata cannot be discovered without a service URL.',
     );
   }
-  const origin = new URL(endpoint).origin;
-  const protectedResource = await fetchJson(
+  const parsedEndpoint = new URL(endpoint);
+  const origin = parsedEndpoint.origin;
+  // RFC 9728 publishes protected-resource metadata under the well-known path
+  // *suffixed with the resource path* (e.g. .../oauth-protected-resource/mcp).
+  // The bare origin path is only a fallback; GitHub 404s on the bare form.
+  const candidates = [
+    `${origin}/.well-known/oauth-protected-resource${parsedEndpoint.pathname.replace(/\/$/, '')}`,
     `${origin}/.well-known/oauth-protected-resource`,
-    signal,
-  );
+  ];
+  let protectedResource: Record<string, unknown> | null = null;
+  for (const candidate of candidates) {
+    try {
+      protectedResource = await fetchJson(candidate, signal);
+    } catch {
+      protectedResource = null;
+    }
+    if (protectedResource) break;
+  }
+  if (!protectedResource) {
+    throw new McpOAuthError(
+      'mcp_oauth_metadata_failed',
+      `MCP OAuth protected-resource metadata could not be fetched from ${candidates.join(' or ')}.`,
+    );
+  }
   const authorizationServer = Array.isArray(protectedResource?.authorization_servers)
     ? protectedResource.authorization_servers.find((value): value is string => typeof value === 'string')
     : undefined;
@@ -440,8 +529,7 @@ async function resolveOAuthMetadata(
       'MCP OAuth protected-resource metadata did not advertise an authorization server.',
     );
   }
-  const metadataUrl = new URL('/.well-known/oauth-authorization-server', authorizationServer).toString();
-  const metadata = await fetchJson(metadataUrl, signal);
+  const metadata = await fetchAuthorizationServerMetadata(authorizationServer, signal);
   const authorizationUrl = pickString(metadata?.authorization_endpoint) ?? oauth.authorizationUrl;
   const tokenUrl = pickString(metadata?.token_endpoint) ?? oauth.tokenUrl;
   if (!authorizationUrl || !tokenUrl) {
@@ -627,6 +715,16 @@ function createRandomToken(): string {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
 }
 
+/**
+ * Normalize the token_type returned by the authorization server into a proper
+ * Authorization scheme. RFC 6750 fixes the scheme name as `Bearer`; some
+ * providers answer `token_type: "bearer"`, and strict resource servers reject
+ * `Authorization: bearer <token>` with `invalid_token`. Always emit `Bearer`.
+ */
+function toAuthorizationScheme(tokenType: string | undefined): string {
+  return tokenType?.toLowerCase() === 'bearer' ? 'Bearer' : (tokenType || 'Bearer');
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -643,7 +741,11 @@ function base64UrlEncode(bytes: Uint8Array): string {
  * would look like it belonged to different credentials.
  */
 async function fingerprintCredentials(oauth: McpOAuthConfig | undefined): Promise<string> {
-  const material = oauth?.clientId ?? '';
+  return fingerprintClientId(oauth?.clientId);
+}
+
+async function fingerprintClientId(clientId: string | undefined): Promise<string> {
+  const material = clientId ?? '';
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }

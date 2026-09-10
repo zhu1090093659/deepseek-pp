@@ -2,7 +2,7 @@ import {
   invalidateMcpOAuthToken,
   isMcpOAuthEnabled,
 } from '../oauth-client';
-import { resolveMcpRequestHeaders } from './auth';
+import { describeMcpOAuthFailure, resolveMcpRequestHeaders } from './auth';
 import type {
   McpJsonRpcNotification,
   McpJsonRpcRequest,
@@ -69,6 +69,13 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
     invalidateMcpOAuthToken(server.id);
     authHeaders = await resolveMcpRequestHeaders(server, { signal });
     sseResponse = await connect(authHeaders);
+    if (sseResponse.status === 401) {
+      const challenge = sseResponse.headers.get('www-authenticate') ?? '(no WWW-Authenticate header)';
+      throw new McpTransportError(
+        'mcp_sse_connect_failed',
+        `MCP SSE connect failed with HTTP 401. OAuth retry was still unauthorized (${describeMcpOAuthFailure(server)}). Server challenge: ${challenge}`,
+      );
+    }
   }
 
   if (!sseResponse.ok || !sseResponse.body) {

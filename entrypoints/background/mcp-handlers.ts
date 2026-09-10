@@ -34,7 +34,10 @@ export interface McpRuntimeHandlerDependencies {
   updateMcpServer(id: string, patch: McpServerUpdateInput): Promise<McpServerConfig | null>;
   deleteMcpServer(id: string): Promise<void>;
   getMcpToolCache(serverId: string): Promise<McpToolCacheEntry | null>;
-  refreshMcpServerDiscovery(serverId: string): Promise<McpToolCacheEntry>;
+  refreshMcpServerDiscovery(
+    serverId: string,
+    options?: { cacheTtlMs?: number; signal?: AbortSignal; allowInteractiveOAuth?: boolean },
+  ): Promise<McpToolCacheEntry>;
   getMcpOAuthStatusForServer(serverId: string): Promise<McpOAuthStatus | null>;
   authorizeMcpOAuthServer(serverId: string): Promise<McpOAuthAuthorizationResponse>;
   disconnectMcpOAuthServer(serverId: string): Promise<{ ok: true }>;
@@ -91,7 +94,11 @@ export function createMcpRuntimeHandlers(
       dependencies.getMcpToolCache(payload.serverId)
     )),
     defineToolPayloadRuntimeCommandHandler('REFRESH_MCP_SERVER_TOOLS', async (payload, context) => {
-      const cache = await dependencies.refreshMcpServerDiscovery(payload.serverId);
+      // The user pressed "Refresh tools": if the stored OAuth grant is dead the
+      // only fix is a fresh consent, so allow one interactive re-authorization.
+      const cache = await dependencies.refreshMcpServerDiscovery(payload.serverId, {
+        allowInteractiveOAuth: true,
+      });
       await notifyMcpAndTools(context.tabId);
       return cache;
     }),
@@ -113,7 +120,9 @@ export function createMcpRuntimeHandlers(
       }
     }),
     defineToolPayloadRuntimeCommandHandler('TEST_MCP_SERVER_CONNECTION', async (payload, context) => {
-      const cache = await dependencies.refreshMcpServerDiscovery(payload.serverId);
+      const cache = await dependencies.refreshMcpServerDiscovery(payload.serverId, {
+        allowInteractiveOAuth: true,
+      });
       await notifyMcpAndTools(context.tabId);
       return {
         ok: cache.health.status === 'ready',
