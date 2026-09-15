@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildContinuationPrompt,
   buildNudgePrompt,
+  buildResumePrompt,
   INLINE_AGENT_CONTINUATION_PLACEHOLDER,
   normalizeInlineAgentFinalAnswerText,
 } from '../core/inline-agent/prompt';
@@ -184,6 +185,21 @@ describe('inline-agent output compatibility contract', () => {
     );
 
     expectUtf8Golden('inline/continuation-and-nudge.txt', `continuation:\n${continuation}\n\nnudge:\n${nudge}`);
+  });
+
+  it('freezes exact resume prompt bytes for auto-resume after interrupted turns', () => {
+    const resume = buildResumePrompt(
+      'Verify the compatibility contract and report exact evidence.',
+      1,
+      'en',
+    );
+    const resumeZh = buildResumePrompt(
+      '验证兼容性契约并报告证据。',
+      3,
+      'zh-CN',
+    );
+
+    expectUtf8Golden('inline/resume.txt', `resume:\n${resume}\n\nresume-zh:\n${resumeZh}`);
   });
 
   it('freezes truncation boundaries without storing oversized golden text', () => {

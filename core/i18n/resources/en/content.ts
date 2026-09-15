@@ -101,6 +101,7 @@ export const content = {
     consolePaused: 'Paused · {steps} steps · {tools} tool calls · {seconds}s',
     consoleError: 'Error · {steps} steps · {tools} tool calls · {seconds}s',
     toolGroup: 'Ran {count} tool calls',
+    toolDeadline: 'Tool call timed out after 3 minutes and was skipped.',
     reasoningStep: 'Thought · step {step}',
     reasoningNotPersisted: 'The thinking process for this step is not retained in the message stream.',
     codeRun: 'Run',

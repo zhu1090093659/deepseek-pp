@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runDeepSeekAutomation } from '../core/automation/runner';
+import type { AutomationExecutionContext } from '../core/automation/execution';
 import type { AutomationRunnerRequest } from '../core/automation/types';
 import type { DeepSeekAutomationClient } from '../core/deepseek/automation-client-port';
 import type { ToolDescriptor, ToolResult } from '../core/types';
@@ -103,6 +104,39 @@ describe('runDeepSeekAutomation PoW handling', () => {
       parentMessageId: 101,
       powHeaders: { 'X-DS-PoW-Response': 'pow-2' },
     });
+  });
+
+  it('passes only the execution signal for PoW and leaves the deadline to the shared client layer', async () => {
+    adapterMocks.submitPrompt.mockResolvedValue({
+      assistantText: 'Done.',
+      responseMessageId: 101,
+      requestMessageId: 100,
+      finished: true,
+    });
+    const controller = new AbortController();
+    const execution: AutomationExecutionContext = {
+      runId: 'run-1',
+      automationId: 'automation-1',
+      deadlineAt: Number.MAX_SAFE_INTEGER,
+      attempt: 1,
+      signal: controller.signal,
+      createIdempotencyKey: (scope) => `automation:run-1:${scope}`,
+      assertActive: () => undefined,
+    };
+
+    const result = await runDeepSeekAutomation(createRequest(), {
+      executeToolCall: vi.fn(async (): Promise<ToolResult> => ({
+        ok: true,
+        summary: 'unused',
+      })),
+      deepSeekClient,
+      execution,
+    });
+
+    expect(result.ok).toBe(true);
+    // The runner's context carries only the signal; the shared client layer
+    // derives the default PoW deadline from DEEPSEEK_POW_DEADLINE_MS.
+    expect(adapterMocks.createPowHeaders.mock.calls[0][1]).toEqual({ signal: controller.signal });
   });
 });
 

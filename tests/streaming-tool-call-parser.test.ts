@@ -59,6 +59,21 @@ describe('createStreamingToolCallParser', () => {
     expect(result.completed[0].payload).toMatchObject({ filename: 'a.txt', content: 'ok' });
   });
 
+  it('fail-fasts a foreign-closed call into failed and parses the following block', () => {
+    const parser = createStreamingToolCallParser(descriptors);
+    const start = parser.append('<artifact_create>');
+    const result = parser.append('{"filename":"a.txt"}</invoke><artifact_create>{"filename":"b.txt","content":"ok"}</artifact_create>');
+
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({
+      id: start.started[0].id,
+      invocationName: 'artifact_create',
+      parseError: { code: 'tool_call_close_mismatched', retryable: false },
+    });
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0].payload).toMatchObject({ filename: 'b.txt', content: 'ok' });
+  });
+
   it('accepts whitespace-padded tool tags across chunks', () => {
     const parser = createStreamingToolCallParser(descriptors);
     const html = '<!doctype html><canvas id="stage"></canvas>' + '<script>draw()</script>'.repeat(2000);

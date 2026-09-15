@@ -1,0 +1,15 @@
+resume:
+Your previous response was interrupted mid-stream. Continue exactly where you left off; do not repeat completed work.
+This is stream-interruption resume attempt 1.
+
+<original_task>
+Verify the compatibility contract and report exact evidence.
+</original_task>
+
+resume-zh:
+你之前的回复在流式输出中途被打断。请从上次中断的地方继续，不要重复已完成的工作。
+这是第 3 次流中断续跑。
+
+<original_task>
+验证兼容性契约并报告证据。
+</original_task>

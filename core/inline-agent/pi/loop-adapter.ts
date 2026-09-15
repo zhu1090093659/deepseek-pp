@@ -35,7 +35,7 @@ import type { ToolCall, ToolDescriptor, ToolExecutionRecord, ToolProviderIdentit
 import { createClientHeaders } from '../../deepseek/adapter';
 import { getDeepSeekApiKey } from '../../chat/api-key';
 import { getOfficialApiChatConfig } from '../../chat/official-api-config';
-import { createDeepSeekTurnSubmitter } from './deepseek-stream-fn';
+import { createDeepSeekTurnSubmitter, isDeepSeekInterruptedTurnError } from './deepseek-stream-fn';
 import { createDeepSeekWebProvider, deepSeekWebProviderToStreamFn } from './deepseek-web-provider';
 import { createDeepSeekApiProvider, createDeepSeekApiMessageMapper, deepSeekApiProviderToStreamFn } from './official-api-provider';
 import type { DeepSeekSessionState, DeepSeekStreamFnDeps } from './stream-fn-port';
@@ -47,6 +47,7 @@ import {
 import {
   buildContinuationPrompt,
   buildNudgePrompt,
+  buildResumePrompt,
   extractTaskCompleteSignal,
   shouldNudge,
 } from '../prompt';
@@ -58,7 +59,7 @@ import type {
   InlineAgentStreamChunkMsg,
   InlineAgentToolDetectedMsg,
 } from '../types';
-import { INLINE_AGENT_MAX_STEPS } from '../types';
+import { INLINE_AGENT_MAX_RESUMES, INLINE_AGENT_MAX_STEPS } from '../types';
 import { waitBetweenDeepSeekRequests } from '../step-control';
 
 export type PostFn = (type: string, data: unknown) => void;
@@ -112,6 +113,14 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     nudgedInStep: false, // this step already consumed its single nudge
     count: 0, // total nudges issued (token-speed request ids)
     lastAssistantText: '',
+  };
+  // Auto-resume (fix/v1.14.1-tool-loop): the engine run now starting
+  // continues an interrupted turn. `active` is a one-shot flag: the resumed
+  // run's first DeepSeek request serializes the resume prompt, and steering
+  // stays quiet until that run's first turn has ended (see `turn_end`).
+  const resume = {
+    active: false,
+    count: 0, // resumes issued so far (drives the resume prompt's attempt line)
   };
 
   let stepIndex = 0; // completed steps (0-based index of the current step)
@@ -228,6 +237,13 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       submitTurn: submitter,
       session,
       serializePrompt: () => {
+        // Auto-resume: the resumed run's first DS request carries the resume
+        // prompt instead of continuation bytes. The flag clears on that
+        // run's first `turn_end`, so later requests keep the released
+        // continuation/nudge semantics.
+        if (resume.active) {
+          return buildResumePrompt(payload.originalPrompt, resume.count, locale);
+        }
         if (nudge.active) {
           nudge.active = false;
           nudge.currentTurnIsNudge = true;
@@ -359,6 +375,10 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       // The pi loop polls steering before the first turn too; the released
       // nudge semantics only apply after a real turn has run.
       if (turnsElapsed === 0) return [];
+      // A resumed run opens with the resume prompt as its user message; the
+      // engine's pre-first-turn steering poll must not stack a nudge on top
+      // of it (the resume prompt IS the steering for that turn).
+      if (resume.active) return [];
       if (!lastTurnHasTools && !nudge.nudgedInStep && hasContinuableChain()
         && !extractTaskCompleteSignal(lastTurnText)
         && shouldNudge(
@@ -458,6 +478,11 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         break;
       }
       case 'turn_end': {
+        // The resume prompt is a one-shot for the resumed run's first
+        // request; from this turn's end on, continuation/nudge semantics
+        // apply again. Cleared before the error branch so a resumed run that
+        // dies again starts its next gate evaluation clean.
+        resume.active = false;
         turnsElapsed += 1;
         const turnMessage = event.message as AssistantMessage;
         if (turnMessage.stopReason === 'error' || turnMessage.stopReason === 'aborted') {
@@ -489,7 +514,9 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         break;
       }
       case 'agent_end':
-        finalize();
+        // Finalization is the auto-resume driver's job: after the engine
+        // settles, the driver decides between finalize and one more resume
+        // run (see the run section below).
         break;
       default:
         break;
@@ -540,20 +567,80 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   };
 
   // ------------------------------------------------------------------- run
+  // Auto-resume driver (fix/v1.14.1-tool-loop): each engine run is one
+  // `runAgentLoop` call. An interrupted turn (server cut / timeout after
+  // streamed chunks / PoW failure) leaves the conversation chain continuable
+  // — `session.parentMessageId` is only committed on success — so instead of
+  // ending the run as AGENT_LOOP_ERROR, a FRESH engine run may continue it
+  // with a resume prompt, capped at INLINE_AGENT_MAX_RESUMES and gated below
+  // (never after abort, tool executions in the dead step, or a nudge turn).
+  // Thrown errors (e.g. a `shouldStopAfterTurn` chain refusal) are never
+  // resume-eligible: they bypass the gate entirely via the catch below.
   try {
-    const initialMessage: Message = {
+    let nextMessages: Message[] = [{
       role: 'user',
       content: payload.originalPrompt,
       timestamp: Date.now(),
-    };
-    await runAgentLoop(
-      [initialMessage],
-      { systemPrompt: '', messages: [], tools: piTools },
-      config,
-      handleEvent,
-      signal,
-      pacedStreamFn,
-    );
+    }];
+    let resumeCount = 0;
+    for (;;) {
+      // Per-run error bookkeeping: only the error of the run that just
+      // streamed may drive the gate below (a successful resumed run must
+      // finalize as complete, not inherit the interrupted run's error).
+      lastTurnWasError = false;
+      lastErrorMessage = '';
+      await runAgentLoop(
+        nextMessages,
+        { systemPrompt: '', messages: [], tools: piTools },
+        config,
+        handleEvent,
+        signal,
+        pacedStreamFn,
+      );
+      if (finalizeDone) break; // engine already finalized (defensive)
+      if (!lastTurnWasError) {
+        finalize();
+        break;
+      }
+      if (signal.aborted) {
+        finalize(); // silent abort — NEVER resume
+        break;
+      }
+      const resumeEligible =
+        resumeCount < INLINE_AGENT_MAX_RESUMES
+        && isDeepSeekInterruptedTurnError(lastErrorMessage)
+        && executedInStep.length === 0 // no tool executions in the dead step — no double execution
+        && !nudge.currentTurnIsNudge;
+      if (!resumeEligible) {
+        finalize(); // posts AGENT_LOOP_ERROR with the classified message
+        break;
+      }
+      // Resume: a fresh engine run continues the chain at the same step
+      // index (the interrupted step never posted STEP_COMPLETE). Per-step
+      // bookkeeping resets; stepIndex, turnsElapsed, collectedExecutions and
+      // the session chain carry over, and the resume request is paced like
+      // any continuation (requestCount persists).
+      resumeCount += 1;
+      nudge.nudgedInStep = false;
+      nudge.currentTurnIsNudge = false;
+      lastStepCompleted = false;
+      stepText = '';
+      lastPostedText = '';
+      executedInStep.length = 0;
+      resume.active = true;
+      resume.count = resumeCount;
+      // The resumed run's own `turn_start` re-posts AGENT_STEP_STARTED at
+      // the same stepIndex; upsert-by-index (content.ts/renderer.ts)
+      // replaces the dead streaming step in DOM and trace — no new event
+      // types. `postStreamChunk('')` is a no-op safety flush that keeps the
+      // next stream chunk posting.
+      postStreamChunk('');
+      nextMessages = [{
+        role: 'user',
+        content: buildResumePrompt(payload.originalPrompt, resumeCount, locale),
+        timestamp: Date.now(),
+      }];
+    }
   } catch (err) {
     if (finalizeDone) return;
     finalizeDone = true;

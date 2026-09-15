@@ -78,6 +78,15 @@ import { shouldIgnoreEmptyTokenSpeedProgress } from "../core/deepseek/stream-met
 import { readDeepSeekChatSessionId } from "../core/deepseek/chat-session";
 import { createUsageProgressWriteCoordinator } from "../core/usage/progress-write-coordinator";
 import { runInlineAgentLoop } from "../core/inline-agent/loop";
+import {
+  closeInterruptedTrace,
+  type CloseInterruptedTraceOptions,
+} from "../core/inline-agent/trace-status";
+import {
+  isToolDeadlineTimeout,
+  raceWithDeadline,
+  shapeToolDeadlineTimeout,
+} from "../core/inline-agent/step-control";
 import { waitForInlineAgentLiveTarget } from "../core/inline-agent/live-target-wait";
 import {
   isInlineAgentNativeHistoryBackedTrace,
@@ -117,6 +126,7 @@ import type {
   InlineAgentTraceRecord,
   InlineAgentTraceStepRecord,
 } from "../core/inline-agent/types";
+import { INLINE_AGENT_TOOL_CALL_TIMEOUT_MS } from "../core/inline-agent/types";
 import {
   injectInlineAgentStyles,
   removeInlineAgentStyles,
@@ -4750,6 +4760,15 @@ function isInlineAgentRunning(): boolean {
  * stream settles (issue #298).
  */
 function teardownInlineAgentPanel(): void {
+  // A superseded run must not stay `running` in storage forever: close its
+  // trace with the existing 'stopping' terminal status before the live
+  // bookkeeping is dropped (Task 6 zombie-census fix).
+  if (activeInlineAgentTrace && activeInlineAgentTrace.status === "running") {
+    updateActiveInlineAgentTrace(
+      (trace) => closeInterruptedTrace(trace, contentT("content.agent.stopped")),
+      { immediate: true },
+    );
+  }
   flushPendingInlineAgentStreamRender();
   stopAgentConsoleTimer();
   pendingAgentReasoningByStep.clear();
@@ -4880,7 +4899,26 @@ async function startInlineAgentLoop(
         runId: payload.loopId,
       },
     });
-    const result = await executeToolCall(enrichedCall, authorization.id);
+    const outcome = await raceWithDeadline(
+      executeToolCall(enrichedCall, authorization.id),
+      abort.signal,
+      INLINE_AGENT_TOOL_CALL_TIMEOUT_MS,
+    );
+    if (isToolDeadlineTimeout(outcome)) {
+      // Deadline expiry (fix/v1.14.1-tool-loop): fail the tool with a normal
+      // error record so the pi loop continues instead of freezing at
+      // `executing_tools` forever behind a stranded background handler.
+      return {
+        name: call.name,
+        result: shapeToolDeadlineTimeout(
+          enrichedCall,
+          contentT("content.agent.toolDeadline"),
+        ),
+        provider: call.provider,
+        descriptorId: call.descriptorId,
+      };
+    }
+    const result = outcome;
     return {
       name: result.name ?? call.name,
       result: {
@@ -5252,7 +5290,18 @@ async function handleAgentLoopComplete(
   msg: InlineAgentLoopCompleteMsg,
   modelBackend: InlineAgentModelBackend,
 ): Promise<boolean> {
-  if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return false;
+  if (msg.loopId !== inlineAgentLoopId) {
+    // Stale terminal event (the loop was superseded): close the persisted
+    // trace so storage does not keep a `running` zombie row (Task 6).
+    observeReportedPersistence(
+      closePersistedInlineAgentTraceByLoopId(
+        msg.loopId,
+        contentT("content.agent.stopped"),
+      ),
+    );
+    return false;
+  }
+  if (!inlineAgentContainer) return false;
   stopAgentConsoleTimer();
   removeAgentStartingElement();
   flushPendingInlineAgentStreamRender();
@@ -5404,7 +5453,18 @@ function appendInlineAgentNarration(
 }
 
 function handleAgentLoopError(msg: InlineAgentLoopErrorMsg): void {
-  if (msg.loopId !== inlineAgentLoopId || !inlineAgentContainer) return;
+  if (msg.loopId !== inlineAgentLoopId) {
+    // Stale error event (the loop was superseded): persist the failure on the
+    // stored trace with the existing 'error' status (Task 6).
+    observeReportedPersistence(
+      closePersistedInlineAgentTraceByLoopId(msg.loopId, msg.error, {
+        status: "error",
+        totalSteps: msg.stepIndex,
+      }),
+    );
+    return;
+  }
+  if (!inlineAgentContainer) return;
   stopAgentConsoleTimer();
   removeAgentStartingElement();
   flushPendingInlineAgentStreamRender();
@@ -6423,6 +6483,27 @@ async function getPersistedInlineAgentTraces(): Promise<
   );
 }
 
+/**
+ * A terminal event whose loopId no longer matches the active loop belongs to
+ * a superseded run; its persisted trace must still be closed, otherwise the
+ * record stays `running` forever (zombie census rows). Idempotent:
+ * `closeInterruptedTrace` only flips `running` records, so repeated stale
+ * events for the same loop write nothing. Bounded (one storage read, at most
+ * one upsert) and intended for fire-and-forget use via
+ * {@link observeReportedPersistence}.
+ */
+async function closePersistedInlineAgentTraceByLoopId(
+  loopId: string,
+  error: string,
+  options: CloseInterruptedTraceOptions = {},
+): Promise<void> {
+  const traces = await getPersistedInlineAgentTraces();
+  const trace = traces.find((item) => item.loopId === loopId);
+  if (!trace) return;
+  const updated = closeInterruptedTrace(trace, error, options);
+  if (updated !== trace) await writeInlineAgentTrace(updated);
+}
+
 function sanitizeInlineAgentTraceForStorage(
   trace: InlineAgentTraceRecord,
 ): InlineAgentTraceRecord {
@@ -6474,10 +6555,14 @@ async function restorePersistedInlineAgentTraces(
       restoredInlineAgentTraces.has(trace.id)
     )
       continue;
-    restoredInlineAgentTraces.set(
-      trace.id,
-      normalizeRestoredInlineAgentTrace(trace),
-    );
+    const normalized = normalizeRestoredInlineAgentTrace(trace);
+    restoredInlineAgentTraces.set(trace.id, normalized);
+    // The in-memory repair must also reach storage: without this write the
+    // record keeps `status: 'running'` on disk forever (Task 6). Written once
+    // per trace — the restored-set dedupe above makes it idempotent.
+    if (trace.status === "running") {
+      observeReportedPersistence(writeInlineAgentTrace(normalized));
+    }
     pendingRestoredInlineAgentTraceIds.add(trace.id);
     changed = true;
   }

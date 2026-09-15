@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildContinuationPrompt,
   buildNudgePrompt,
+  buildResumePrompt,
   isInlineAgentContinuationPrompt,
   isInlineAgentContinuationStructure,
   normalizeInlineAgentFinalAnswerText,
@@ -314,6 +315,32 @@ describe('inline-agent model prompts', () => {
     expect(chinese).toContain('这是第 1 次无工具调用纠偏。');
   });
 
+  it('builds resume prompts with the original task framing and no nudge semantics', () => {
+    const english = buildResumePrompt('Research quarterly data', 1, 'en');
+    const chinese = buildResumePrompt('调研季度数据', 2, 'zh-CN');
+
+    expect(english).toContain(
+      'Your previous response was interrupted mid-stream. Continue exactly where you left off; do not repeat completed work.',
+    );
+    expect(english).toContain('This is stream-interruption resume attempt 1.');
+    expect(chinese).toContain('你之前的回复在流式输出中途被打断');
+    expect(chinese).toContain('这是第 2 次流中断续跑。');
+    for (const prompt of [english, chinese]) {
+      expect(prompt).toContain('<original_task>');
+      expect(prompt).toContain('</original_task>');
+      // Nudge semantics do not apply to an interrupted stream.
+      expect(prompt).not.toContain('<previous_assistant_text>');
+    }
+  });
+
+  it('clamps the resume prompt task at 8000 chars', () => {
+    const prompt = buildResumePrompt('T'.repeat(8_001), 1, 'en');
+    const task = prompt.match(/<original_task>\n([\s\S]*?)\n<\/original_task>/)?.[1] ?? '';
+
+    expect(task.length).toBe(8_015);
+    expect(task.endsWith('\n...[truncated]')).toBe(true);
+  });
+
   it('keeps recent tool results full and compresses older executions', () => {
     const executions = Array.from({ length: 6 }, (_, index) => ({
       ...SUCCESS_EXECUTION,
@@ -384,6 +411,41 @@ describe('inline-agent model prompts', () => {
     expect(isInlineAgentContinuationStructure('<original_task>我的任务</original_task>')).toBe(false);
     expect(isInlineAgentContinuationStructure('<tool_results>结果</tool_results>')).toBe(false);
     expect(isInlineAgentContinuationStructure('帮我把这段代码重构一下')).toBe(false);
+  });
+
+  it('detects the auto-resume prompt as an internal request without tool_results tags', () => {
+    // The resume prompt carries <original_task> but deliberately no
+    // <tool_results> tag: the resume turn must still be treated as an
+    // internal turn (fetch suppression, live-DOM hiding, history cleanup).
+    const resumeEn = buildResumePrompt('Research quarterly data', 1, 'en');
+    const resumeZh = buildResumePrompt('调研季度数据', 2, 'zh-CN');
+
+    expect(isInlineAgentContinuationPrompt(resumeEn)).toBe(true);
+    expect(isInlineAgentContinuationPrompt(resumeZh)).toBe(true);
+    expect(isInlineAgentContinuationStructure(resumeEn)).toBe(true);
+    expect(isInlineAgentContinuationStructure(resumeZh)).toBe(true);
+
+    // Line-level DeepSeek chrome (timestamps, action rows) interleaved with
+    // the prompt must not defeat detection in the live DOM.
+    const diluted = ['刚刚', ...resumeEn.split('\n')].join('\n');
+    expect(isInlineAgentContinuationPrompt(diluted)).toBe(true);
+    expect(isInlineAgentContinuationStructure(diluted)).toBe(true);
+  });
+
+  it('does not mistake ordinary interrupted-task wording for the resume prompt', () => {
+    // The resume wording without the <original_task> pair is never enough.
+    expect(isInlineAgentContinuationPrompt(
+      'Your previous response was interrupted mid-stream. Continue where you left off.',
+    )).toBe(false);
+    expect(isInlineAgentContinuationStructure('我之前的回复被打断了，请继续。')).toBe(false);
+    // Near-miss wording next to the pair must not match the resume marker.
+    expect(isInlineAgentContinuationPrompt('<original_task>查行情</original_task>\n被打断了，请继续。')).toBe(false);
+    expect(isInlineAgentContinuationStructure('<original_task>查行情</original_task>\n被打断了，请继续。')).toBe(false);
+    // ...while the tool-results rule keeps its own keyword-free structural
+    // behavior for the DOM layer.
+    expect(isInlineAgentContinuationStructure(
+      '<original_task>查行情</original_task>\n<tool_results>[]</tool_results>',
+    )).toBe(true);
   });
 
   it('renders task_complete control blocks as their user-visible summary', () => {

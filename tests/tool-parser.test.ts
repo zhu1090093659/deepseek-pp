@@ -22,4 +22,18 @@ describe('tool-parser XML fallback', () => {
     });
     expect(stripToolCalls(text, { descriptors })).toBe('Before  after');
   });
+
+  it('recovers a foreign-closed call as a parseError record instead of dropping it', () => {
+    const text = '<artifact_create>{"filename":"demo.html"}</invoke>';
+    const calls = extractToolCalls(text, { descriptors });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      invocationName: 'artifact_create',
+      payload: { filename: 'demo.html' },
+      raw: text,
+      parseError: { code: 'tool_call_close_mismatched', retryable: false },
+    });
+    expect(stripToolCalls(text, { descriptors })).toBe('');
+  });
 });

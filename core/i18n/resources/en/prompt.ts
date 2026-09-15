@@ -21,6 +21,8 @@ export const prompt = {
     nudgeNextTool: '1. If the task is still incomplete, this turn MUST directly output the next executable tool XML.',
     nudgeComplete: '2. If the task is complete, output <task_complete>{"summary":"..."}</task_complete>. Deliver files, HTML pages, and charts as Markdown fenced code blocks (e.g. ```html, ```xychart-beta); never use artifact XML tags.',
     nudgeCount: 'This is no-tool-call correction attempt {count}.',
+    resumeInterrupted: 'Your previous response was interrupted mid-stream. Continue exactly where you left off; do not repeat completed work.',
+    resumeCount: 'This is stream-interruption resume attempt {count}.',
   },
   automation: {
     continuationIntro: 'These are the MCP tool results just executed for the automation. Continue completing the automation based on these results.',

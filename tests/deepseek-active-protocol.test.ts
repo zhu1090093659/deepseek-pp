@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEEPSEEK_POW_DEADLINE_MS } from '../core/deepseek/active-client';
 import {
   DEEPSEEK_WEB_ROUTE_POLICY,
   encodeCompletionRequest,
@@ -22,6 +23,12 @@ import {
 } from './fixtures/external-runtime/deepseek';
 
 describe('active DeepSeek protocol codecs', () => {
+  it('pins the shared PoW phase deadline contract', () => {
+    // The PoW phase (challenge fetch + WASM solve) is bounded by this default
+    // whenever a caller provides no absolute deadline.
+    expect(DEEPSEEK_POW_DEADLINE_MS).toBe(20_000);
+  });
+
   it('matches every released web route by exact origin, path, and method', () => {
     for (const fixture of DEEPSEEK_ACTIVE_ROUTE_METHOD_FIXTURES) {
       const route = fixture.name as keyof typeof DEEPSEEK_WEB_ROUTE_POLICY;

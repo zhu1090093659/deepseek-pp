@@ -187,4 +187,46 @@ describe('DeepSeek network policy', () => {
     });
     expect(onDispatch).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects an already-expired deadline before dispatching the request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('ok'));
+    const onDispatch = vi.fn();
+    await expect(fetchWithNetworkPolicy('https://chat.deepseek.com/test', {}, {
+      operation: 'expired-deadline',
+      deadlineAt: Date.now() - 1,
+      maxResponseBytes: 64,
+      fetchImpl,
+      onDispatch,
+    })).rejects.toMatchObject({ code: 'network_deadline_exceeded', retryable: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onDispatch).not.toHaveBeenCalled();
+  });
+
+  it('installs no timeout of its own when no deadline is provided', async () => {
+    // The policy only bounds requests that carry a deadlineAt; callers without
+    // one (e.g. the PoW layer) must derive a deadline themselves. Guards the
+    // invariant that the policy never invents a hidden timeout.
+    vi.useFakeTimers();
+    let resolveFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const request = fetchWithNetworkPolicy('https://chat.deepseek.com/test', {}, {
+      operation: 'no-deadline',
+      maxResponseBytes: 64,
+      fetchImpl,
+    });
+    let settled = false;
+    void request.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(false);
+
+    resolveFetch(new Response('ok'));
+    const response = await request;
+    expect(await response.text()).toBe('ok');
+  });
 });

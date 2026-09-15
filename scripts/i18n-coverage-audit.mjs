@@ -80,6 +80,11 @@ const lineAllowlist = [
     reason: 'inline-agent continuation prompt marker detection',
   },
   {
+    path: 'core/inline-agent/prompt.ts',
+    includes: '你之前的回复在流式输出中途被打断。',
+    reason: 'inline-agent auto-resume prompt marker detection (byte-identical zh-CN prefix of prompt.inlineAgent.resumeInterrupted)',
+  },
+  {
     path: 'core/interceptor/tool-parser.ts',
     includes: '格式错误',
     reason: 'unused legacy DSML summary renderer retained for compatibility',

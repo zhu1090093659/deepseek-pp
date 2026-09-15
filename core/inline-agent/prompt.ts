@@ -49,6 +49,32 @@ function hasInlineAgentContinuationTags(content: string): boolean {
 }
 
 /**
+ * Resume-prompt markers (fix/v1.14.1-tool-loop): the auto-resume prompt
+ * carries the `<original_task>` pair but deliberately no `<tool_results>`
+ * tag, so the tags-pair rule alone would leave the resume turn visible in
+ * the DS chat. Internal turns must stay invisible (live-DOM hiding, history
+ * cleanup, fetch suppression), so detection also accepts the tag pair plus
+ * the pinned resume instruction line — EN and zh-CN, byte-identical prefixes
+ * of the `prompt.inlineAgent.resumeInterrupted` resources locked by the
+ * prompt goldens. A real user message would need the tag pair AND that exact
+ * sentence: the same false-positive profile as the tags-pair rule.
+ */
+const INLINE_AGENT_RESUME_INTERRUPTED_MARKERS = [
+  'Your previous response was interrupted mid-stream.',
+  '你之前的回复在流式输出中途被打断。',
+] as const;
+
+function hasInlineAgentResumePromptMarker(content: string): boolean {
+  return INLINE_AGENT_RESUME_INTERRUPTED_MARKERS.some((marker) => content.includes(marker));
+}
+
+/** The auto-resume shape: `<original_task>` pair + resume instruction line, no tool results. */
+function hasInlineAgentResumePromptTags(content: string): boolean {
+  if (!content.includes('<original_task>') || !content.includes('</original_task>')) return false;
+  return hasInlineAgentResumePromptMarker(content);
+}
+
+/**
  * True when either prompt field of an internal inline-agent continuation
  * request is present. Shared by the fetch hook (to suppress page events for
  * internal requests) and the content script (to skip starting a fresh agent
@@ -60,6 +86,9 @@ export function isInlineAgentContinuationRequest(originalPrompt: string, agentTa
 }
 
 export function isInlineAgentContinuationPrompt(content: string): boolean {
+  // The auto-resume shape is recognized by its own pair+marker rule; the
+  // keyword list below applies to the tool-results continuation/nudge shape.
+  if (hasInlineAgentResumePromptTags(content)) return true;
   if (!hasInlineAgentContinuationTags(content)) return false;
 
   return content.includes('工具续跑任务') ||
@@ -83,7 +112,7 @@ export function isInlineAgentContinuationPrompt(content: string): boolean {
  * raw prompt text is intact and false positives are costlier.
  */
 export function isInlineAgentContinuationStructure(content: string): boolean {
-  return hasInlineAgentContinuationTags(content);
+  return hasInlineAgentContinuationTags(content) || hasInlineAgentResumePromptTags(content);
 }
 
 function getTaskCompleteSummary(body: string): string {
@@ -154,6 +183,31 @@ export function buildContinuationPrompt(
     '<tool_results>',
     JSON.stringify(results, null, 2),
     '</tool_results>',
+  ].join('\n');
+}
+
+/**
+ * Builds the resume prompt for an interrupted turn (fix/v1.14.1-tool-loop):
+ * continuation-style framing — instruction lines plus the `<original_task>`
+ * block, like `buildContinuationPrompt` — but with NO `<tool_results>` (the
+ * interrupted stream died before its tools could matter; prior results are
+ * already in the conversation chain) and deliberately NO
+ * `<previous_assistant_text>` (its nudge semantics do not apply to a stream
+ * that never completed). The model continues the same task from the last
+ * committed chain point without repeating completed work.
+ */
+export function buildResumePrompt(
+  originalTask: string,
+  resumeCount: number,
+  locale: SupportedLocale = DEFAULT_LOCALE,
+): string {
+  return [
+    translate(locale, 'prompt.inlineAgent.resumeInterrupted'),
+    translate(locale, 'prompt.inlineAgent.resumeCount', { count: resumeCount }),
+    '',
+    '<original_task>',
+    clampText(originalTask, 8000),
+    '</original_task>',
   ].join('\n');
 }
 

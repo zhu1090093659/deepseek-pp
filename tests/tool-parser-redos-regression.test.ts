@@ -35,6 +35,19 @@ describe('H1 ReDoS regression', () => {
     extractToolCalls(input, { descriptors });
     expect(performance.now() - t0).toBeLessThan(2000);
   });
+  it('recovers a mismatched-close call bounded by a foreign terminator fast (linear)', () => {
+    // Deliberate expectation change (mismatched-close recovery task): the
+    // foreign `</invoke>` terminator now BOUNDS the block, so the call is
+    // recovered as tool_call_close_mismatched and stripped. Pure unterminated
+    // input (tests above) keeps the 'kept verbatim' expectation.
+    const input = '<artifact_create>' + ' '.repeat(120_000) + '</invoke>';
+    const t0 = performance.now();
+    const calls = extractToolCalls(input, { descriptors });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].parseError?.code).toBe('tool_call_close_mismatched');
+    expect(stripToolCalls(input, { descriptors })).toBe('');
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
   it('parses a well-formed call inside 120K text fast', () => {
     const input = 'x'.repeat(60_000) + '<artifact_create>{"filename":"a","content":"b"}</artifact_create>' + 'y'.repeat(60_000);
     const t0 = performance.now();

@@ -38,11 +38,12 @@ import {
   type ModelTurn,
   type SubmitPromptInput,
 } from '../../deepseek/adapter';
-import { extractToolCalls } from '../../interceptor/tool-parser';
+import { extractLegacyToolCalls, extractToolCalls } from '../../interceptor/tool-parser';
 import { createStreamingToolCallParser } from '../../interceptor/streaming-tool-call-parser';
 import { createStreamingToolTextAccumulator } from '../../interceptor/streaming-tool-text';
 import type { ToolCall as CoreToolCall } from '../../types';
 import { createStepSignal, waitBetweenDeepSeekRequests } from '../step-control';
+import { DeepSeekAuthError } from '../../deepseek/errors';
 import type {
   DeepSeekStreamFnDeps,
   DeepSeekTurnCallbacks,
@@ -53,14 +54,47 @@ import type {
 } from './stream-fn-port';
 
 const INLINE_AGENT_MAX_STEP_ATTEMPTS = 2;
+const INLINE_AGENT_POW_ATTEMPTS = 2;
+
+/**
+ * User-visible texts for an interrupted turn. Byte-stable contract: the
+ * auto-resume machinery classifies interrupted turns by matching these exact
+ * messages (see {@link isDeepSeekInterruptedTurnError}).
+ */
+export const DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE =
+  'DeepSeek agent step timed out while streaming; the response was interrupted.';
+export const DEEPSEEK_INTERRUPTED_ENDED_MESSAGE =
+  'DeepSeek response stream ended before completion (the response was interrupted).';
+
+/**
+ * Machine-readable classifier for "this turn was interrupted": the streamed
+ * response never completed, so the next turn must resume from the session
+ * chain instead of assuming a finished reply. Matches the two interrupted
+ * messages above plus any PoW-phase failure text (a PoW failure means the
+ * turn was never submitted, so the response was interrupted before it
+ * started). Verified PoW-phase shapes:
+ *  - `NetworkPolicyError('network_deadline_exceeded')` for the PoW operation:
+ *    "DeepSeek PoW challenge exceeded its execution deadline."
+ *  - `DeepSeekPowError`: "DeepSeek PoW challenge failed: …",
+ *    "DeepSeek PoW challenge returned non-JSON HTTP …",
+ *    "Failed to create DeepSeek PoW challenge: …".
+ * Auth rejections are deliberately excluded (they need re-authentication,
+ * not resume).
+ */
+export function isDeepSeekInterruptedTurnError(message: string): boolean {
+  return message === DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE
+    || message === DEEPSEEK_INTERRUPTED_ENDED_MESSAGE
+    || message.startsWith('DeepSeek PoW challenge')
+    || message.startsWith('Failed to create DeepSeek PoW challenge');
+}
 
 export interface DeepSeekTurnSubmitterOptions {
   powWasmUrl?: string;
 }
 
 /**
- * Builds the turn submitter: one turn = one PoW solve + bounded no-chunk
- * retry + 120s step timeout, mirroring the original `submitAgentTurn`.
+ * Builds the turn submitter: one turn = one bounded PoW solve + bounded
+ * no-chunk retry + 120s step timeout, mirroring the original `submitAgentTurn`.
  */
 export function createDeepSeekTurnSubmitter(
   options: DeepSeekTurnSubmitterOptions = {},
@@ -69,7 +103,7 @@ export function createDeepSeekTurnSubmitter(
 
   return async (request, callbacks, signal) => {
     const clientHeaders = createClientHeaders();
-    const powHeaders = await createPowHeaders(clientHeaders, powWasmUrl);
+    const powHeaders = await createPowHeadersWithRetry(clientHeaders, powWasmUrl, signal);
     const input: SubmitPromptInput = {
       chatSessionId: request.chatSessionId,
       parentMessageId: request.parentMessageId,
@@ -207,7 +241,7 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
         // of stopping on a seemingly normal message. User aborts keep their
         // silent 'aborted' semantics.
         if (!result.finished && !signal?.aborted) {
-          throw new Error('DeepSeek response stream ended before completion (the response was interrupted).');
+          throw new Error(DEEPSEEK_INTERRUPTED_ENDED_MESSAGE);
         }
 
         // The conversation chain authority: the page session, not this turn's
@@ -216,11 +250,24 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
 
         onParsed(toolCallParser.flush());
         emitText(textAccumulator.flush());
+        // Dedupe invariant (mismatched-close recovery), scoped per branch:
+        // - toolCallCount === 0: the streaming parser emitted nothing, so the
+        //   fallback runs FULL extraction (pure-legacy and XML-only replies
+        //   must still parse).
+        // - toolCallCount > 0: the streaming parser already emitted every XML
+        //   call it could recover (completed or failed), so the fallback is
+        //   restricted to LEGACY ｜DSML｜ blocks only. Full extraction here
+        //   would re-emit an XML call the streaming parser already produced,
+        //   and mapToolCall drops parseError, so the duplicate copy would
+        //   carry the batch best-effort payload and could execute.
         if (!fallbackRawTruncated && fallbackRawText) {
           const shouldFallback = fallbackRawText.includes('｜DSML｜')
             || (toolCallCount === 0 && fallbackRawText.includes('<'));
           if (shouldFallback) {
-            for (const call of extractToolCalls(fallbackRawText, { descriptors: toolDescriptors })) {
+            const fallbackCalls = toolCallCount === 0
+              ? extractToolCalls(fallbackRawText, { descriptors: toolDescriptors })
+              : extractLegacyToolCalls(fallbackRawText, { descriptors: toolDescriptors });
+            for (const call of fallbackCalls) {
               emitToolCall({ name: call.name, invocationName: call.invocationName ?? call.name, payload: call.payload });
             }
           }
@@ -261,11 +308,40 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
 // ---------------------------------------------------------------------------
 
 /**
+ * Solves PoW for one turn with a bounded retry. The turn signal is forwarded
+ * into every attempt so a user abort cancels a pending solve immediately, and
+ * transient PoW/network failures get one throttled retry; auth rejections are
+ * never retried (the token must be refreshed first). The final failure is
+ * rethrown unchanged — the loop layer classifies it.
+ */
+async function createPowHeadersWithRetry(
+  clientHeaders: Record<string, string>,
+  powWasmUrl: string | undefined,
+  parentSignal: AbortSignal | undefined,
+): Promise<Record<string, string>> {
+  const signal = parentSignal ?? new AbortController().signal;
+  for (let attempt = 1; attempt <= INLINE_AGENT_POW_ATTEMPTS; attempt++) {
+    try {
+      return await createPowHeaders(clientHeaders, powWasmUrl, signal);
+    } catch (err) {
+      if (signal.aborted || err instanceof DeepSeekAuthError) throw err;
+      if (attempt >= INLINE_AGENT_POW_ATTEMPTS) throw err;
+      await waitBetweenDeepSeekRequests(signal);
+      if (signal.aborted) throw err;
+    }
+  }
+  throw new Error('DeepSeek PoW retry loop exited without a completed attempt.');
+}
+
+/**
  * Submits one turn with a bounded single retry. A retry is only allowed when
- * the request failed before any text chunk was received: once the server has
- * streamed content the turn is likely committed server-side, and replaying it
- * with the same parent message could fork the conversation chain. User abort
- * is never retried. Mirrors the original loop's `submitAgentTurn`.
+ * the request failed before any chunk was received (text or reasoning): once
+ * the server has streamed content the turn is likely committed server-side,
+ * and replaying it with the same parent message could fork the conversation
+ * chain — such interrupted turns surface as
+ * {@link DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE} /
+ * {@link DEEPSEEK_INTERRUPTED_ENDED_MESSAGE} instead of being retried. User
+ * abort is never retried. Mirrors the original loop's `submitAgentTurn`.
  */
 async function submitWithRetry(
   input: SubmitPromptInput,
@@ -303,8 +379,13 @@ async function submitWithRetry(
     } catch (err) {
       if (signal.aborted) throw err;
       const timeoutFired = stepTimeout.timedOut();
-      if (timeoutFired && receivedAnyChunk) {
-        throw new Error('DeepSeek agent step timed out while streaming; the response was interrupted.');
+      // Any received chunk means the turn was likely committed server-side:
+      // resubmitting with the same parent_message_id could fork the
+      // conversation chain, so the interrupted turn is surfaced as an error
+      // no matter what failed (RC2/M3). No-chunk failures keep their bounded
+      // retry below.
+      if (receivedAnyChunk) {
+        throw new Error(timeoutFired ? DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE : DEEPSEEK_INTERRUPTED_ENDED_MESSAGE);
       }
       if (attempt >= INLINE_AGENT_MAX_STEP_ATTEMPTS) {
         if (timeoutFired) throw new Error('DeepSeek agent step timed out after retry.');

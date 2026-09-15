@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { stripToolCallsFromHistory } from '../core/interceptor/history-cleanup';
 import { augmentRequestBody } from '../core/interceptor/request-augmentation';
 import { createArtifactToolDescriptors } from '../core/artifact';
-import { INLINE_AGENT_CONTINUATION_PLACEHOLDER } from '../core/inline-agent/prompt';
+import { INLINE_AGENT_CONTINUATION_PLACEHOLDER, buildResumePrompt } from '../core/inline-agent/prompt';
 import { createDefaultToolDescriptors } from '../core/tool';
 
 describe('history cleanup', () => {
@@ -95,6 +95,52 @@ describe('history cleanup', () => {
     expect(json.data.biz_data.chat_messages.map((message: { message_id: number }) => message.message_id)).toEqual([1, 2, 3, 4]);
     expect(json.data.biz_data.chat_messages[2].content).toBe(INLINE_AGENT_CONTINUATION_PLACEHOLDER);
     expect(json.data.biz_data.chat_messages[3].parent_message_id).toBe(3);
+  });
+
+  it('hides auto-resume prompt nodes as internal turns on history restore', () => {
+    // The auto-resume turn has no <tool_results> tag: detection must still
+    // treat it as an internal continuation turn — kept in the chain but
+    // placeholdered, never rendered as a visible user bubble.
+    const json = {
+      data: {
+        biz_data: {
+          chat_messages: [
+            {
+              message_id: 1,
+              message_role: 'user',
+              content: '整理这份报告',
+            },
+            {
+              message_id: 2,
+              message_role: 'assistant',
+              parent_message_id: 1,
+              content: '好的，我先处理数据。',
+            },
+            {
+              message_id: 3,
+              message_role: 'user',
+              parent_message_id: 2,
+              content: buildResumePrompt('整理这份报告', 1, 'zh-CN'),
+            },
+            {
+              message_id: 4,
+              message_role: 'assistant',
+              parent_message_id: 3,
+              content: '继续完成了报告。',
+            },
+          ],
+        },
+      },
+    };
+
+    stripToolCallsFromHistory(json, {
+      toolDescriptors: createDefaultToolDescriptors(),
+      onToolCallsRestored: () => undefined,
+    });
+
+    expect(json.data.biz_data.chat_messages.map((message: { message_id: number }) => message.message_id)).toEqual([1, 2, 3, 4]);
+    expect(json.data.biz_data.chat_messages[2].content).toBe(INLINE_AGENT_CONTINUATION_PLACEHOLDER);
+    expect(json.data.biz_data.chat_messages[3].content).toBe('继续完成了报告。');
   });
 
   it('adds assistant message anchors to restored tool-call records', () => {

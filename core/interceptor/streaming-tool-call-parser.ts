@@ -6,7 +6,10 @@ import {
   type ToolInvocationCatalog,
 } from '../tool';
 import { createExternalizedToolPayload } from '../tool/externalized-payload';
-import { INCOMPLETE_TOOL_CALL_ERROR_CODE } from '../tool/execution-error';
+import {
+  INCOMPLETE_TOOL_CALL_ERROR_CODE,
+  MISMATCHED_TOOL_CALL_ERROR_CODE,
+} from '../tool/execution-error';
 import {
   findFirstXmlToolTag,
   getPartialXmlToolTagTailLength,
@@ -16,6 +19,11 @@ const STREAM_TOOL_RAW_MAX_LENGTH = 2048;
 const TRUNCATION_SUFFIX = '\n...[truncated]';
 const EXTERNALIZE_BODY_THRESHOLD_CHARS = 64_000;
 const STREAM_TOOL_BODY_MAX_CHARS = 1_048_576;
+// Foreign close literals emitted by models trained on a generic `<invoke>`
+// wire format. Kept local so the streaming bundle stays independent of the
+// batch tool-parser module (main-world/content entrypoints import only this).
+const INVOKE_CLOSE_TERMINATOR_LEGACY = '</｜DSML｜invoke>';
+const INVOKE_CLOSE_TERMINATOR_PLAIN = '</invoke>';
 
 export interface StreamingToolCallParserEvent {
   started: ToolCall[];
@@ -147,22 +155,101 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
     const text = this.pendingSuppressed + input;
     this.pendingSuppressed = '';
     const closeTag = findFirstXmlToolTag(text, new Set([current.invocationName]), { closing: true });
+    // Fail-fast mismatched-close recovery: whichever comes first between the
+    // same-name close (complete path below) and a foreign terminator bounds the
+    // call. Without this, one malformed call swallowed every following parallel
+    // call until EOF.
+    const foreign = this.findForeignTerminator(text, closeTag?.index);
 
-    if (!closeTag) {
-      const tailLength = getPartialXmlToolTagTailLength(text, new Set([current.invocationName]), { closing: true });
-      this.appendBody(text.slice(0, text.length - tailLength), event);
-      this.pendingSuppressed = tailLength > 0 ? text.slice(-tailLength) : '';
-      return '';
+    if (closeTag && (!foreign || closeTag.index < foreign.index)) {
+      this.appendBody(text.slice(0, closeTag.index), event);
+      if (!current.failed) {
+        event.completed.push(this.createCompletedCall({ ...current, closeTag: closeTag.raw }));
+      }
+      this.state = 'NORMAL';
+      this.pendingSuppressed = '';
+      this.current = null;
+      return text.slice(closeTag.endIndex);
     }
 
-    this.appendBody(text.slice(0, closeTag.index), event);
-    if (!current.failed) {
-      event.completed.push(this.createCompletedCall({ ...current, closeTag: closeTag.raw }));
+    if (foreign) {
+      this.appendBody(text.slice(0, foreign.index), event);
+      if (!current.failed) {
+        event.failed.push(this.createMismatchedCloseCall(current, foreign.label));
+      }
+      this.state = 'NORMAL';
+      this.pendingSuppressed = '';
+      this.current = null;
+      // Re-consume from the terminator index in NORMAL state so the stray close
+      // is dropped and the following parallel tool call parses.
+      return text.slice(foreign.index);
     }
-    this.state = 'NORMAL';
-    this.pendingSuppressed = '';
-    this.current = null;
-    return text.slice(closeTag.endIndex);
+
+    // No close and no foreign terminator: keep buffering, but hold back every
+    // bounded suffix that could still complete into a terminator (same-name or
+    // foreign closing tag, next known open tag, legacy/plain `</invoke>`
+    // literals) so a terminator split across chunks stays contiguous here.
+    const tailLength = Math.max(
+      getPartialXmlToolTagTailLength(text, this.invocationNames, { closing: true }),
+      getPartialXmlToolTagTailLength(text, this.invocationNames, { closing: false }),
+      getInvokeCloseTailLength(text),
+    );
+    this.appendBody(text.slice(0, text.length - tailLength), event);
+    this.pendingSuppressed = tailLength > 0 ? text.slice(-tailLength) : '';
+    return '';
+  }
+
+  /**
+   * Earliest foreign terminator in the suppressed buffer: any catalog closing
+   * tag other than the pending call's own close (same-name index excluded), a
+   * legacy/plain `</invoke>` close, or the next known open tag. Every
+   * candidate is a single linear scan over the pending buffer (no
+   * chunk-boundary lookahead), so consumption stays O(n).
+   */
+  private findForeignTerminator(
+    text: string,
+    sameNameCloseIndex: number | undefined,
+  ): { index: number; label: string } | null {
+    let best: { index: number; label: string } | null = null;
+    const consider = (index: number, label: string) => {
+      if (index === -1) return;
+      if (sameNameCloseIndex !== undefined && index === sameNameCloseIndex) return;
+      if (!best || index < best.index) best = { index, label };
+    };
+
+    const foreignClose = findFirstXmlToolTag(text, this.invocationNames, { closing: true });
+    if (foreignClose) consider(foreignClose.index, `</${foreignClose.name}>`);
+    consider(text.indexOf(INVOKE_CLOSE_TERMINATOR_LEGACY), INVOKE_CLOSE_TERMINATOR_LEGACY);
+    consider(text.indexOf(INVOKE_CLOSE_TERMINATOR_PLAIN), INVOKE_CLOSE_TERMINATOR_PLAIN);
+    const nextOpen = findFirstXmlToolTag(text, this.invocationNames, { closing: false });
+    if (nextOpen) consider(nextOpen.index, `<${nextOpen.name}>`);
+
+    return best;
+  }
+
+  // createIncompleteCall-style raw bounding: the recovered call keeps its
+  // streamed body (truncated) but never claims the foreign terminator.
+  private createMismatchedCloseCall(
+    current: NonNullable<XmlStreamingToolCallParser['current']>,
+    terminatorLabel: string,
+  ): ToolCall {
+    return createToolCallFromInvocation(
+      current.invocationName,
+      current.externalized
+        ? createExternalizedToolPayload(current.id, current.invocationName)
+        : {},
+      createIncompleteRaw(current, ''),
+      this.catalog,
+      {
+        id: current.id,
+        localSkillDir: this.activeLocalSkillDir,
+        parseError: createToolParseError(
+          MISMATCHED_TOOL_CALL_ERROR_CODE,
+          current.invocationName,
+          `Tool call <${current.invocationName}> was interrupted by ${terminatorLabel} instead of ${current.closeTag}.`,
+        ),
+      },
+    );
   }
 
   private appendBody(value: string, event: StreamingToolCallParserEvent): void {
@@ -292,6 +379,26 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
 
 function createEmptyParserEvent(): StreamingToolCallParserEvent {
   return { started: [], completed: [], failed: [], streamed: [] };
+}
+
+/**
+ * Longest suffix of `text` that is a proper prefix of a legacy/plain
+ * `</invoke>` close literal, so a foreign terminator split across chunks stays
+ * in the pending buffer until complete. Bounded by the literal lengths (≤14
+ * chars), i.e. constant work per chunk.
+ */
+function getInvokeCloseTailLength(text: string): number {
+  let longest = 0;
+  for (const literal of [INVOKE_CLOSE_TERMINATOR_LEGACY, INVOKE_CLOSE_TERMINATOR_PLAIN]) {
+    const max = Math.min(text.length, literal.length - 1);
+    for (let length = max; length > longest; length -= 1) {
+      if (literal.startsWith(text.slice(text.length - length))) {
+        longest = length;
+        break;
+      }
+    }
+  }
+  return longest;
 }
 
 function createBoundedRaw(

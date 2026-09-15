@@ -406,12 +406,22 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
-  it('does not retry a timed-out step after text was already received', async () => {
+  it('does not resubmit a step that timed out after streamed text; the loop auto-resumes it', async () => {
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementation((_input, handlers, signal) => {
-      handlers.onTextChunk('partial answer...');
-      return abortAwarePendingTurn(signal);
-    });
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce((_input, handlers, signal) => {
+        handlers.onTextChunk('partial answer...');
+        return abortAwarePendingTurn(signal);
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('Recovered final answer.');
+        return {
+          assistantText: '',
+          responseMessageId: 104,
+          requestMessageId: 103,
+          finished: true,
+        };
+      });
 
     const post = vi.fn();
     const executeTool = vi.fn();
@@ -423,11 +433,20 @@ describe('runInlineAgentLoop', () => {
     });
 
     await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(7_000);
     await run;
 
-    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
-      error: 'DeepSeek agent step timed out while streaming; the response was interrupted.',
+    // The interrupted step was never resubmitted within its step (exactly
+    // one submit): the loop continued with one fresh resume request instead.
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[1]?.[0].prompt)
+      .toContain('Your previous response was interrupted mid-stream.');
+    const stepStarted = post.mock.calls.filter(([type]) => type === 'AGENT_STEP_STARTED');
+    expect(stepStarted).toHaveLength(2);
+    // Same stepIndex: the resumed run replaces the dead streaming step.
+    expect(stepStarted[1][1]).toEqual({ loopId: 'loop-1', stepIndex: 0 });
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: 'Recovered final answer.',
     }));
   });
 
@@ -506,36 +525,51 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
-  it('fails visibly when the response stream ends without FINISHED', async () => {
+  it('resumes with a fresh turn when the response stream ends without FINISHED', async () => {
     // A server-side cut (connection dropped, response interrupted) ends the
     // SSE stream without the terminal FINISHED patches. The partial text must
-    // never be presented as a finished turn: the loop reports AGENT_LOOP_ERROR
-    // with the interruption instead of stopping on a seemingly normal message.
-    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
-      handlers.onTextChunk('让我再抓取雪球那篇详尽的24个月梳理文章');
-      return {
-        assistantText: '',
-        responseMessageId: 102,
-        requestMessageId: 101,
-        finished: false,
-      };
-    });
+    // never be presented as a finished turn: with auto-resume the loop
+    // continues the conversation chain with a fresh resume turn instead of
+    // failing the whole run (the cap test below covers the failure path).
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('让我再抓取雪球那篇详尽的24个月梳理文章');
+        return {
+          assistantText: '',
+          responseMessageId: 102,
+          requestMessageId: 101,
+          finished: false,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('完整月度数据已整理完成。');
+        return {
+          assistantText: '',
+          responseMessageId: 104,
+          requestMessageId: 103,
+          finished: true,
+        };
+      });
 
     const post = vi.fn();
     const executeTool = vi.fn();
 
-    await runInlineAgentLoop(createPayload(), {
+    const run = runInlineAgentLoop(createPayload(), {
       post,
       executeTool,
       signal: new AbortController().signal,
     });
+    await vi.advanceTimersByTimeAsync(7_000);
+    await run;
 
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
-      error: expect.stringContaining('response stream ended before completion'),
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[1]?.[0].prompt)
+      .toContain('Your previous response was interrupted mid-stream.');
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: '完整月度数据已整理完成。',
     }));
-    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
-      finalText: expect.stringContaining('让我再抓取'),
-    }));
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
   });
 
   it('completes with a final reply after a memory-only tool round', async () => {
@@ -568,6 +602,221 @@ describe('runInlineAgentLoop', () => {
     expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
       finalText: '已为你记下这条偏好，后续会沿用。',
       totalTools: 1,
+    }));
+  });
+
+  it('stops with the interrupted-stream error after three consecutive resumes fail', async () => {
+    // 1 initial turn + INLINE_AGENT_MAX_RESUMES resume turns: the fifth gate
+    // evaluation fails the cap, so the run ends as AGENT_LOOP_ERROR with the
+    // classified interrupted message instead of retrying forever.
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming.mockImplementation(async (_input, handlers) => {
+      handlers.onTextChunk('partial answer...');
+      return {
+        assistantText: '',
+        responseMessageId: 102,
+        requestMessageId: 101,
+        finished: false,
+      };
+    });
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(7_000);
+    await run;
+
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(4);
+    const stepStarted = post.mock.calls.filter(([type]) => type === 'AGENT_STEP_STARTED');
+    expect(stepStarted).toHaveLength(4);
+    expect(stepStarted.every(([, data]) => (data as { stepIndex: number }).stepIndex === 0)).toBe(true);
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
+      error: 'DeepSeek response stream ended before completion (the response was interrupted).',
+    }));
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.anything());
+  });
+
+  it('keeps the run silent when the user aborts after an interrupted turn', async () => {
+    // The driver's abort check precedes the resume gate: even after a
+    // resume-eligible interruption, a user abort ends the run silently and
+    // never resumes into user-visible work.
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce((_input, handlers, signal) => {
+        handlers.onTextChunk('partial answer...');
+        return abortAwarePendingTurn(signal);
+      });
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: controller.signal,
+    });
+    await vi.advanceTimersByTimeAsync(120_000); // step timeout → interrupted error
+    await vi.advanceTimersByTimeAsync(1_000); // driver parks in the resume pacing wait
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(7_000);
+    await run;
+
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: '',
+    }));
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
+  });
+
+  it('resumes an interruption after a completed tool step without double execution', async () => {
+    // Tools of a COMPLETED step are committed (STEP_COMPLETE posted); an
+    // interrupted follow-up turn resumes the chain and must not re-run them.
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk(TOOL_CALL_TEXT);
+        return {
+          assistantText: '',
+          responseMessageId: 102,
+          requestMessageId: 101,
+          finished: true,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('partial follow-up...');
+        return {
+          assistantText: '',
+          responseMessageId: 103,
+          requestMessageId: 102,
+          finished: false,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('All done after resume.');
+        return {
+          assistantText: '',
+          responseMessageId: 105,
+          requestMessageId: 104,
+          finished: true,
+        };
+      });
+
+    const post = vi.fn();
+    const executeTool = vi.fn(async () => ARTIFACT_EXECUTION);
+
+    const run = runInlineAgentLoop({
+      ...createPayload(),
+      toolDescriptors: createArtifactToolDescriptors('en'),
+    }, {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(7_000);
+    await run;
+
+    expect(executeTool).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(3);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[2]?.[0].prompt)
+      .toContain('Your previous response was interrupted mid-stream.');
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: 'All done after resume.',
+      totalTools: 2,
+    }));
+  });
+
+  it('resumes after a PoW-phase failure and completes the run', async () => {
+    // A PoW failure means the turn was never submitted, so the response was
+    // interrupted before it started — the classified message must resume.
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async () => {
+        throw new Error('DeepSeek PoW challenge failed: wasm unavailable');
+      })
+      // The bounded no-chunk retry inside the dead turn also fails with PoW.
+      .mockImplementationOnce(async () => {
+        throw new Error('DeepSeek PoW challenge failed: wasm unavailable');
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('Recovered after PoW failure.');
+        return {
+          assistantText: '',
+          responseMessageId: 103,
+          requestMessageId: 102,
+          finished: true,
+        };
+      });
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(7_000); // bounded no-chunk retry inside the dead turn
+    await vi.advanceTimersByTimeAsync(7_000); // resume pacing
+    await run;
+
+    // Two submit attempts for the failed turn (bounded retry), then the
+    // fresh resume turn.
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(3);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[2]?.[0].prompt)
+      .toContain('Your previous response was interrupted mid-stream.');
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
+      finalText: 'Recovered after PoW failure.',
+    }));
+  });
+
+  it('does not resume an interrupted nudge turn', async () => {
+    // A nudge turn carries `<previous_assistant_text>` steering semantics
+    // that do not apply to a fresh continuation: the gate refuses to resume.
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('I will call search next.');
+        return {
+          assistantText: '',
+          responseMessageId: 102,
+          requestMessageId: 101,
+          finished: true,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('partial nudge follow-up...');
+        return {
+          assistantText: '',
+          responseMessageId: 103,
+          requestMessageId: 102,
+          finished: false,
+        };
+      });
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(7_000); // pacing before the nudge turn
+    await run;
+
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.submitPromptStreaming.mock.calls[1]?.[0].prompt)
+      .toContain('This is no-tool-call correction attempt 1.');
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
+      error: 'DeepSeek response stream ended before completion (the response was interrupted).',
     }));
   });
 });
@@ -618,5 +867,21 @@ const MEMORY_SAVE_EXECUTION: ToolExecutionRecord = {
     ok: true,
     summary: '已保存',
     output: { id: 1 },
+  },
+};
+
+const TOOL_CALL_TEXT = '<artifact_create>{"filename":"a.txt","content":"ok"}</artifact_create>';
+
+const ARTIFACT_EXECUTION: ToolExecutionRecord = {
+  name: 'artifact_create',
+  provider: {
+    kind: 'local',
+    id: 'artifact',
+    displayName: 'Artifact',
+    transport: 'in_process',
+  },
+  result: {
+    ok: true,
+    summary: 'Artifact created',
   },
 };

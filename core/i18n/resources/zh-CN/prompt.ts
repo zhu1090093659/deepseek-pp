@@ -21,6 +21,8 @@ export const prompt = {
     nudgeNextTool: '1. 如果任务仍未完成，本轮必须直接输出下一步可执行工具 XML。',
     nudgeComplete: '2. 如果任务已经完成，输出 <task_complete>{"summary":"..."}</task_complete>。文件、HTML 页面与图表等交付物用 Markdown 围栏代码块输出（如 ```html、```xychart-beta），不要使用 artifact XML 标签。',
     nudgeCount: '这是第 {count} 次无工具调用纠偏。',
+    resumeInterrupted: '你之前的回复在流式输出中途被打断。请从上次中断的地方继续，不要重复已完成的工作。',
+    resumeCount: '这是第 {count} 次流中断续跑。',
   },
   automation: {
     continuationIntro: '以下是自动化任务刚刚执行的 MCP 工具结果。请基于这些结果继续完成自动化任务。',

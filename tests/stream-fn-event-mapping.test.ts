@@ -191,6 +191,12 @@ describe('DS-web → pi event mapping protocol', () => {
     adapterMocks.submitPromptStreaming.mockImplementation((_input, handlers, signal) => {
       handlers.onTextChunk('partial answer');
       return new Promise((_resolve, reject) => {
+        // The real request policy rejects an already-aborted caller signal
+        // instead of waiting for an abort event that can no longer fire.
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
         signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
       });
     });

@@ -6,7 +6,8 @@ import {
   type ToolInvocationCatalog,
   type ToolParsingInput,
 } from '../tool';
-import { findFirstXmlToolTag } from '../tool/xml-tags';
+import { MISMATCHED_TOOL_CALL_ERROR_CODE } from '../tool/execution-error';
+import { findFirstXmlToolTag, type XmlToolTagMatch } from '../tool/xml-tags';
 
 export const LEGACY_TOOL_CALLS_OPEN_TAG = '<｜DSML｜tool_calls>';
 export const LEGACY_TOOL_CALLS_CLOSE_TAG = '</｜DSML｜tool_calls>';
@@ -16,13 +17,25 @@ const LEGACY_INVOKE_CLOSE_TAG = '</｜DSML｜invoke>';
 const LEGACY_PARAMETER_OPEN_PREFIX = '<｜DSML｜parameter name="';
 const LEGACY_PARAMETER_TYPE_PREFIX = '" string="';
 const LEGACY_PARAMETER_CLOSE_TAG = '</｜DSML｜parameter>';
+// Foreign close emitted by models trained on a generic `<invoke>` wire format.
+const PLAIN_INVOKE_CLOSE_TAG = '</invoke>';
 
 export function extractToolCalls(text: string, input?: ToolParsingInput): ToolCall[] {
   const catalog = createToolInvocationCatalog(input?.descriptors);
   return [
     ...extractXmlToolCalls(text, catalog),
-    ...extractLegacyToolCalls(text, catalog),
+    ...extractLegacyToolCallsForCatalog(text, catalog),
   ];
+}
+
+/**
+ * Extracts ONLY legacy `｜DSML｜tool_calls` blocks (linear scan). The StreamFn
+ * fallback uses this when the streaming parser already emitted XML calls, so a
+ * recovered or complete XML call can never be re-emitted by the fallback.
+ */
+export function extractLegacyToolCalls(text: string, input?: ToolParsingInput): ToolCall[] {
+  const catalog = createToolInvocationCatalog(input?.descriptors);
+  return extractLegacyToolCallsForCatalog(text, catalog);
 }
 
 /**
@@ -31,7 +44,9 @@ export function extractToolCalls(text: string, input?: ToolParsingInput): ToolCa
  * matching closing tag (ReDoS, H1); the scanner below is strictly linear and
  * preserves the regex semantics: the first complete `<name>…</name>` block
  * with a matching name, scanning forward for the first closing tag of the
- * same name.
+ * same name. One deliberate extension: a block closed by a FOREIGN terminator
+ * (mismatched close) is recovered as a parseError record instead of being
+ * dropped — bounded by the terminator, so the scan stays linear.
  */
 function extractXmlToolCalls(text: string, catalog: ToolInvocationCatalog): ToolCall[] {
   const calls: ToolCall[] = [];
@@ -49,7 +64,17 @@ function extractXmlToolCalls(text: string, catalog: ToolInvocationCatalog): Tool
       { closing: true, fromIndex: open.endIndex },
     );
     if (!close) {
-      fromIndex = open.endIndex;
+      // Bounded mismatched-close recovery: when the same-name close is absent
+      // but a foreign terminator bounds the block, recover the call as a
+      // parseError record so the loop sees it instead of silently dropping it.
+      // A pure unterminated block (no terminator) keeps the old skip.
+      const terminator = findXmlToolCallTerminator(text, nameSet, open.endIndex);
+      if (!terminator) {
+        fromIndex = open.endIndex;
+        continue;
+      }
+      calls.push(createMismatchedCloseToolCall(open, terminator, text, catalog));
+      fromIndex = terminator.endIndex;
       continue;
     }
 
@@ -94,10 +119,114 @@ function extractXmlToolCalls(text: string, catalog: ToolInvocationCatalog): Tool
 }
 
 /**
+ * A foreign tag that bounds a mismatched-close tool-call block. Recovery is
+ * BOUNDED: only a terminator found by a single forward scan claims the block;
+ * a pure unterminated block (no terminator ahead) stays unclaimed.
+ */
+interface XmlToolCallTerminator {
+  /** Start of the terminator tag inside the scanned text. */
+  index: number;
+  /** Exclusive end of the recovered block: the terminator tag's end for a
+   * closing terminator, the terminator's start for a next-open terminator so
+   * the following block re-parses from that open tag. */
+  endIndex: number;
+  /** Canonical tag text for parse-error messages. */
+  label: string;
+  closing: boolean;
+}
+
+/**
+ * Earliest terminator after `fromIndex`: any catalog closing tag (foreign,
+ * because the same-name close was already searched in vain), the legacy
+ * `</｜DSML｜invoke>` or plain `</invoke>` close, or the next known open tag.
+ * Every candidate is one linear forward scan with an advancing start, so the
+ * caller's loop stays linear (ReDoS H1 constraint).
+ */
+function findXmlToolCallTerminator(
+  text: string,
+  nameSet: ReadonlySet<string>,
+  fromIndex: number,
+): XmlToolCallTerminator | null {
+  let best: XmlToolCallTerminator | null = null;
+  const consider = (candidate: XmlToolCallTerminator) => {
+    if (!best || candidate.index < best.index) best = candidate;
+  };
+
+  const foreignClose = findFirstXmlToolTag(text, nameSet, { closing: true, fromIndex });
+  if (foreignClose) {
+    consider({
+      index: foreignClose.index,
+      endIndex: foreignClose.endIndex,
+      label: `</${foreignClose.name}>`,
+      closing: true,
+    });
+  }
+  const legacyCloseIdx = text.indexOf(LEGACY_INVOKE_CLOSE_TAG, fromIndex);
+  if (legacyCloseIdx !== -1) {
+    consider({
+      index: legacyCloseIdx,
+      endIndex: legacyCloseIdx + LEGACY_INVOKE_CLOSE_TAG.length,
+      label: LEGACY_INVOKE_CLOSE_TAG,
+      closing: true,
+    });
+  }
+  const plainCloseIdx = text.indexOf(PLAIN_INVOKE_CLOSE_TAG, fromIndex);
+  if (plainCloseIdx !== -1) {
+    consider({
+      index: plainCloseIdx,
+      endIndex: plainCloseIdx + PLAIN_INVOKE_CLOSE_TAG.length,
+      label: PLAIN_INVOKE_CLOSE_TAG,
+      closing: true,
+    });
+  }
+  const nextOpen = findFirstXmlToolTag(text, nameSet, { closing: false, fromIndex });
+  if (nextOpen) {
+    consider({
+      index: nextOpen.index,
+      endIndex: nextOpen.index,
+      label: `<${nextOpen.name}>`,
+      closing: false,
+    });
+  }
+
+  return best;
+}
+
+/**
+ * Builds the recovered ToolCall for a block whose closing tag is foreign or
+ * missing ahead of a terminator. The payload is best-effort: a body that is
+ * not valid JSON keeps the empty payload because the mismatched close is
+ * already the single reported parse error (no compound error codes).
+ */
+function createMismatchedCloseToolCall(
+  open: XmlToolTagMatch,
+  terminator: XmlToolCallTerminator,
+  text: string,
+  catalog: ToolInvocationCatalog,
+): ToolCall {
+  const raw = text.slice(open.index, terminator.endIndex);
+  const body = text.slice(open.endIndex, terminator.index).trim();
+  let payload: Record<string, unknown> = {};
+  try {
+    const parsed = body.length === 0 ? {} : JSON.parse(body);
+    if (isToolPayload(parsed)) payload = parsed;
+  } catch {
+    // Keep the empty payload; the close mismatch is the reported error.
+  }
+  const expectedClose = `</${open.name}>`;
+  const message = terminator.closing
+    ? `Tool call <${open.name}> was closed by ${terminator.label} instead of ${expectedClose}.`
+    : `Tool call <${open.name}> reached the next tool tag ${terminator.label} without ${expectedClose}.`;
+  return createToolCallFromInvocation(open.name, payload, raw, catalog, {
+    parseError: createToolParseError(MISMATCHED_TOOL_CALL_ERROR_CODE, open.name, message),
+  });
+}
+
+/**
  * Linear-time legacy `｜DSML｜tool_calls` extraction. Replaces the
  * `[\s\S]*?`-based legacy regexes (same ReDoS class as the XML parser).
  */
-function extractLegacyToolCalls(text: string, catalog: ToolInvocationCatalog): ToolCall[] {
+function extractLegacyToolCallsForCatalog(text: string, catalog: ToolInvocationCatalog): ToolCall[] {
   const calls: ToolCall[] = [];
   let fromIndex = 0;
 
@@ -147,10 +276,24 @@ function extractLegacyInvokes(
     const invocationName = blockContent.slice(nameStart, nameEnd);
     const invokeCloseIdx = blockContent.indexOf(LEGACY_INVOKE_CLOSE_TAG, nameEnd + 2);
     if (invokeCloseIdx === -1) {
-      // Unterminated invoke: the released regex matched nothing here and kept
-      // scanning for the next well-formed invoke; continue instead of
-      // abandoning the rest of the block.
-      idx = nameEnd + 2;
+      // Unterminated invoke: BOUNDED recovery — the enclosing legacy block end
+      // terminates the raw block and the parsed parameters become the payload,
+      // so the call surfaces as tool_call_close_mismatched instead of being
+      // silently dropped. The scan ends with the block.
+      calls.push(createToolCallFromInvocation(
+        invocationName,
+        extractLegacyParameters(blockContent.slice(nameEnd + 2)),
+        blockContent.slice(invokeOpenStart),
+        catalog,
+        {
+          parseError: createToolParseError(
+            MISMATCHED_TOOL_CALL_ERROR_CODE,
+            invocationName,
+            `Tool invoke <｜DSML｜invoke name="${invocationName}"> ended without ${LEGACY_INVOKE_CLOSE_TAG}.`,
+          ),
+        },
+      ));
+      idx = blockContent.length;
       continue;
     }
     const invokeContent = blockContent.slice(nameEnd + 2, invokeCloseIdx);
@@ -234,7 +377,9 @@ interface ToolCallBlockRange {
 
 /**
  * Collects every complete XML tool-call block in the text (linear scan).
- * A block is the first closing tag of the same name after an opening tag.
+ * A block is the first closing tag of the same name after an opening tag, or
+ * — when that close is missing — the block bounded by the earliest foreign
+ * terminator (same bounded recovery as extractXmlToolCalls).
  */
 function collectXmlToolCallBlocks(text: string, catalog: ToolInvocationCatalog): ToolCallBlockRange[] {
   const blocks: ToolCallBlockRange[] = [];
@@ -252,7 +397,16 @@ function collectXmlToolCallBlocks(text: string, catalog: ToolInvocationCatalog):
       { closing: true, fromIndex: open.endIndex },
     );
     if (!close) {
-      fromIndex = open.endIndex;
+      // Same bounded recovery as extractXmlToolCalls: the recovered block ends
+      // at the terminator, so stripToolCalls removes the stray tags and
+      // replaceToolCallsWithSummary renders them (display + history cleanup).
+      const terminator = findXmlToolCallTerminator(text, nameSet, open.endIndex);
+      if (!terminator) {
+        fromIndex = open.endIndex;
+        continue;
+      }
+      blocks.push({ start: open.index, end: terminator.endIndex });
+      fromIndex = terminator.endIndex;
       continue;
     }
     blocks.push({ start: open.index, end: close.endIndex });

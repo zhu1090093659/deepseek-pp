@@ -137,6 +137,17 @@ export interface InlineAgentLoopErrorMsg {
 
 export const INLINE_AGENT_MAX_STEPS = 25;
 export const INLINE_AGENT_MAX_NUDGES = 8;
+// Auto-resume budget (fix/v1.14.1-tool-loop): after an interrupted turn
+// (server cut / timeout after chunks / PoW failure) the conversation chain is
+// still continuable, so the adapter may start a fresh engine run with a
+// resume prompt. This caps how many times one loop may do that, shared
+// across the whole run.
+export const INLINE_AGENT_MAX_RESUMES = 3;
 export const INLINE_AGENT_STEP_TIMEOUT_MS = 120_000;
+// Tool-execution deadline (fix/v1.14.1-tool-loop): 3x the stream step
+// timeout — generous for legitimately long browser_control/shell tools, but
+// bounded so a stranded background handler cannot freeze the loop at
+// `executing_tools` forever.
+export const INLINE_AGENT_TOOL_CALL_TIMEOUT_MS = 180_000;
 export const INLINE_AGENT_REQUEST_DELAY_MIN_MS = 2_500;
 export const INLINE_AGENT_REQUEST_DELAY_MAX_MS = 6_500;

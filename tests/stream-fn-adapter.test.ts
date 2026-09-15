@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AssistantMessageEvent, Api, Context, Message, Model } from '@earendil-works/pi-ai';
 import { createArtifactToolDescriptors } from '../core/artifact';
+import { DeepSeekAuthError } from '../core/deepseek/errors';
 import type { ToolDescriptor } from '../core/types';
 import type {
   DeepSeekSessionState,
@@ -28,9 +29,13 @@ vi.mock('../core/deepseek/adapter', () => ({
   submitPromptStreaming: adapterMocks.submitPromptStreaming,
 }));
 
-const { createDeepSeekStreamFn, createDeepSeekTurnSubmitter } = await import(
-  '../core/inline-agent/pi/deepseek-stream-fn'
-);
+const {
+  createDeepSeekStreamFn,
+  createDeepSeekTurnSubmitter,
+  DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE,
+  DEEPSEEK_INTERRUPTED_ENDED_MESSAGE,
+  isDeepSeekInterruptedTurnError,
+} = await import('../core/inline-agent/pi/deepseek-stream-fn');
 
 const TOOL_CALL_TEXT = '<artifact_create>{"filename":"a.txt","content":"ok"}</artifact_create>';
 
@@ -192,6 +197,70 @@ describe('createDeepSeekStreamFn', () => {
     }
   });
 
+  it('emits exactly one mismatched XML call in a mixed legacy+XML reply (no fallback duplicate)', async () => {
+    // Mismatched-close recovery dedupe (review finding): the streaming parser
+    // recovers the foreign-closed XML call (toolCallCount = 1), so the
+    // ｜DSML｜ fallback leg must run LEGACY-ONLY extraction — a full extraction
+    // would re-emit the recovered call, and mapToolCall drops parseError, so
+    // the duplicate would carry a best-effort payload and could execute.
+    const mixed = [
+      '<artifact_create>{"filename":"a.txt"}</invoke>',
+      ' Legacy: <｜DSML｜tool_calls>',
+      '<｜DSML｜invoke name="artifact_create">',
+      '<｜DSML｜parameter name="filename" string="true">legacy.txt</｜DSML｜parameter>',
+      '</｜DSML｜invoke></｜DSML｜tool_calls>',
+    ].join('');
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
+      handlers.onTextChunk(mixed);
+      return turnResult();
+    });
+
+    const events = await collectEvents(createDeps());
+
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    if (done?.type === 'done') {
+      expect(done.reason).toBe('toolUse');
+      const toolCalls = done.message.content.filter((block) => block.type === 'toolCall');
+      // Exactly two calls: the streaming recovery copy (createIncompleteCall-
+      // style empty payload — inert without its required arguments) and the
+      // legacy fallback call. No second, payload-bearing duplicate of the
+      // mismatched call may be emitted by the fallback.
+      expect(toolCalls).toEqual([
+        { type: 'toolCall', id: 'xml:0', name: 'artifact_create', arguments: {} },
+        { type: 'toolCall', id: 'xml:1', name: 'artifact_create', arguments: { filename: 'legacy.txt' } },
+      ]);
+    }
+  });
+
+  it('keeps full fallback extraction for a pure-legacy reply when no call was streamed', async () => {
+    // toolCallCount === 0 branch: the ｜DSML｜ fallback stays a full
+    // extractToolCalls run so pure-legacy replies keep parsing.
+    const legacyOnly = [
+      '<｜DSML｜tool_calls>',
+      '<｜DSML｜invoke name="artifact_create">',
+      '<｜DSML｜parameter name="filename" string="true">legacy.txt</｜DSML｜parameter>',
+      '</｜DSML｜invoke>',
+      '</｜DSML｜tool_calls>',
+    ].join('');
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
+      handlers.onTextChunk(legacyOnly);
+      return turnResult();
+    });
+
+    const events = await collectEvents(createDeps());
+
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    if (done?.type === 'done') {
+      expect(done.reason).toBe('toolUse');
+      const toolCalls = done.message.content.filter((block) => block.type === 'toolCall');
+      expect(toolCalls).toEqual([
+        { type: 'toolCall', id: 'xml:0', name: 'artifact_create', arguments: { filename: 'legacy.txt' } },
+      ]);
+    }
+  });
+
   it('builds the turn request from session, serializer and turn defaults', async () => {
     adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
       handlers.onTextChunk('ok');
@@ -253,6 +322,12 @@ describe('createDeepSeekStreamFn', () => {
     const controller = new AbortController();
     adapterMocks.submitPromptStreaming.mockImplementation((_input, _handlers, signal) =>
       new Promise((_resolve, reject) => {
+        // The real request policy rejects an already-aborted caller signal
+        // instead of waiting for an abort event that can no longer fire.
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
         signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
       }),
     );
@@ -362,6 +437,45 @@ describe('createDeepSeekStreamFn', () => {
     }
   });
 
+  it('never resubmits after a mid-stream network reset following text chunks', async () => {
+    // A non-timeout failure after streamed content is still a committed
+    // server-side turn: resubmitting with the same parent_message_id could
+    // fork the chain, so the reset surfaces as the interrupted-stream error.
+    adapterMocks.submitPromptStreaming.mockImplementation(async (_input, handlers) => {
+      handlers.onTextChunk('partial ');
+      handlers.onTextChunk('text');
+      throw new TypeError('network error: load failed');
+    });
+
+    const deps = createDeps();
+    const events = await collectEvents(deps);
+
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
+    const last = events.at(-1);
+    expect(last?.type).toBe('error');
+    if (last?.type === 'error') {
+      expect(last.error.errorMessage).toBe(DEEPSEEK_INTERRUPTED_ENDED_MESSAGE);
+    }
+    expect(deps.session.updates).toEqual([]);
+  });
+
+  it('never resubmits after a mid-stream network reset following reasoning-only chunks', async () => {
+    adapterMocks.submitPromptStreaming.mockImplementation(async (_input, handlers) => {
+      handlers.onReasoningChunk?.('我先分析', '我先分析');
+      throw new TypeError('network error: load failed');
+    });
+
+    const deps = createDeps();
+    const events = await collectEvents(deps);
+
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
+    const last = events.at(-1);
+    expect(last?.type).toBe('error');
+    if (last?.type === 'error') {
+      expect(last.error.errorMessage).toBe(DEEPSEEK_INTERRUPTED_ENDED_MESSAGE);
+    }
+  });
+
   it('forwards token speed progress through the optional dep callback', async () => {
     const progress = { modelType: 'default', tokenSpeed: 42 };
     adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
@@ -375,5 +489,107 @@ describe('createDeepSeekStreamFn', () => {
     await collectEvents(deps);
 
     expect(onTokenSpeed).toHaveBeenCalledWith(progress);
+  });
+
+  it('retries PoW once when the first solve fails, then submits the turn', async () => {
+    vi.useFakeTimers();
+    adapterMocks.createPowHeaders
+      .mockRejectedValueOnce(new Error('pow transient'))
+      .mockResolvedValueOnce({ 'X-DS-PoW-Response': 'pow-2' });
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
+      handlers.onTextChunk('recovered');
+      return turnResult();
+    });
+
+    const deps = createDeps();
+    const streamFn = createDeepSeekStreamFn(deps);
+    const stream = await streamFn(TEST_MODEL, EMPTY_CONTEXT, {});
+    const events: AssistantMessageEvent[] = [];
+    const drain = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+    await vi.advanceTimersByTimeAsync(7_000);
+    await drain;
+
+    expect(adapterMocks.createPowHeaders).toHaveBeenCalledTimes(2);
+    // Both PoW attempts run on the same forwarded turn signal.
+    expect(adapterMocks.createPowHeaders.mock.calls[0][2])
+      .toBe(adapterMocks.createPowHeaders.mock.calls[1][2]);
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.at(-1)?.type).toBe('done');
+  });
+
+  it('does not retry PoW after an auth rejection', async () => {
+    adapterMocks.createPowHeaders.mockRejectedValue(
+      new DeepSeekAuthError('DeepSeek auth token was rejected (HTTP 401) while creating PoW challenge.'),
+    );
+
+    const deps = createDeps();
+    const events = await collectEvents(deps);
+
+    expect(adapterMocks.createPowHeaders).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.submitPromptStreaming).not.toHaveBeenCalled();
+    const last = events.at(-1);
+    expect(last?.type).toBe('error');
+    if (last?.type === 'error') {
+      expect(last.error.errorMessage).toBe(
+        'DeepSeek auth token was rejected (HTTP 401) while creating PoW challenge.',
+      );
+    }
+  });
+
+  it('forwards the turn signal so an abort during PoW fails without retry', async () => {
+    const controller = new AbortController();
+    adapterMocks.createPowHeaders.mockImplementation((_headers, _url, signal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    );
+
+    const deps = createDeps();
+    const streamFn = createDeepSeekStreamFn(deps);
+    const stream = await streamFn(TEST_MODEL, EMPTY_CONTEXT, { signal: controller.signal });
+    const events: AssistantMessageEvent[] = [];
+    const drain = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+    controller.abort(new DOMException('user cancelled', 'AbortError'));
+    await drain;
+
+    expect(adapterMocks.createPowHeaders).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.submitPromptStreaming).not.toHaveBeenCalled();
+    const last = events.at(-1);
+    expect(last?.type).toBe('error');
+    if (last?.type === 'error') expect(last.reason).toBe('aborted');
+  });
+});
+
+describe('isDeepSeekInterruptedTurnError', () => {
+  it('classifies interrupted-turn and PoW-phase failure messages', () => {
+    expect(isDeepSeekInterruptedTurnError(DEEPSEEK_INTERRUPTED_TIMEOUT_MESSAGE)).toBe(true);
+    expect(isDeepSeekInterruptedTurnError(DEEPSEEK_INTERRUPTED_ENDED_MESSAGE)).toBe(true);
+    // PoW deadline: NetworkPolicyError('network_deadline_exceeded') message.
+    expect(
+      isDeepSeekInterruptedTurnError('DeepSeek PoW challenge exceeded its execution deadline.'),
+    ).toBe(true);
+    // DeepSeekPowError shapes (solve failure wraps the WASM/timeout text,
+    // non-JSON response, and server-rejected challenge creation).
+    expect(
+      isDeepSeekInterruptedTurnError('DeepSeek PoW challenge failed: Request exceeded 15000 ms.'),
+    ).toBe(true);
+    expect(
+      isDeepSeekInterruptedTurnError('DeepSeek PoW challenge returned non-JSON HTTP 502: Bad Gateway'),
+    ).toBe(true);
+    expect(
+      isDeepSeekInterruptedTurnError('Failed to create DeepSeek PoW challenge: {"biz_code":555}'),
+    ).toBe(true);
+    // Not interrupted turns: unrelated failures, auth rejections (need
+    // re-authentication, not resume) and the no-chunk timeout-after-retry.
+    expect(isDeepSeekInterruptedTurnError('network down')).toBe(false);
+    expect(
+      isDeepSeekInterruptedTurnError('DeepSeek auth token was rejected (HTTP 401) while creating PoW challenge.'),
+    ).toBe(false);
+    expect(isDeepSeekInterruptedTurnError('DeepSeek agent step timed out after retry.')).toBe(false);
   });
 });

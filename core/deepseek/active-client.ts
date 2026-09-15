@@ -17,6 +17,7 @@ import {
   fetchWithNetworkPolicy,
   readNetworkResponseText,
 } from '../network/request-policy';
+import { createAbortScope } from '../network/abort';
 import {
   solvePowChallengeLocally,
   type PowAnswer,
@@ -78,6 +79,10 @@ const USER_TOKEN_STORAGE_KEY = 'userToken';
 const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 const FILE_READY_POLL_INTERVAL_MS = 500;
 const FILE_READY_TIMEOUT_MS = 15_000;
+// Default bound for the whole PoW phase (challenge fetch + WASM solve) when the
+// caller provides no absolute deadline; prevents a hung PoW fetch from
+// freezing the turn forever.
+export const DEEPSEEK_POW_DEADLINE_MS = 20_000;
 // DeepSeek can return audit_result=unknown together with status=SUCCESS for usable image uploads.
 const ACCEPTED_FILE_AUDIT_RESULTS = new Set(['PASS', 'PASSED', 'SUCCESS', 'OK', 'UNKNOWN']);
 const REJECTED_FILE_AUDIT_RESULTS = new Set(['REJECT', 'REJECTED', 'FAIL', 'FAILED', 'ERROR', 'BLOCK', 'BLOCKED', 'DENY', 'DENIED']);
@@ -197,10 +202,18 @@ async function createPowHeadersForPathWithContext(
   wasmUrl: string | undefined,
   context: DeepSeekRequestContext,
 ): Promise<Record<string, string>> {
+  // The PoW phase is bounded even when the caller passes no deadline: the
+  // derived deadline makes the challenge request go through the network
+  // policy (rejecting with a non-retryable network_deadline_exceeded), and a
+  // matching abort scope bounds the raw WASM fetch in pow.ts, which bypasses
+  // that policy. The synchronous wasm_solve itself cannot be preempted once
+  // it starts; that window is rarely binding next to the network deadline.
+  const deadlineAt = context.deadlineAt ?? Date.now() + DEEPSEEK_POW_DEADLINE_MS;
+  const powScope = createAbortScope(context.signal, Math.max(0, deadlineAt - Date.now()));
   try {
-    const challenge = await createPowChallenge(clientHeaders, targetPath, context);
+    const challenge = await createPowChallenge(clientHeaders, targetPath, { ...context, deadlineAt });
     assertSignalActive(context.signal);
-    const answer = await solvePowChallenge(challenge, wasmUrl, context.signal);
+    const answer = await solvePowChallenge(challenge, wasmUrl, powScope.signal);
     assertSignalActive(context.signal);
     return {
       'X-DS-PoW-Response': base64EncodeUtf8(JSON.stringify({
@@ -218,6 +231,8 @@ async function createPowHeadersForPathWithContext(
     if (err instanceof DeepSeekAuthError) throw err;
     if (err instanceof NetworkPolicyError) throw err;
     throw new DeepSeekPowError(err instanceof Error ? err.message : String(err));
+  } finally {
+    powScope.cleanup();
   }
 }
 

@@ -101,6 +101,7 @@ export const content = {
     consolePaused: '已暂停 · {steps} 步 · {tools} 次工具 · 用时 {seconds}s',
     consoleError: '执行出错 · {steps} 步 · {tools} 次工具 · 用时 {seconds}s',
     toolGroup: '已调用 {count} 次工具',
+    toolDeadline: '工具调用超时（3 分钟），已跳过。',
     reasoningStep: '已思考 · 第 {step} 步',
     reasoningNotPersisted: '该步骤的思考过程未保留在消息流中。',
     codeRun: '运行',
